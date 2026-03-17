@@ -42,7 +42,6 @@ def get_conn():
 def init_db():
     conn = get_conn()
     c = conn.cursor()
-    # Tabela com campo 'nome_exibicao'
     c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
                  (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT, nome_exibicao TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS transacoes 
@@ -85,4 +84,58 @@ if not st.session_state.logado:
         user = st.text_input("Usuário")
         pwd = st.text_input("Senha", type="password")
         if st.button("Login"):
-            c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (user,
+            c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (user, hash_password(pwd)))
+            user_data = c.fetchone()
+            if user_data:
+                codigo = str(random.randint(100000, 999999))
+                st.session_state.code = codigo
+                st.session_state.temp_user = user
+                st.session_state.display_name = user_data[4]
+                st.session_state.temp_email = user_data[3]
+                if enviar_email(user_data[3], "Código de Acesso ERP", f"Olá {user_data[4]}, seu código 2FA é: {codigo}"):
+                    st.session_state.fase_2fa = True
+                    st.rerun()
+            else: st.error("Usuário ou senha incorretos.")
+    else:
+        st.info(f"Código enviado para {st.session_state.temp_email}")
+        code_input = st.text_input("Insira o código de 6 dígitos")
+        if st.button("Verificar Código"):
+            if code_input == st.session_state.code:
+                st.session_state.logado = True
+                st.session_state.fase_2fa = False
+                st.rerun()
+            else: st.error("Código inválido.")
+    st.stop()
+
+# --- ÁREA PROTEGIDA ---
+st.sidebar.title(f"👤 {st.session_state.display_name}")
+if st.sidebar.button("Sair (Logout)"):
+    st.session_state.logado = False
+    st.rerun()
+
+df = pd.read_sql_query("SELECT * FROM transacoes", conn)
+
+st.title(f"🚗 Painel de {st.session_state.display_name}")
+
+if not df.empty:
+    total_gasto = df[df['tipo'] == 'Despesa']['valor_eur'].sum()
+    total_receita = df[df['tipo'] == 'Receita']['valor_eur'].sum()
+    saldo_atual = total_receita - total_gasto
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Saldo Disponível", f"€ {saldo_atual:,.2f}")
+    col2.metric("Total de Receitas", f"€ {total_receita:,.2f}")
+    col3.metric("Total de Despesas", f"€ {total_gasto:,.2f}")
+    st.divider()
+
+tab1, tab2, tab3 = st.tabs(["➕ Lançamentos", "📊 Análises", "⚙️ Configurações"])
+
+with tab1:
+    with st.form("form_transacao", clear_on_submit=True):
+        col_v, col_m = st.columns(2)
+        v_raw = col_v.number_input("Valor", min_value=0.0)
+        moeda = col_m.selectbox("Moeda Original", ["EUR", "BRL"])
+        v_eur = v_raw * 0.16 if moeda == "BRL" else v_raw
+        
+        benef = st.selectbox("Beneficiário", ["Pai", "Mãe", "Filho", "Cão", "Carro", "Família"])
+        cat = st.selectbox("Categoria", ["Alimentação", "Moradia
