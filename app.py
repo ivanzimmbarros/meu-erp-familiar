@@ -5,12 +5,11 @@ import hashlib
 import smtplib
 import random
 import plotly.express as px
-import os
 from email.mime.text import MIMEText
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="ERP Familiar", layout="wide")
+st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
 
 # --- FUNÇÕES DE SEGURANÇA ---
 def hash_password(password):
@@ -49,9 +48,7 @@ if 'fase_2fa' not in st.session_state: st.session_state.fase_2fa = False
 
 # --- VERIFICAÇÃO DE USUÁRIOS ---
 c.execute("SELECT COUNT(*) FROM usuarios")
-tem_usuario = c.fetchone()[0] > 0
-
-if not tem_usuario:
+if c.fetchone()[0] == 0:
     st.title("🏠 Configuração Inicial")
     with st.form("setup_admin"):
         n_ex = st.text_input("Seu Nome (Exibição)")
@@ -63,52 +60,52 @@ if not tem_usuario:
                 c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)",
                           (u_log, hash_password(u_ps), u_em, n_ex))
                 conn.commit()
-                st.success("Conta criada! Recarregando...")
+                st.success("Admin criado! Recarregando...")
                 st.rerun()
     st.stop()
 
-# --- LOGIN ---
+# --- LOGIN COM 2FA ---
 if not st.session_state.logado:
-    st.title("🔐 Login")
-    user_in = st.text_input("Usuário")
-    pass_in = st.text_input("Senha", type="password")
-    
-    if st.button("Entrar"):
-        c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (user_in, hash_password(pass_in)))
-        res = c.fetchone()
-        if res:
-            st.session_state.logado = True
-            st.session_state.display_name = res[4]
-            st.session_state.temp_user = res[1]
-            st.rerun()
-        else:
-            st.error("Usuário ou senha incorretos.")
+    st.title("🔐 Acesso Restrito")
+    if not st.session_state.fase_2fa:
+        u_in = st.text_input("Usuário")
+        p_in = st.text_input("Senha", type="password")
+        if st.button("Entrar"):
+            c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u_in, hash_password(p_in)))
+            user_data = c.fetchone()
+            if user_data:
+                codigo = str(random.randint(100000, 999999))
+                st.session_state.code = codigo
+                st.session_state.temp_email = user_data[3]
+                st.session_state.temp_display = user_data[4]
+                if enviar_email(user_data[3], "Código de Acesso", f"Olá {user_data[4]}, seu código é: {codigo}"):
+                    st.session_state.fase_2fa = True
+                    st.rerun()
+                else: st.error("Erro ao enviar e-mail de segurança.")
+            else: st.error("Credenciais incorretas.")
+    else:
+        st.info(f"Código enviado para {st.session_state.temp_email}")
+        c_in = st.text_input("Código 2FA")
+        if st.button("Verificar"):
+            if c_in == st.session_state.code:
+                st.session_state.logado = True
+                st.session_state.display_name = st.session_state.temp_display
+                st.rerun()
+            else: st.error("Código inválido.")
     st.stop()
 
-# --- APP PRINCIPAL ---
-st.sidebar.title(f"Olá, {st.session_state.display_name}")
+# --- PAINEL PRINCIPAL ---
+st.sidebar.title(f"👤 {st.session_state.display_name}")
 if st.sidebar.button("Sair"):
     st.session_state.logado = False
+    st.session_state.fase_2fa = False
     st.rerun()
 
-st.title("📊 Painel Financeiro")
-st.write("Bem-vindo ao seu novo sistema!")
+# Carregar Dados
+df = pd.read_sql_query("SELECT * FROM transacoes", conn)
 
-# Aba de Gestão para criar novos membros
-tab1, tab2 = st.tabs(["Lançamentos", "Configurações"])
+st.title(f"🚗 Painel de Controle: {st.session_state.display_name}")
 
-with tab2:
-    st.subheader("👨‍👩‍👧‍👦 Adicionar Familiar")
-    with st.form("add_family"):
-        f_nom = st.text_input("Nome do Familiar")
-        f_log = st.text_input("Login do Familiar")
-        f_ema = st.text_input("E-mail do Familiar")
-        f_sen = st.text_input("Senha Inicial", type="password")
-        if st.form_submit_button("Cadastrar"):
-            try:
-                c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)",
-                          (f_log, hash_password(f_sen), f_ema, f_nom))
-                conn.commit()
-                st.success(f"{f_nom} cadastrado!")
-            except:
-                st.error("Erro ao cadastrar.")
+# KPIs de Saldo
+if not df.empty:
+    receita = df
