@@ -2,35 +2,56 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import hashlib
+import smtplib
+import random
+import plotly.express as px
+from email.mime.text import MIMEText
 from datetime import datetime
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="ERP Familiar", layout="wide")
+st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+def enviar_email_2fa(destino, codigo):
+    try:
+        corpo = f"Seu código de verificação é: {codigo}"
+        msg = MIMEText(corpo)
+        msg['Subject'] = "🔒 Código 2FA - ERP Familiar"
+        msg['From'] = st.secrets["email"]["smtp_user"]
+        msg['To'] = destino
+        with smtplib.SMTP(st.secrets["email"]["smtp_server"], st.secrets["email"]["smtp_port"]) as server:
+            server.starttls()
+            server.login(st.secrets["email"]["smtp_user"], st.secrets["email"]["smtp_pass"])
+            server.sendmail(st.secrets["email"]["smtp_user"], destino, msg.as_string())
+        return True
+    except: return False
+
 def get_conn():
     return sqlite3.connect('finance.db', check_same_thread=False)
 
-# --- INICIALIZAÇÃO DO BANCO (Tabelas e Dados Padrão) ---
+# --- INICIALIZAÇÃO DO BANCO ---
 def init_db():
     conn = get_conn()
     c = conn.cursor()
-    # Tabelas base
-    c.execute('CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT, nome_exibicao TEXT, senha_trocada INTEGER DEFAULT 0)')
-    c.execute('CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY, data TEXT, categoria TEXT, beneficiario TEXT, fonte TEXT, valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT)')
+    c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
+                 (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, 
+                  email TEXT, nome_exibicao TEXT, senha_trocada INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS transacoes 
+                 (id INTEGER PRIMARY KEY, data TEXT, categoria TEXT, beneficiario TEXT, 
+                  fonte TEXT, valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT)''')
     
     # Tabelas de listas dinâmicas
     c.execute('CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
     c.execute('CREATE TABLE IF NOT EXISTS beneficiarios (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
     c.execute('CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
     
-    # 3) Popula tabelas vazias com dados padrão para corrigir erro de image_16
+    # Dados iniciais se estiverem vazias
     for table, defaults in {
-        "categorias": ["Alimentação", "Transporte", "Moradia", "Lazer"],
-        "beneficiarios": ["Pai", "Mãe", "Filho", "Geral"],
-        "fontes": ["Dinheiro Vivo", "Conta Principal"]
+        "categorias": ["Alimentação", "Moradia", "Transporte"],
+        "beneficiarios": ["Ivan", "Larissa", "Geral"],
+        "fontes": ["Dinheiro Vivo", "Banco Principal"]
     }.items():
         c.execute(f"SELECT COUNT(*) FROM {table}")
         if c.fetchone()[0] == 0:
@@ -41,77 +62,148 @@ def init_db():
 
 init_db()
 
-# --- CONTROLE DE ACESSO (Omitido login por brevidade, assumindo logado) ---
-if 'display_name' not in st.session_state: st.session_state.display_name = "Ivan Zimmermann"
+# --- LOGIN E SEGURANÇA ---
+if 'logado' not in st.session_state: st.session_state.logado = False
+if 'auth_2fa' not in st.session_state: st.session_state.auth_2fa = False
 
-st.title(f"🚗 Painel Financeiro")
+conn = get_conn()
+c = conn.cursor()
+
+if not st.session_state.logado:
+    st.title("🔐 Acesso: ERP Familiar")
+    u_in = st.text_input("Usuário")
+    p_in = st.text_input("Senha", type="password")
+    if st.button("Entrar"):
+        c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u_in, hash_password(p_in)))
+        user = c.fetchone()
+        if user:
+            st.session_state.tmp_user = user
+            codigo = str(random.randint(100000, 999999))
+            st.session_state.verif_code = codigo
+            if enviar_email_2fa(user[3], codigo):
+                st.session_state.logado = True
+                st.rerun()
+            else: st.error("Erro ao enviar e-mail. Verifique os Secrets.")
+    st.stop()
+
+if not st.session_state.auth_2fa:
+    st.title("🛡️ Verificação 2FA")
+    c_in = st.text_input("Código enviado por e-mail")
+    if st.button("Confirmar"):
+        if c_in == st.session_state.verif_code:
+            st.session_state.auth_2fa = True
+            st.session_state.user_id = st.session_state.tmp_user[0]
+            st.session_state.display_name = st.session_state.tmp_user[4]
+            st.session_state.precisa_trocar = (st.session_state.tmp_user[5] == 0)
+            st.rerun()
+        else: st.error("Código inválido.")
+    st.stop()
+
+if st.session_state.precisa_trocar:
+    st.title("🔑 Troca de Senha Obrigatória")
+    nova_s = st.text_input("Nova Senha", type="password")
+    if st.button("Salvar Nova Senha"):
+        if len(nova_s) >= 6:
+            c.execute("UPDATE usuarios SET password=?, senha_trocada=1 WHERE id=?", (hash_password(nova_s), st.session_state.user_id))
+            conn.commit()
+            st.session_state.precisa_trocar = False
+            st.rerun()
+        else: st.error("Mínimo 6 caracteres.")
+    st.stop()
+
+# --- PAINEL PRINCIPAL ---
+st.sidebar.title(f"👤 {st.session_state.display_name}")
+if st.sidebar.button("Sair"):
+    st.session_state.clear()
+    st.rerun()
+
+# Carregar listas dinâmicas para os menus
+lista_cat = pd.read_sql_query("SELECT nome FROM categorias", conn)['nome'].tolist()
+lista_ben = pd.read_sql_query("SELECT nome FROM beneficiarios", conn)['nome'].tolist()
+lista_fon = pd.read_sql_query("SELECT nome FROM fontes", conn)['nome'].tolist()
 
 tab1, tab2, tab3 = st.tabs(["➕ Lançar", "📊 Ver Dados", "⚙️ Gestão Familiar"])
 
-# --- TAB 1: CORRIGINDO FORMULÁRIO QUEBRADO (Erro 1 - image_14) ---
 with tab1:
-    conn = get_conn()
-    # Carrega listas reais do banco para popular os selectboxes
-    lc = pd.read_sql_query("SELECT nome FROM categorias", conn)['nome'].tolist()
-    lb = pd.read_sql_query("SELECT nome FROM beneficiarios", conn)['nome'].tolist()
-    lf = pd.read_sql_query("SELECT nome FROM fontes", conn)['nome'].tolist()
-    conn.close()
-
     st.subheader("Novo Lançamento")
-    with st.form("form_novo_registro", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        valor = col1.number_input("Valor", min_value=0.0, step=0.01)
+    with st.form("form_financeiro", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        valor = col1.number_input("Valor", min_value=0.0)
         moeda = col2.selectbox("Moeda", ["EUR", "BRL"])
-        # Conversão simples
-        v_eur = valor * 0.16 if moeda == "BRL" else valor
+        fonte_sel = col3.selectbox("Fonte (Conta/Cartão)", lista_fon)
         
-        cat = st.selectbox("Categoria", lc) # Usa listalc
-        ben = st.selectbox("Beneficiário", lb) # Usa listalb
-        fon = st.selectbox("Fonte (Conta/Cartão)", lf) # Usa listalf
+        cat_sel = st.selectbox("Categoria", lista_cat)
+        ben_sel = st.selectbox("Beneficiário", lista_ben)
         tipo = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
+        nota = st.text_input("Nota/Descrição")
         
         if st.form_submit_button("Salvar Registro"):
-            conn = get_conn()
-            conn.execute("INSERT INTO transacoes (data, categoria, beneficiario, fonte, valor_eur, tipo, usuario) VALUES (?,?,?,?,?,?,?)",
-                      (datetime.now().strftime("%d/%m/%Y"), cat, ben, fon, v_eur, tipo, st.session_state.display_name))
+            v_eur = valor * 0.16 if moeda == "BRL" else valor
+            c.execute("INSERT INTO transacoes (data, categoria, beneficiario, fonte, valor_eur, tipo, nota, usuario) VALUES (?,?,?,?,?,?,?,?)",
+                      (datetime.now().strftime("%d/%m/%Y"), cat_sel, ben_sel, fonte_sel, v_eur, tipo, nota, st.session_state.display_name))
             conn.commit()
-            conn.close()
-            st.success("✅ Lançado com sucesso!")
+            st.success("Lançamento salvo!")
             st.rerun()
 
-# --- TAB 3: CORRIGINDO CADASTRO E DADOS (Erros 2 e 3 - image_15/16) ---
+with tab2:
+    st.subheader("Histórico e Análises")
+    df = pd.read_sql_query("SELECT * FROM transacoes", conn)
+    if not df.empty:
+        fig_pizza = px.pie(df[df['tipo'] == 'Despesa'], values='valor_eur', names='categoria', title="Gastos por Categoria")
+        st.plotly_chart(fig_pizza, use_container_width=True)
+        st.dataframe(df.sort_index(ascending=False), use_container_width=True)
+    else: st.info("Sem dados.")
+
 with tab3:
-    st.subheader("👥 Controle Administrativo")
+    st.header("⚙️ Gestão de Listas e Usuários")
     
-    # 3) Mostra as listas atuais (agora populadas)
-    conn = get_conn()
-    colc1, colc2, colc3 = st.columns(3)
-    colc1.write("**Fontes Ativas**")
-    colc1.dataframe(pd.read_sql_query("SELECT nome FROM fontes", conn), use_container_width=True, hide_index=True)
+    # --- GESTÃO DE LISTAS DINÂMICAS ---
+    col_cat, col_ben, col_fon = st.columns(3)
     
-    colc2.write("**Categorias**")
-    colc2.dataframe(pd.read_sql_query("SELECT nome FROM categorias", conn), use_container_width=True, hide_index=True)
+    def gerenciar_secao(titulo, tabela, lista_atual, key):
+        st.subheader(titulo)
+        st.write("**Lista Atual:**")
+        st.dataframe(pd.DataFrame(lista_atual, columns=["Nome"]), hide_index=True)
+        
+        novo = st.text_input(f"Novo {titulo}", key=f"add_{key}")
+        if st.button(f"Adicionar {titulo}", key=f"btn_add_{key}"):
+            if novo:
+                conn.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (novo,))
+                conn.commit()
+                st.rerun()
+        
+        alvo = st.selectbox(f"Selecionar {titulo}", [""] + lista_atual, key=f"sel_{key}")
+        if alvo:
+            novo_n = st.text_input(f"Novo nome para {alvo}", key=f"edit_{key}")
+            if st.button("Renomear", key=f"btn_ed_{key}"):
+                conn.execute(f"UPDATE {tabela} SET nome=? WHERE nome=?", (novo_n, alvo))
+                conn.commit()
+                st.rerun()
+            if st.button("Excluir", key=f"btn_del_{key}"):
+                conn.execute(f"DELETE FROM {tabela} WHERE nome=?", (alvo,))
+                conn.commit()
+                st.rerun()
 
-    colc3.write("**Beneficiários**")
-    colc3.dataframe(pd.read_sql_query("SELECT nome FROM beneficiarios", conn), use_container_width=True, hide_index=True)
-    conn.close()
+    with col_cat: gerenciar_secao("🏷️ Categoria", "categorias", lista_cat, "cat")
+    with col_ben: gerenciar_secao("👤 Beneficiário", "beneficiarios", lista_ben, "ben")
+    with col_fon: gerenciar_secao("💳 Fonte/Conta", "fontes", lista_fon, "fon")
+
     st.divider()
+    st.subheader("👥 Controle de Usuários")
+    u_df = pd.read_sql_query("SELECT nome_exibicao, username, CASE WHEN senha_trocada=1 THEN '✅ Alterada' ELSE '⚠️ Inicial' END as Status FROM usuarios", conn)
+    st.table(u_df) # Quadro restaurado
+    
+    with st.expander("➕ Cadastrar Novo Membro"):
+        n = st.text_input("Nome")
+        u = st.text_input("Login")
+        e = st.text_input("E-mail")
+        s = st.text_input("Senha Inicial", type="password")
+        if st.button("Criar Usuário"):
+            try:
+                c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,0)", (u, hash_password(s), e, n))
+                conn.commit()
+                st.success("Usuário criado!")
+                st.rerun()
+            except: st.error("Erro: Login já existe.")
 
-    # 2) Reativando o formulário de cadastro de usuário
-    st.subheader("➕ Cadastrar Novo Membro (Admin)")
-    with st.form("form_novo_usuario", clear_on_submit=True):
-        n_ex = st.text_input("Nome Completo")
-        u_lo = st.text_input("Nome de Usuário (Login)")
-        u_em = st.text_input("E-mail")
-        u_ps = st.text_input("Senha Inicial", type="password")
-        if st.form_submit_button("Cadastrar Membro"):
-            if n_ex and u_lo and u_ps:
-                conn = get_conn()
-                try:
-                    conn.execute("INSERT INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,0)",
-                               (u_lo, hash_password(u_ps), u_em, n_ex))
-                    conn.commit()
-                    st.success(f"Acesso criado para {n_ex}!")
-                except: st.error("Erro: Usuário já existe.")
-                finally: conn.close()
-            else: st.warning("Preencha todos os campos.")
+conn.close()
