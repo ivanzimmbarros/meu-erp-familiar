@@ -94,5 +94,24 @@ with tab2:
         st.info("Ainda não existem dados para exibir os gráficos.")
 
 with tab3:
-    st.subheader("Gerenciar Usuários")
-    st.write("Aqui você poderá adicionar novos membros da família futuramente.")
+    st.subheader("👨‍👩‍👧‍👦 Cadastrar Novo Membro da Família")
+    st.write("Crie acessos individuais para que cada membro possa lançar seus próprios gastos.")
+    
+    with st.form("form_novo_usuario", clear_on_submit=True):
+        novo_nome = st.text_input("Nome Completo (Ex: Maria Zimmermann)")
+        novo_user = st.text_input("Nome de Usuário (Para Login)")
+        novo_email = st.text_input("E-mail (Para 2FA)")
+        nova_senha = st.text_input("Senha Inicial", type="password")
+        
+        if st.form_submit_button("Finalizar Cadastro"):
+            if novo_nome and novo_user and novo_email and nova_senha:
+                try:
+                    # Tenta inserir o novo familiar no banco de dados
+                    c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)",
+                              (novo_user, hash_password(nova_senha), novo_email, novo_nome))
+                    conn.commit()
+                    st.success(f"✅ Sucesso! {novo_nome} agora já pode fazer login.")
+                except Exception as e:
+                    st.error(f"❌ Erro: O usuário '{novo_user}' já existe ou os dados são inválidos.")
+            else:
+                st.warning("⚠️ Por favor, preencha todos os campos do formulário.")
