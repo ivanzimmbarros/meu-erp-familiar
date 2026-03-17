@@ -6,112 +6,115 @@ import plotly.express as px
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="ERP Familiar", layout="wide")
+st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
 
+# --- FUNÇÕES DE SEGURANÇA ---
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def get_conn():
     return sqlite3.connect('finance.db', check_same_thread=False)
 
-# --- INICIALIZAÇÃO DO BANCO ---
-conn = get_conn()
-c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-             (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT, nome_exibicao TEXT)''')
-c.execute('''CREATE TABLE IF NOT EXISTS transacoes 
-             (id INTEGER PRIMARY KEY, data TEXT, categoria TEXT, valor_eur REAL, tipo TEXT, usuario TEXT)''')
-conn.commit()
+# --- INICIALIZAÇÃO E ATUALIZAÇÃO DO BANCO ---
+def init_db():
+    conn = get_conn()
+    c = conn.cursor()
+    # Criação das tabelas base
+    c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
+                 (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, 
+                  email TEXT, nome_exibicao TEXT, senha_trocada INTEGER DEFAULT 0)''')
+    
+    # Atualização: Adiciona coluna de status de senha se ela não existir
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN senha_trocada INTEGER DEFAULT 0")
+    except:
+        pass 
+        
+    c.execute('''CREATE TABLE IF NOT EXISTS transacoes 
+                 (id INTEGER PRIMARY KEY, data TEXT, categoria TEXT, beneficiario TEXT, 
+                  valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT)''')
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # --- CONTROLE DE SESSÃO ---
 if 'logado' not in st.session_state:
     st.session_state.logado = False
 
-# --- TELA DE LOGIN ---
+# --- LOGIN ---
 if not st.session_state.logado:
-    st.title("🔐 Login: ERP Familiar")
-    u = st.text_input("Usuário")
-    p = st.text_input("Senha", type="password")
+    conn = get_conn()
+    c = conn.cursor()
+    
+    # Verifica se existe algum usuário, se não, força criação do Admin
+    c.execute("SELECT COUNT(*) FROM usuarios")
+    if c.fetchone()[0] == 0:
+        st.title("🏠 Configuração Inicial: Criar Admin")
+        with st.form("admin_form"):
+            n_ex = st.text_input("Seu Nome (Exibição)")
+            u_log = st.text_input("Usuário de Login")
+            u_em = st.text_input("E-mail")
+            u_ps = st.text_input("Senha", type="password")
+            if st.form_submit_button("Criar Conta"):
+                if n_ex and u_log and u_ps:
+                    c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,?)",
+                              (u_log, hash_password(u_ps), u_em, n_ex, 1)) # Admin já nasce com senha "trocada"
+                    conn.commit()
+                    st.success("Admin criado! Faça login.")
+                    st.rerun()
+        st.stop()
+
+    st.title("🔐 Acesso: ERP Familiar")
+    user_in = st.text_input("Usuário")
+    pass_in = st.text_input("Senha", type="password")
+    
     if st.button("Entrar"):
-        c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u, hash_password(p)))
+        c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (user_in, hash_password(pass_in)))
         res = c.fetchone()
         if res:
             st.session_state.logado = True
+            st.session_state.user_id = res[0]
+            st.session_state.username = res[1]
             st.session_state.display_name = res[4]
             st.rerun()
         else:
             st.error("Usuário ou senha incorretos.")
+    conn.close()
     st.stop()
 
-# --- PAINEL PRINCIPAL (APÓS LOGIN) ---
+# --- APP PRINCIPAL ---
+conn = get_conn()
+c = conn.cursor()
+
 st.sidebar.title(f"👤 {st.session_state.display_name}")
-if st.sidebar.button("Sair"):
+if st.sidebar.button("Sair (Logout)"):
     st.session_state.logado = False
     st.rerun()
 
-# Carregar dados para os gráficos
+# Carregar Dados Globalmente
 df = pd.read_sql_query("SELECT * FROM transacoes", conn)
 
 st.title(f"🚗 Painel de Controle: {st.session_state.display_name}")
 
-# KPIs de Saldo
+# KPIs
 if not df.empty:
     rec = df[df['tipo'] == 'Receita']['valor_eur'].sum()
     des = df[df['tipo'] == 'Despesa']['valor_eur'].sum()
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Saldo Geral", f"€ {rec - des:,.2f}")
-    col2.metric("Total Receitas", f"€ {rec:,.2f}")
-    col3.metric("Total Despesas", f"€ {des:,.2f}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Saldo Geral", f"€ {rec - des:,.2f}")
+    c2.metric("Total Receitas", f"€ {rec:,.2f}")
+    c3.metric("Total Despesas", f"€ {des:,.2f}")
     st.divider()
 
-# DEFINIÇÃO DAS ABAS
-tab1, tab2, tab3 = st.tabs(["➕ Novo Lançamento", "📊 Visualizar Dados", "⚙️ Configurações"])
+tab1, tab2, tab3 = st.tabs(["➕ Lançamentos", "📊 Análises", "⚙️ Gestão Familiar"])
 
 with tab1:
-    with st.form("lancamento", clear_on_submit=True):
+    with st.form("novo_lancamento", clear_on_submit=True):
         col_v, col_m = st.columns(2)
         valor = col_v.number_input("Valor", min_value=0.0)
         moeda = col_m.selectbox("Moeda", ["EUR", "BRL"])
         v_eur = valor * 0.16 if moeda == "BRL" else valor
         
         cat = st.selectbox("Categoria", ["Alimentação", "Moradia", "Transporte", "Saúde", "Lazer", "Outros"])
-        tipo = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
-        
-        if st.form_submit_button("Salvar Registro"):
-            c.execute("INSERT INTO transacoes (data, categoria, valor_eur, tipo, usuario) VALUES (?,?,?,?,?)",
-                      (datetime.now().strftime("%d/%m/%Y %H:%M"), cat, v_eur, tipo, st.session_state.display_name))
-            conn.commit()
-            st.success("Lançamento realizado com sucesso!")
-            st.rerun()
-
-with tab2:
-    if not df.empty:
-        fig = px.pie(df[df['tipo'] == 'Despesa'], values='valor_eur', names='categoria', title="Distribuição de Despesas")
-        st.plotly_chart(fig, use_container_width=True)
-        st.subheader("📜 Histórico de Transações")
-        st.dataframe(df.sort_index(ascending=False), use_container_width=True)
-    else:
-        st.info("Ainda não existem dados para exibir os gráficos.")
-
-with tab3:
-    st.subheader("👨‍👩‍👧‍👦 Cadastrar Novo Membro da Família")
-    st.write("Crie acessos individuais para que cada membro possa lançar seus próprios gastos.")
-    
-    with st.form("form_novo_usuario", clear_on_submit=True):
-        novo_nome = st.text_input("Nome Completo (Ex: Maria Zimmermann)")
-        novo_user = st.text_input("Nome de Usuário (Para Login)")
-        novo_email = st.text_input("E-mail (Para 2FA)")
-        nova_senha = st.text_input("Senha Inicial", type="password")
-        
-        if st.form_submit_button("Finalizar Cadastro"):
-            if novo_nome and novo_user and novo_email and nova_senha:
-                try:
-                    # Tenta inserir o novo familiar no banco de dados
-                    c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)",
-                              (novo_user, hash_password(nova_senha), novo_email, novo_nome))
-                    conn.commit()
-                    st.success(f"✅ Sucesso! {novo_nome} agora já pode fazer login.")
-                except Exception as e:
-                    st.error(f"❌ Erro: O usuário '{novo_user}' já existe ou os dados são inválidos.")
-            else:
-                st.warning("⚠️ Por favor, preencha todos os campos do formulário.")
+        benef = st.selectbox("Beneficiário", ["Pai", "
