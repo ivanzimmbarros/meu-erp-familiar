@@ -1,77 +1,93 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+import hashlib
+import smtplib
+import random
+from email.mime.text import MIMEText
 from datetime import datetime
 
-# --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+st.set_page_config(page_title="ERP Seguro", layout="wide")
+
+# --- FUNÇÕES DE SEGURANÇA E EMAIL ---
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def enviar_email(destino, assunto, corpo):
+    try:
+        msg = MIMEText(corpo)
+        msg['Subject'] = assunto
+        msg['From'] = st.secrets["email"]["smtp_user"]
+        msg['To'] = destino
+        with smtplib.SMTP(st.secrets["email"]["smtp_server"], st.secrets["email"]["smtp_port"]) as server:
+            server.starttls()
+            server.login(st.secrets["email"]["smtp_user"], st.secrets["email"]["smtp_pass"])
+            server.sendmail(st.secrets["email"]["smtp_user"], destino, msg.as_string())
+    except Exception as e:
+        st.error(f"Erro ao enviar e-mail: {e}")
+
+# --- BANCO DE DADOS ---
+conn = sqlite3.connect('finance.db', check_same_thread=False)
 def init_db():
-    conn = sqlite3.connect('finance.db')
     c = conn.cursor()
-    # Tabela de transações com suporte a recibos (texto)
-    c.execute('''CREATE TABLE IF NOT EXISTS transacoes 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, categoria TEXT, 
-                  beneficiario TEXT, valor REAL, tipo TEXT, nota TEXT, status TEXT)''')
-    # Tabela de saldos iniciais
-    c.execute('''CREATE TABLE IF NOT EXISTS contas 
-                 (nome TEXT PRIMARY KEY, saldo REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY, valor_eur REAL, beneficiario TEXT, usuario TEXT)''')
     conn.commit()
-    conn.close()
 
 init_db()
 
-# --- INTERFACE (UX) ---
-st.set_page_config(page_title="ERP Doméstico", page_icon="💰", layout="centered")
-st.title("🏠 ERP Doméstico Familiar")
+# --- FLUXO DE AUTENTICAÇÃO ---
+if 'logado' not in st.session_state: st.session_state.logado = False
+if 'fase_2fa' not in st.session_state: st.session_state.fase_2fa = False
 
-conn = sqlite3.connect('finance.db')
-
-# --- DASHBOARD ---
-df = pd.read_sql_query("SELECT * FROM transacoes", conn)
-
-col1, col2 = st.columns(2)
-total_gastos = df['valor'].sum() if not df.empty else 0
-with col1:
-    st.metric("Saldo Real (Total)", f"€ {total_gastos:,.2f}")
-with col2:
-    st.metric("Patrimônio Líquido", "€ 0,00") # Evoluir conforme o módulo de ativos
-
-# --- ENTRADA DE DADOS ---
-with st.expander("➕ Novo Lançamento"):
-    with st.form("lancamento_form", clear_on_submit=True):
-        data = st.date_input("Data", datetime.now())
-        valor = st.number_input("Valor (€)", min_value=0.0, step=0.01)
-        beneficiario = st.selectbox("Beneficiário", ["Pai", "Mãe", "Filho", "Cão", "Carro", "Família"])
-        categoria = st.selectbox("Categoria", ["Alimentação", "Moradia", "Transporte", "Lazer", "Saúde"])
-        tipo = st.radio("Tipo", ["Despesa", "Receita"])
-        nota = st.text_input("Nota / Descrição")
-        
-        submitted = st.form_submit_button("Salvar Transação")
-        if submitted:
-            c = conn.cursor()
-            c.execute("INSERT INTO transacoes (data, categoria, beneficiario, valor, tipo, nota, status) VALUES (?,?,?,?,?,?,?)", 
-                      (data, categoria, beneficiario, valor, tipo, nota, "Confirmado"))
+# Verificar se existe administrador
+c = conn.cursor()
+c.execute("SELECT * FROM usuarios")
+if not c.fetchone():
+    st.title("Configuração Inicial: Criar Admin")
+    with st.form("admin_form"):
+        u = st.text_input("Usuário Admin")
+        e = st.text_input("E-mail")
+        p = st.text_input("Senha", type="password")
+        if st.form_submit_button("Criar"):
+            c.execute("INSERT INTO usuarios (username, password, email) VALUES (?,?,?)", (u, hash_password(p), e))
             conn.commit()
-            st.success("Salvo com sucesso!")
             st.rerun()
+    st.stop()
 
-# --- RELATÓRIOS SIMPLES ---
-st.subheader("📋 Extrato Recente")
-if not df.empty:
-    st.dataframe(df.tail(10))
-else:
-    st.write("Nenhum lançamento encontrado.")
+# TELA DE LOGIN
+if not st.session_state.logado:
+    st.title("🔐 Acesso Restrito")
+    if not st.session_state.fase_2fa:
+        user = st.text_input("Usuário")
+        pwd = st.text_input("Senha", type="password")
+        if st.button("Login"):
+            c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (user, hash_password(pwd)))
+            user_data = c.fetchone()
+            if user_data:
+                codigo = str(random.randint(100000, 999999))
+                st.session_state.code = codigo
+                st.session_state.temp_user = user
+                enviar_email(user_data[3], "Seu código 2FA", f"Seu código é: {codigo}")
+                st.session_state.fase_2fa = True
+                st.rerun()
+            else: st.error("Credenciais inválidas")
+    else:
+        code_input = st.text_input("Insira o código de 6 dígitos enviado ao e-mail")
+        if st.button("Verificar"):
+            if code_input == st.session_state.code:
+                st.session_state.logado = True
+                st.session_state.fase_2fa = False
+                st.rerun()
+            else: st.error("Código incorreto")
+    st.stop()
 
-# --- MÓDULO DE AJUSTE (NOVO) ---
-with st.expander("⚙️ Ajuste de Saldo"):
-    st.write("Use isto apenas se o saldo do sistema estiver diferente do saldo real.")
-    novo_saldo = st.number_input("Saldo Real Atual (€)", min_value=0.0)
-    if st.button("Confirmar Ajuste"):
-        # Log de auditoria simples
-        c = conn.cursor()
-        c.execute("INSERT INTO transacoes (data, categoria, beneficiario, valor, tipo, nota, status) VALUES (?,?,?,?,?,?,?)", 
-                  (datetime.now(), "Ajuste de Auditoria", "Sistema", (novo_saldo - total_gastos), "Ajuste", "Ajuste Manual de Saldo", "Auditado"))
-        conn.commit()
-        st.success("Saldo ajustado com sucesso!")
-        st.rerun()
+# --- DASHBOARD (ÁREA PROTEGIDA) ---
+st.sidebar.write(f"Bem-vindo, {st.session_state.temp_user}")
+if st.sidebar.button("Logout"):
+    st.session_state.logado = False
+    st.rerun()
 
-conn.close()
+st.title("🚗 Painel de Controle Financeiro")
+# (O restante da lógica de transações e gráficos entra aqui, 
+# rodando apenas dentro deste bloco protegido)
