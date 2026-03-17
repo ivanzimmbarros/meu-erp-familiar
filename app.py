@@ -2,110 +2,97 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import hashlib
-import smtplib
-import random
 import plotly.express as px
-from email.mime.text import MIMEText
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
+st.set_page_config(page_title="ERP Familiar", layout="wide")
 
-# --- FUNÇÕES DE SEGURANÇA ---
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def enviar_email(destino, assunto, corpo):
-    try:
-        msg = MIMEText(corpo)
-        msg['Subject'] = assunto
-        msg['From'] = st.secrets["email"]["smtp_user"]
-        msg['To'] = destino
-        with smtplib.SMTP(st.secrets["email"]["smtp_server"], st.secrets["email"]["smtp_port"]) as server:
-            server.starttls()
-            server.login(st.secrets["email"]["smtp_user"], st.secrets["email"]["smtp_pass"])
-            server.sendmail(st.secrets["email"]["smtp_user"], destino, msg.as_string())
-        return True
-    except:
-        return False
-
-# --- BANCO DE DADOS ---
 def get_conn():
     return sqlite3.connect('finance.db', check_same_thread=False)
 
+# --- INICIALIZAÇÃO DO BANCO ---
 conn = get_conn()
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
              (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT, nome_exibicao TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS transacoes 
-             (id INTEGER PRIMARY KEY, data TEXT, categoria TEXT, beneficiario TEXT, 
-              valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT)''')
+             (id INTEGER PRIMARY KEY, data TEXT, categoria TEXT, valor_eur REAL, tipo TEXT, usuario TEXT)''')
 conn.commit()
 
 # --- CONTROLE DE SESSÃO ---
-if 'logado' not in st.session_state: st.session_state.logado = False
-if 'fase_2fa' not in st.session_state: st.session_state.fase_2fa = False
+if 'logado' not in st.session_state:
+    st.session_state.logado = False
 
-# --- VERIFICAÇÃO DE USUÁRIOS ---
-c.execute("SELECT COUNT(*) FROM usuarios")
-if c.fetchone()[0] == 0:
-    st.title("🏠 Configuração Inicial")
-    with st.form("setup_admin"):
-        n_ex = st.text_input("Seu Nome (Exibição)")
-        u_log = st.text_input("Usuário de Login")
-        u_em = st.text_input("E-mail para 2FA")
-        u_ps = st.text_input("Senha", type="password")
-        if st.form_submit_button("Criar Conta Admin"):
-            if n_ex and u_log and u_em and u_ps:
-                c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)",
-                          (u_log, hash_password(u_ps), u_em, n_ex))
-                conn.commit()
-                st.success("Admin criado! Recarregando...")
-                st.rerun()
-    st.stop()
-
-# --- LOGIN COM 2FA ---
+# --- TELA DE LOGIN ---
 if not st.session_state.logado:
-    st.title("🔐 Acesso Restrito")
-    if not st.session_state.fase_2fa:
-        u_in = st.text_input("Usuário")
-        p_in = st.text_input("Senha", type="password")
-        if st.button("Entrar"):
-            c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u_in, hash_password(p_in)))
-            user_data = c.fetchone()
-            if user_data:
-                codigo = str(random.randint(100000, 999999))
-                st.session_state.code = codigo
-                st.session_state.temp_email = user_data[3]
-                st.session_state.temp_display = user_data[4]
-                if enviar_email(user_data[3], "Código de Acesso", f"Olá {user_data[4]}, seu código é: {codigo}"):
-                    st.session_state.fase_2fa = True
-                    st.rerun()
-                else: st.error("Erro ao enviar e-mail de segurança.")
-            else: st.error("Credenciais incorretas.")
-    else:
-        st.info(f"Código enviado para {st.session_state.temp_email}")
-        c_in = st.text_input("Código 2FA")
-        if st.button("Verificar"):
-            if c_in == st.session_state.code:
-                st.session_state.logado = True
-                st.session_state.display_name = st.session_state.temp_display
-                st.rerun()
-            else: st.error("Código inválido.")
+    st.title("🔐 Login: ERP Familiar")
+    u = st.text_input("Usuário")
+    p = st.text_input("Senha", type="password")
+    if st.button("Entrar"):
+        c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u, hash_password(p)))
+        res = c.fetchone()
+        if res:
+            st.session_state.logado = True
+            st.session_state.display_name = res[4]
+            st.rerun()
+        else:
+            st.error("Usuário ou senha incorretos.")
     st.stop()
 
-# --- PAINEL PRINCIPAL ---
+# --- PAINEL PRINCIPAL (APÓS LOGIN) ---
 st.sidebar.title(f"👤 {st.session_state.display_name}")
 if st.sidebar.button("Sair"):
     st.session_state.logado = False
-    st.session_state.fase_2fa = False
     st.rerun()
 
-# Carregar Dados
+# Carregar dados para os gráficos
 df = pd.read_sql_query("SELECT * FROM transacoes", conn)
 
 st.title(f"🚗 Painel de Controle: {st.session_state.display_name}")
 
 # KPIs de Saldo
 if not df.empty:
-    receita = df
+    rec = df[df['tipo'] == 'Receita']['valor_eur'].sum()
+    des = df[df['tipo'] == 'Despesa']['valor_eur'].sum()
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Saldo Geral", f"€ {rec - des:,.2f}")
+    col2.metric("Total Receitas", f"€ {rec:,.2f}")
+    col3.metric("Total Despesas", f"€ {des:,.2f}")
+    st.divider()
+
+# DEFINIÇÃO DAS ABAS
+tab1, tab2, tab3 = st.tabs(["➕ Novo Lançamento", "📊 Visualizar Dados", "⚙️ Configurações"])
+
+with tab1:
+    with st.form("lancamento", clear_on_submit=True):
+        col_v, col_m = st.columns(2)
+        valor = col_v.number_input("Valor", min_value=0.0)
+        moeda = col_m.selectbox("Moeda", ["EUR", "BRL"])
+        v_eur = valor * 0.16 if moeda == "BRL" else valor
+        
+        cat = st.selectbox("Categoria", ["Alimentação", "Moradia", "Transporte", "Saúde", "Lazer", "Outros"])
+        tipo = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
+        
+        if st.form_submit_button("Salvar Registro"):
+            c.execute("INSERT INTO transacoes (data, categoria, valor_eur, tipo, usuario) VALUES (?,?,?,?,?)",
+                      (datetime.now().strftime("%d/%m/%Y %H:%M"), cat, v_eur, tipo, st.session_state.display_name))
+            conn.commit()
+            st.success("Lançamento realizado com sucesso!")
+            st.rerun()
+
+with tab2:
+    if not df.empty:
+        fig = px.pie(df[df['tipo'] == 'Despesa'], values='valor_eur', names='categoria', title="Distribuição de Despesas")
+        st.plotly_chart(fig, use_container_width=True)
+        st.subheader("📜 Histórico de Transações")
+        st.dataframe(df.sort_index(ascending=False), use_container_width=True)
+    else:
+        st.info("Ainda não existem dados para exibir os gráficos.")
+
+with tab3:
+    st.subheader("Gerenciar Usuários")
+    st.write("Aqui você poderá adicionar novos membros da família futuramente.")
