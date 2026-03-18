@@ -97,7 +97,7 @@ with tab2:
     st.subheader("📊 Controle Geral")
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # Barra de Filtros
+    # BARRA DE FILTROS
     f1, f2, f3, f4 = st.columns(4)
     sel_cat = f1.multiselect("Filtrar Categoria", lista_cat)
     sel_ben = f2.multiselect("Filtrar Beneficiário", lista_ben)
@@ -110,6 +110,7 @@ with tab2:
     if sel_fon: df_f = df_f[df_f['fonte'].isin(sel_fon)]
     if sel_tipo: df_f = df_f[df_f['tipo'].isin(sel_tipo)]
 
+    # TABELA EDITÁVEL
     edited_df = st.data_editor(
         df_f, 
         key=f"edit_hist_{v}", 
@@ -117,4 +118,36 @@ with tab2:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "id": st.column
+            "id": st.column_config.Column(disabled=True),
+            "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat),
+            "beneficiario": st.column_config.SelectboxColumn("Beneficiário", options=lista_ben),
+            "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon),
+            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="%.2f"),
+            "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
+            "usuario": st.column_config.Column(disabled=True)
+        }
+    )
+
+    # PAINEL DE CONFIRMAÇÃO
+    with st.expander("🔐 Painel de Confirmação", expanded=True):
+        confirmar = st.checkbox("Confirmo que as alterações refletem a realidade financeira.", key=f"chk_{v}")
+        if st.button("💾 Executar Alterações", type="primary"):
+            if confirmar:
+                try:
+                    ids_originais = df_f['id'].tolist()
+                    if ids_originais:
+                        placeholders = ','.join(['?'] * len(ids_originais))
+                        query = f"DELETE FROM transacoes WHERE id IN ({placeholders})"
+                        c.execute(query, tuple(ids_originais))
+                    
+                    edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
+                    conn.commit()
+                    st.success("🔄 Dados atualizados!")
+                    limpar_campos(); st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao salvar: {e}")
+
+with tab3:
+    st.header("💰 Saldos e Ajustes")
+    c_f, c_v = st.columns([2, 1])
+    f_alvo = c_f.selectbox("Escolha a Conta", lista_fon, key=f"
