@@ -27,10 +27,16 @@ def get_conn():
 # --- FUNÇÃO DE ENVIO DE E-MAIL (SMTP GMAIL) ---
 def enviar_email(destino, assunto, mensagem):
     try:
-        smtp_user = st.secrets["email"]["smtp_user"]
-        smtp_pass = st.secrets["email"]["smtp_pass"]
-        smtp_server = st.secrets["email"]["smtp_server"]
-        smtp_port = st.secrets["email"]["smtp_port"]
+        # Busca credenciais do secrets.toml
+        email_config = st.secrets.get("email", {})
+        smtp_user = email_config.get("smtp_user")
+        smtp_pass = email_config.get("smtp_pass")
+        smtp_server = email_config.get("smtp_server", "smtp.gmail.com")
+        smtp_port = email_config.get("smtp_port", 587)
+
+        if not smtp_user or not smtp_pass:
+            st.error("Configurações de e-mail ausentes no secrets.toml")
+            return False
 
         msg = MIMEText(mensagem)
         msg['Subject'] = assunto
@@ -43,10 +49,10 @@ def enviar_email(destino, assunto, mensagem):
             server.sendmail(smtp_user, destino, msg.as_string())
         return True
     except Exception as e:
-        st.error(f"Erro ao enviar e-mail: {e}")
+        st.error(f"Erro SMTP: {e}")
         return False
 
-# --- INICIALIZAÇÃO DO BANCO DE DADOS ---
+# --- INICIALIZAÇÃO DO BANCO ---
 def init_db():
     conn = get_conn()
     c = conn.cursor()
@@ -59,7 +65,6 @@ def init_db():
     c.execute('CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
     c.execute('CREATE TABLE IF NOT EXISTS beneficiarios (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
     c.execute('CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
-    c.execute('CREATE TABLE IF NOT EXISTS saldos_iniciais (fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)')
     
     senha_adm = hash_password("123456")
     c.execute("INSERT OR IGNORE INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,?)",
@@ -84,100 +89,84 @@ if not st.session_state.logado:
                 st.session_state.temp_user = user
                 st.session_state.codigo_gerado = str(random.randint(100000, 999999))
                 if enviar_email(user[3], "Seu Código de Acesso", f"Código: {st.session_state.codigo_gerado}"):
+                    st.success("Código enviado!")
                     st.session_state.auth_step = "2fa"
                     st.rerun()
                 else:
+                    st.warning("Falha no envio. Tente a chave mestra.")
                     st.session_state.auth_step = "2fa"
                     st.rerun()
-            else:
-                st.error("Credenciais inválidas.")
+            else: st.error("Incorreto.")
+
     elif st.session_state.auth_step == "2fa":
-        st.info("Código enviado ao e-mail.")
         cod_in = st.text_input("Código de 6 dígitos")
         if st.button("Verificar"):
-            if cod_in == st.session_state.codigo_gerado or cod_in == st.secrets.get("seguranca", {}).get("chave_mestra", "999888"):
+            chave_mestra = st.secrets.get("seguranca", {}).get("chave_mestra", "999888")
+            if cod_in == st.session_state.codigo_gerado or cod_in == chave_mestra:
                 st.session_state.logado = True
                 st.session_state.display_name = st.session_state.temp_user[4]
                 st.session_state.is_admin = (st.session_state.temp_user[1] == 'admin')
                 st.rerun()
-            else: st.error("Incorreto.")
+            else: st.error("Código inválido.")
     st.stop()
 
-# --- CARREGAMENTO DE LISTAS (PREVENÇÃO DE ERRO DE TELA VAZIA) ---
-def carregar_listas():
+# --- CARREGAMENTO SEGURO DE LISTAS (IMPEDE TELAS VAZIAS) ---
+def get_lista(query, default_val):
     try:
-        cats = pd.read_sql_query("SELECT nome FROM categorias ORDER BY nome", conn)['nome'].tolist()
-        fons = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['nome'].tolist()
-        bens = pd.read_sql_query("SELECT nome FROM beneficiarios ORDER BY nome", conn)['nome'].tolist()
+        res = pd.read_sql_query(query, conn)['nome'].tolist()
+        return res if res else default_val
     except:
-        cats, fons, bens = [], [], []
+        return default_val
 
-    # Se estiver vazio no banco, injeta valores para a tela não quebrar
-    if not cats: cats = ["Alimentação", "Moradia", "Lazer", "Outros"]
-    if not fons: fons = ["Dinheiro", "Banco", "Cartão"]
-    if not bens: bens = ["Geral"]
-    return cats, fons, bens
+lista_cat = get_lista("SELECT nome FROM categorias ORDER BY nome", ["Alimentação", "Lazer", "Saúde"])
+lista_fon = get_lista("SELECT nome FROM fontes ORDER BY nome", ["Dinheiro", "Banco"])
+lista_ben = get_lista("SELECT nome FROM beneficiarios ORDER BY nome", ["Geral"])
 
-lista_cat, lista_fon, lista_ben = carregar_listas()
-
-# --- INTERFACE PRINCIPAL ---
-st.title(f"🏠 Bem-vindo, {st.session_state.display_name}")
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["➕ Lançar", "📊 Lançamentos", "💰 Saldos", "🏷️ Gestão", "👤 Usuários"])
+# --- INTERFACE ---
+st.title(f"🏠 Painel de {st.session_state.display_name}")
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["➕ Lançar", "📊 Histórico", "💰 Saldos", "🏷️ Gestão", "👤 Usuários"])
 
 with tab1:
-    with st.form(key=f"form_l_{st.session_state.ver}", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        valor = col1.number_input("Valor", min_value=0.0, step=0.01)
-        fonte = col2.selectbox("Fonte", lista_fon)
-        cat = col3.selectbox("Categoria", lista_cat)
-        
-        col4, col5 = st.columns(2)
-        ben = col4.selectbox("Beneficiário", lista_ben)
-        tipo = col5.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
-        
-        nota = st.text_input("Descrição")
-        data = st.date_input("Data", datetime.now())
-        
+    with st.form(key=f"f_{st.session_state.ver}", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        valor = c1.number_input("Valor", min_value=0.0, step=0.01)
+        fonte = c2.selectbox("Fonte", lista_fon)
+        cat = c3.selectbox("Categoria", lista_cat)
+        tipo = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
         if st.form_submit_button("Salvar"):
-            c = conn.cursor()
-            c.execute("INSERT INTO transacoes (data, categoria, beneficiario, fonte, valor_eur, tipo, nota, usuario) VALUES (?,?,?,?,?,?,?,?)",
-                      (data.strftime('%Y-%m-%d'), cat, ben, fonte, valor, tipo, nota, st.session_state.display_name))
+            conn.execute("INSERT INTO transacoes (data, categoria, beneficiario, fonte, valor_eur, tipo, nota, usuario) VALUES (?,?,?,?,?,?,?,?)",
+                         (datetime.now().strftime('%Y-%m-%d'), cat, "Geral", fonte, valor, tipo, "", st.session_state.display_name))
             conn.commit()
             st.success("Salvo!")
             limpar_campos()
             st.rerun()
 
 with tab2:
-    st.subheader("Histórico")
-    df = pd.read_sql_query("SELECT data, categoria, beneficiario, fonte, valor_eur, tipo, nota FROM transacoes ORDER BY data DESC", conn)
-    st.dataframe(df, use_container_width=True) if not df.empty else st.info("Sem dados.")
+    df = pd.read_sql_query("SELECT data, categoria, fonte, valor_eur, tipo FROM transacoes ORDER BY id DESC", conn)
+    st.dataframe(df, use_container_width=True) if not df.empty else st.info("Sem lançamentos.")
 
 with tab3:
-    st.subheader("Saldos Atuais")
     for f in lista_fon:
-        c_s = conn.cursor()
-        c_s.execute("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Receita'", (f,))
-        r = c_s.fetchone()[0] or 0
-        c_s.execute("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Despesa'", (f,))
-        d = c_s.fetchone()[0] or 0
-        st.metric(label=f, value=f"€ {r - d:,.2f}")
+        c = conn.cursor()
+        c.execute("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Receita'", (f,))
+        r = c.fetchone()[0] or 0
+        c.execute("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Despesa'", (f,))
+        d = c.fetchone()[0] or 0
+        st.metric(f, f"€ {r-d:,.2f}")
 
 with tab4:
-    st.subheader("Gestão de Itens")
-    tipo_g = st.radio("O que deseja adicionar?", ["Categoria", "Fonte", "Beneficiário"], horizontal=True)
-    novo_item = st.text_input(f"Nome da nova {tipo_g}")
-    if st.button("Cadastrar"):
-        tabela = "categorias" if tipo_g == "Categoria" else "fontes" if tipo_g == "Fonte" else "beneficiarios"
-        conn.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (novo_item,))
+    tipo_add = st.radio("Adicionar:", ["Categoria", "Fonte"])
+    novo = st.text_input("Nome")
+    if st.button("Gravar"):
+        tab_db = "categorias" if tipo_add == "Categoria" else "fontes"
+        conn.execute(f"INSERT OR IGNORE INTO {tab_db} (nome) VALUES (?)", (novo,))
         conn.commit()
-        st.success("Adicionado!")
         st.rerun()
 
 with tab5:
     if st.session_state.is_admin:
-        st.dataframe(pd.read_sql_query("SELECT id, username, email, nome_exibicao FROM usuarios", conn), use_container_width=True)
-    else: st.warning("Acesso restrito.")
+        st.write(pd.read_sql_query("SELECT username, email FROM usuarios", conn))
 
 if st.sidebar.button("Sair"):
-    st.session_state.logado = False
+    st.session_state.clear()
     st.rerun()
