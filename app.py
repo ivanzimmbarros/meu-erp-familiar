@@ -45,31 +45,28 @@ def init_db():
     c.execute('CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
     c.execute('CREATE TABLE IF NOT EXISTS saldos_iniciais (fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)')
     
-    # Usuario admin de emergência
+    # Usuario admin (senha: 123456) - Já marcado como senha trocada para evitar loop
     senha_adm = hash_password("123456")
     c.execute("INSERT OR IGNORE INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,?)",
               ("admin", senha_adm, "admin@teste.com", "Administrador", 1))
     
-    for table, defaults in {"categorias": ["Geral"], "beneficiarios": ["Família"], "fontes": ["Banco"]}.items():
-        c.execute(f"SELECT COUNT(*) FROM {table}")
-        if c.fetchone()[0] == 0:
-            for item in defaults: c.execute(f"INSERT OR IGNORE INTO {table} (nome) VALUES (?)", (item,))
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- SEGURANÇA ---
+# --- LOGIN E SEGURANÇA ---
 if 'logado' not in st.session_state: st.session_state.logado = False
 if 'auth_2fa' not in st.session_state: st.session_state.auth_2fa = False
+if 'precisa_trocar' not in st.session_state: st.session_state.precisa_trocar = False
 
 conn = get_conn()
 c = conn.cursor()
 
 if not st.session_state.logado:
     st.title("🔐 Acesso: ERP Familiar")
-    u_in = st.text_input("Usuário", key="login_u")
-    p_in = st.text_input("Senha", type="password", key="login_p")
+    u_in = st.text_input("Usuário")
+    p_in = st.text_input("Senha", type="password")
     if st.button("Entrar"):
         c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u_in, hash_password(p_in)))
         user = c.fetchone()
@@ -89,7 +86,22 @@ if not st.session_state.logado:
                     st.rerun()
     st.stop()
 
-# --- DASHBOARD ---
+# --- TELA DE TROCA DE SENHA OBRIGATÓRIA ---
+if st.session_state.auth_2fa and st.session_state.tmp_user[5] == 0:
+    st.warning("⚠️ Primeiro Acesso: Você deve alterar sua senha original.")
+    nova_s = st.text_input("Nova Senha", type="password")
+    conf_s = st.text_input("Confirme a Nova Senha", type="password")
+    if st.button("Atualizar Senha"):
+        if nova_s == conf_s and len(nova_s) > 3:
+            c.execute("UPDATE usuarios SET password=?, senha_trocada=1 WHERE id=?", 
+                      (hash_password(nova_s), st.session_state.tmp_user[0]))
+            conn.commit()
+            st.success("Senha atualizada! Por favor, faça login novamente.")
+            st.session_state.clear()
+            st.rerun()
+    st.stop()
+
+# --- PAINEL PRINCIPAL ---
 st.sidebar.title(f"👤 {st.session_state.display_name}")
 if st.sidebar.button("Sair"):
     st.session_state.clear()
@@ -101,15 +113,15 @@ lista_fon = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['no
 
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Lançar", "📊 Ver Dados", "⚙️ Gestão Familiar", "💰 Saldos e Ajustes"])
 
-with tab1: # Versão Base
+with tab1:
     st.subheader("Novo Lançamento")
     with st.form("f_lanca", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         valor = c1.number_input("Valor", min_value=0.0)
         moeda = c2.selectbox("Moeda", ["EUR", "BRL"])
-        fonte = c3.selectbox("Fonte", lista_fon)
-        cat = st.selectbox("Categoria", lista_cat)
-        ben = st.selectbox("Beneficiário", lista_ben)
+        fonte = c3.selectbox("Fonte", lista_fon if lista_fon else ["Dinheiro"])
+        cat = st.selectbox("Categoria", lista_cat if lista_cat else ["Geral"])
+        ben = st.selectbox("Beneficiário", lista_ben if lista_ben else ["Família"])
         tipo = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
         if st.form_submit_button("Salvar Registro"):
             v_eur = valor * 0.16 if moeda == "BRL" else valor
@@ -117,15 +129,14 @@ with tab1: # Versão Base
                       (datetime.now().strftime("%d/%m/%Y"), cat, ben, fonte, v_eur, tipo, st.session_state.display_name))
             conn.commit(); st.success("✅ Salvo!"); st.rerun()
 
-with tab2: # Versão Base
+with tab2:
     st.subheader("Histórico")
     df = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     st.dataframe(df, use_container_width=True)
 
-with tab3: # RESTAURAÇÃO COMPLETA
+with tab3:
     st.header("⚙️ Gestão de Listas e Usuários")
     col_cat, col_ben, col_fon = st.columns(3)
-    
     def gerenciar_secao(titulo, tabela, lista_atual, key):
         st.subheader(titulo)
         novo = st.text_input(f"Novo {titulo}", key=f"add_{key}")
@@ -144,29 +155,31 @@ with tab3: # RESTAURAÇÃO COMPLETA
     with col_fon: gerenciar_secao("Fonte", "fontes", lista_fon, "f")
 
     st.divider()
-    # BLOCO DE USUÁRIOS RESTAURADO
     st.subheader("👥 Usuários Cadastrados")
-    st.table(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn))
+    # EXIBE A TABELA DE USUÁRIOS COMO NA SUA IMAGEM
+    u_df = pd.read_sql_query("SELECT nome_exibicao, username, email, senha_trocada FROM usuarios", conn)
+    st.table(u_df)
     
     with st.expander("➕ Cadastrar Novo Membro"):
-        n_nome = st.text_input("Nome Completo", key="new_n")
-        n_user = st.text_input("Login (Usuário)", key="new_u")
-        n_mail = st.text_input("E-mail para 2FA", key="new_e")
-        n_pass = st.text_input("Senha Inicial", type="password", key="new_p")
+        n_nome = st.text_input("Nome Completo", key="reg_n")
+        n_user = st.text_input("Login (Usuário)", key="reg_u")
+        n_mail = st.text_input("E-mail para 2FA", key="reg_e")
+        n_pass = st.text_input("Senha Inicial", type="password", key="reg_p")
         if st.button("Confirmar Cadastro"):
             if n_user and n_pass:
                 try:
-                    c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)", 
+                    # Novos membros começam com senha_trocada = 0
+                    c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,0)", 
                               (n_user, hash_password(n_pass), n_mail, n_nome))
                     conn.commit(); st.success("Usuário criado!"); st.rerun()
                 except: st.error("Erro: Usuário já existe.")
 
-with tab4: # Nova funcionalidade
+with tab4:
     st.header("💰 Saldos e Ajustes")
     col_f, col_v = st.columns([2, 1])
     f_alvo = col_f.selectbox("Conta", lista_fon, key="f_aj")
     v_ini = col_v.number_input("Saldo Inicial (€)", min_value=0.0, key="v_aj")
-    if st.button("Gravar Saldo de Abertura"):
+    if st.button("Gravar Saldo Inicial"):
         c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
         conn.commit(); st.success("Saldo atualizado!"); st.rerun()
     
