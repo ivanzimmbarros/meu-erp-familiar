@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 import hashlib
 from datetime import datetime
-from streamlit.column_config import SelectboxColumn
+from streamlit.column_config import SelectboxColumn, ColumnConf
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
@@ -61,18 +61,12 @@ if not st.session_state.logado:
             st.rerun()
     st.stop()
 
-# --- INTERFACE PRINCIPAL ---
-st.sidebar.title(f"👤 {st.session_state.display_name}")
-if st.sidebar.button("Sair"):
-    st.session_state.clear()
-    st.rerun()
-
-# Listas para validação
+# --- CARREGAMENTO DE LISTAS ---
 lista_cat = pd.read_sql_query("SELECT nome FROM categorias ORDER BY nome", conn)['nome'].tolist()
 lista_ben = pd.read_sql_query("SELECT nome FROM beneficiarios ORDER BY nome", conn)['nome'].tolist()
 lista_fon = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['nome'].tolist()
 
-# Ordem das abas alterada conforme solicitado
+# --- NAVEGAÇÃO ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "➕ Lançar", "📊 Lançamentos", "💰 Saldos e Ajustes", "🏷️ Gestão Familiar", "👤 Gestão de Usuários"
 ])
@@ -102,43 +96,47 @@ with tab1:
 
 with tab2:
     st.subheader("📑 Controle Geral")
-    st.info("🔍 Use os ícones no topo de cada coluna para filtrar ou ordenar (A-Z / Z-A).")
+    st.info("💡 **Dica:** Passe o mouse sobre o cabeçalho das colunas para ver as setas de ordenação e a lupa de filtro.")
     
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # Editor com filtros e ordenação habilitados
+    # Editor configurado para habilitar lixeira, filtros e ordenação
     edited_df = st.data_editor(
         df_h, 
         key=f"editor_hist_{v}", 
-        num_rows="dynamic", 
+        num_rows="dynamic", # Habilita a lixeira nativa ao selecionar linhas
         use_container_width=True,
         hide_index=True,
         disabled=["id", "usuario"],
         column_config={
+            "id": st.column_config.NumberColumn("ID", help="ID único do registro"),
+            "data": st.column_config.TextColumn("Data", required=True),
             "categoria": SelectboxColumn("Categoria", options=lista_cat, required=True),
             "beneficiario": SelectboxColumn("Beneficiário", options=lista_ben, required=True),
             "fonte": SelectboxColumn("Fonte", options=lista_fon, required=True),
+            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="€ %.2f", required=True),
             "tipo": SelectboxColumn("Tipo", options=["Despesa", "Receita"], required=True),
         }
     )
 
     with st.expander("🔐 Painel de Confirmação", expanded=True):
-        confirmar = st.checkbox("Confirmo que as alterações refletem a realidade financeira.", key=f"chk_conf_{v}")
+        confirmar = st.checkbox("Confirmo que revisei os dados filtrados/ordenados.", key=f"chk_conf_{v}")
         if st.button("💾 Executar Alterações", type="primary", key=f"save_edit_{v}"):
             if confirmar:
                 try:
                     c.execute("DELETE FROM transacoes")
                     edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
                     conn.commit()
-                    st.toast("🔄 Base de dados e Saldos atualizados!")
+                    st.toast("🔄 Base de dados atualizada!")
                     limpar_campos(); st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao salvar: {e}")
             else:
-                st.error("❌ A confirmação é obrigatória.")
+                st.error("A confirmação é obrigatória.")
 
 with tab3:
     st.header("💰 Saldos e Ajustes")
+    # ... (Restante do código de saldos permanece igual ao solicitado anteriormente)
     c_f, c_v = st.columns([2, 1])
     f_alvo = c_f.selectbox("Selecionar Conta", lista_fon, key=f"f_aj_{v}")
     v_ini = c_v.number_input("Novo Saldo Inicial (€)", min_value=0.0, step=0.01, key=f"v_aj_{v}")
@@ -151,7 +149,6 @@ with tab3:
             limpar_campos(); st.rerun()
 
     st.divider()
-    st.subheader("📊 Património Atualizado")
     df_t = pd.read_sql_query("SELECT fonte, valor_eur, tipo FROM transacoes", conn)
     df_s = pd.read_sql_query("SELECT * FROM saldos_iniciais", conn)
     
@@ -163,11 +160,11 @@ with tab3:
                 ini = df_s[df_s['fonte'] == f]['valor_inicial'].sum()
                 rec = df_t[(df_t['fonte'] == f) & (df_t['tipo'] == 'Receita')]['valor_eur'].sum()
                 des = df_t[(df_t['fonte'] == f) & (df_t['tipo'] == 'Despesa')]['valor_eur'].sum()
-                # Exibição de patrimônio em grid
                 cols_grid[j].metric(f, f"€ {ini+rec-des:,.2f}", f"Inicial: € {ini:,.2f}")
 
 with tab4:
-    st.header("⚙️ Gestão de Listas")
+    st.header("🏷️ Gestão Familiar")
+    # ... (Código de gestão de listas sem alterações)
     cols = st.columns(3)
     def ui_gestao(col, tit, tab, lst, k):
         with col:
@@ -192,9 +189,8 @@ with tab4:
     ui_gestao(cols[2], "Fonte", "fontes", lista_fon, "f")
 
 with tab5:
-    st.header("👤 Gestão de Membros")
+    st.header("👤 Gestão de Usuários")
     st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
-    # Correção definitiva do erro de string
     with st.expander("➕ Cadastrar Novo Membro", expanded=False):
         n_nom = st.text_input("Nome Completo", key=f"cad_n_{v}")
         n_usr = st.text_input("Login", key=f"cad_u_{v}")
