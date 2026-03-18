@@ -97,7 +97,7 @@ with tab2:
     st.subheader("📊 Controle Geral")
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # BARRA DE FILTROS
+    # Barra de Filtros
     f1, f2, f3, f4 = st.columns(4)
     sel_cat = f1.multiselect("Filtrar Categoria", lista_cat)
     sel_ben = f2.multiselect("Filtrar Beneficiário", lista_ben)
@@ -110,7 +110,7 @@ with tab2:
     if sel_fon: df_f = df_f[df_f['fonte'].isin(sel_fon)]
     if sel_tipo: df_f = df_f[df_f['tipo'].isin(sel_tipo)]
 
-    # TABELA EDITÁVEL CORRIGIDA
+    # Edição de Dados - Sintaxe revisada
     edited_df = st.data_editor(
         df_f, 
         key=f"edit_hist_{v}", 
@@ -128,7 +128,6 @@ with tab2:
         }
     )
 
-    # PAINEL DE CONFIRMAÇÃO
     with st.expander("🔐 Painel de Confirmação", expanded=True):
         confirmar = st.checkbox("Confirmo que as alterações refletem a realidade financeira.", key=f"chk_{v}")
         if st.button("💾 Executar Alterações", type="primary"):
@@ -136,10 +135,9 @@ with tab2:
                 try:
                     ids_originais = df_f['id'].tolist()
                     if ids_originais:
-                        # CORREÇÃO DA LINHA 135: Parênteses fechados corretamente
-                        placeholders = ','.join(['?'] * len(ids_originais))
-                        query = f"DELETE FROM transacoes WHERE id IN ({placeholders})"
-                        c.execute(query, tuple(ids_originais))
+                        # Correção Sintaxe DELETE
+                        ph = ','.join(['?'] * len(ids_originais))
+                        c.execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_originais))
                     
                     edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
                     conn.commit()
@@ -151,14 +149,14 @@ with tab2:
 with tab3:
     st.header("💰 Saldos e Ajustes")
     c_f, c_v = st.columns([2, 1])
-    # CORREÇÃO DA LINHA 153: f-string fechada corretamente
-    f_alvo = c_f.selectbox("Escolha a Conta", lista_fon, key=f"f_aj_{v}")
-    v_ini = c_v.number_input("Definir Saldo de Abertura (€)", step=0.01)
+    # Correção Sintaxe Selectbox
+    f_alvo = c_f.selectbox("Escolha a Conta", lista_fon, key=f"f_aj_sel_{v}")
+    v_ini = c_v.number_input("Saldo de Abertura (€)", step=0.01, key=f"v_ini_aj_{v}")
     
-    if st.button("Gravar Saldo"):
+    if st.button("Gravar Saldo Inicial"):
         c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
         conn.commit()
-        st.toast("✅ Saldo Inicial Atualizado!")
+        st.toast("✅ Saldo Atualizado!")
         limpar_campos(); st.rerun()
 
     st.divider()
@@ -173,10 +171,10 @@ with tab3:
         des = df_t[(df_t['fonte'] == f) & (df_t['tipo'] == 'Despesa')]['valor_eur'].sum()
         saldo_total = ini + rec - des
         
-        # LÓGICA DE COR PARA SALDOS NEGATIVOS
         with cols_grid[i % 4]:
+            # Lógica de Cor para Saldo Negativo
             if saldo_total < 0:
-                st.metric(f, f"€ {saldo_total:,.2f}", delta="NEGATIVO", delta_color="inverse")
+                st.metric(f, f"€ {saldo_total:,.2f}", delta="ALERTA: NEGATIVO", delta_color="inverse")
             else:
                 st.metric(f, f"€ {saldo_total:,.2f}", f"Inicial: € {ini:,.2f}")
 
@@ -199,11 +197,31 @@ with tab4:
 
     ui_gestao(cols[0], "Categoria", "categorias", lista_cat, "c")
     ui_gestao(cols[1], "Beneficiário", "beneficiarios", lista_ben, "b")
-    # CORREÇÃO DA LINHA 195: Função fechada corretamente
+    # Correção Sintaxe ui_gestao
     ui_gestao(cols[2], "Fonte", "fontes", lista_fon, "f")
 
 with tab5:
-    st.header("👤 Usuários Cadastrados")
+    st.header("👤 Gestão de Usuários")
+    # Reinstalação do Módulo de Cadastro
+    with st.expander("➕ Adicionar Novo Membro"):
+        with st.form("f_novo_u", clear_on_submit=True):
+            n_n = st.text_input("Nome Completo")
+            n_u = st.text_input("Username")
+            n_e = st.text_input("Email")
+            n_p = st.text_input("Senha", type="password")
+            if st.form_submit_button("Cadastrar"):
+                if n_u and n_p:
+                    try:
+                        c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)",
+                                  (n_u, hash_password(n_p), n_e, n_n))
+                        conn.commit()
+                        st.success("Conta criada com sucesso!")
+                        st.rerun()
+                    except sqlite3.IntegrityError:
+                        st.error("Este nome de usuário já está em uso.")
+    
+    st.subheader("Contas Ativas")
+    # Visualização da tabela de usuários
     st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
 
 conn.close()
