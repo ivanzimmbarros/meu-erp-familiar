@@ -60,12 +60,12 @@ if not st.session_state.logado:
             st.rerun()
     st.stop()
 
-# --- CARREGAMENTO DE LISTAS ---
+# --- LISTAS PARA VALIDAÇÃO ---
 lista_cat = pd.read_sql_query("SELECT nome FROM categorias ORDER BY nome", conn)['nome'].tolist()
 lista_ben = pd.read_sql_query("SELECT nome FROM beneficiarios ORDER BY nome", conn)['nome'].tolist()
 lista_fon = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['nome'].tolist()
 
-# --- NAVEGAÇÃO ---
+# --- ABAS (ORDEM SOLICITADA) ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "➕ Lançar", "📊 Lançamentos", "💰 Saldos e Ajustes", "🏷️ Gestão Familiar", "👤 Gestão de Usuários"
 ])
@@ -95,42 +95,47 @@ with tab1:
 
 with tab2:
     st.subheader("📑 Controle Geral")
+    st.info("💡 **Atenção:** Os filtros e setas de ordenação aparecem no topo de cada coluna ao passar o mouse (hover) sobre o título.")
+    
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # Configuração correta para filtros e ordenação nativa
+    # Editor configurado para forçar a exibição de ferramentas nativas
     edited_df = st.data_editor(
         df_h, 
         key=f"editor_hist_{v}", 
-        num_rows="dynamic",
+        num_rows="dynamic", # Habilita a lixeira de exclusão
         use_container_width=True,
         hide_index=True,
         disabled=["id", "usuario"],
         column_config={
+            "data": st.column_config.TextColumn("Data", required=True),
             "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat, required=True),
             "beneficiario": st.column_config.SelectboxColumn("Beneficiário", options=lista_ben, required=True),
             "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon, required=True),
+            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="€ %.2f", required=True),
             "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"], required=True),
-            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="€ %.2f")
+            "nota": st.column_config.TextColumn("Nota"),
         }
     )
 
     with st.expander("🔐 Painel de Confirmação", expanded=True):
-        confirmar = st.checkbox("Confirmo que as alterações estão corretas.", key=f"chk_conf_{v}")
+        confirmar = st.checkbox("Confirmo que revisei os dados e desejo salvar.", key=f"chk_conf_{v}")
         if st.button("💾 Executar Alterações", type="primary", key=f"save_edit_{v}"):
             if confirmar:
                 try:
                     c.execute("DELETE FROM transacoes")
                     edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
                     conn.commit()
-                    st.toast("🔄 Base de dados atualizada!")
+                    st.toast("🔄 Dados atualizados com sucesso!")
                     limpar_campos(); st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao salvar: {e}")
 
 with tab3:
     st.header("💰 Saldos e Ajustes")
+    # ... (Lógica de saldos mantida conforme solicitado anteriormente)
     c_f, c_v = st.columns([2, 1])
-    f_alvo = c_f.selectbox("Selecionar Conta", lista_fon, key=f"f_aj_{v}")
+    f_alvo = c_f.selectbox("Conta", lista_fon, key=f"f_aj_{v}")
     v_ini = c_v.number_input("Novo Saldo Inicial (€)", min_value=0.0, step=0.01, key=f"v_aj_{v}")
     
     if st.button("Gravar Ajuste", key=f"btn_aj_{v}"):
@@ -155,6 +160,7 @@ with tab3:
 
 with tab4:
     st.header("🏷️ Gestão Familiar")
+    # ... (Gestão de categorias, beneficiários e fontes)
     cols = st.columns(3)
     def ui_gestao(col, tit, tab, lst, k):
         with col:
@@ -181,7 +187,6 @@ with tab4:
 with tab5:
     st.header("👤 Gestão de Usuários")
     st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
-    # CORREÇÃO: Aspas fechadas corretamente aqui
     with st.expander("➕ Cadastrar Novo Membro", expanded=False):
         n_nom = st.text_input("Nome Completo", key=f"cad_n_{v}")
         n_usr = st.text_input("Login", key=f"cad_u_{v}")
@@ -192,7 +197,7 @@ with tab5:
                 try:
                     c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)", 
                               (n_usr, hash_password(n_sen), n_eml, n_nom))
-                    conn.commit(); st.toast("👤 Cadastrado!"); limpar_campos(); st.rerun()
+                    conn.commit(); st.toast("👤 Usuário cadastrado!"); limpar_campos(); st.rerun()
                 except: st.error("Erro: Usuário já existe.")
 
 conn.close()
