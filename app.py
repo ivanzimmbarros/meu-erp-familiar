@@ -3,7 +3,6 @@ import sqlite3
 import pandas as pd
 import hashlib
 from datetime import datetime
-from streamlit.column_config import SelectboxColumn, ColumnConf
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
@@ -96,31 +95,27 @@ with tab1:
 
 with tab2:
     st.subheader("📑 Controle Geral")
-    st.info("💡 **Dica:** Passe o mouse sobre o cabeçalho das colunas para ver as setas de ordenação e a lupa de filtro.")
-    
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # Editor configurado para habilitar lixeira, filtros e ordenação
+    # Configuração correta para filtros e ordenação nativa
     edited_df = st.data_editor(
         df_h, 
         key=f"editor_hist_{v}", 
-        num_rows="dynamic", # Habilita a lixeira nativa ao selecionar linhas
+        num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
         disabled=["id", "usuario"],
         column_config={
-            "id": st.column_config.NumberColumn("ID", help="ID único do registro"),
-            "data": st.column_config.TextColumn("Data", required=True),
-            "categoria": SelectboxColumn("Categoria", options=lista_cat, required=True),
-            "beneficiario": SelectboxColumn("Beneficiário", options=lista_ben, required=True),
-            "fonte": SelectboxColumn("Fonte", options=lista_fon, required=True),
-            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="€ %.2f", required=True),
-            "tipo": SelectboxColumn("Tipo", options=["Despesa", "Receita"], required=True),
+            "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat, required=True),
+            "beneficiario": st.column_config.SelectboxColumn("Beneficiário", options=lista_ben, required=True),
+            "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon, required=True),
+            "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"], required=True),
+            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="€ %.2f")
         }
     )
 
     with st.expander("🔐 Painel de Confirmação", expanded=True):
-        confirmar = st.checkbox("Confirmo que revisei os dados filtrados/ordenados.", key=f"chk_conf_{v}")
+        confirmar = st.checkbox("Confirmo que as alterações estão corretas.", key=f"chk_conf_{v}")
         if st.button("💾 Executar Alterações", type="primary", key=f"save_edit_{v}"):
             if confirmar:
                 try:
@@ -131,12 +126,9 @@ with tab2:
                     limpar_campos(); st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao salvar: {e}")
-            else:
-                st.error("A confirmação é obrigatória.")
 
 with tab3:
     st.header("💰 Saldos e Ajustes")
-    # ... (Restante do código de saldos permanece igual ao solicitado anteriormente)
     c_f, c_v = st.columns([2, 1])
     f_alvo = c_f.selectbox("Selecionar Conta", lista_fon, key=f"f_aj_{v}")
     v_ini = c_v.number_input("Novo Saldo Inicial (€)", min_value=0.0, step=0.01, key=f"v_aj_{v}")
@@ -145,7 +137,7 @@ with tab3:
         if f_alvo:
             c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
             conn.commit()
-            st.toast(f"📈 Saldo de {f_alvo} atualizado!")
+            st.toast(f"📈 Saldo atualizado!")
             limpar_campos(); st.rerun()
 
     st.divider()
@@ -154,9 +146,8 @@ with tab3:
     
     if lista_fon:
         for i in range(0, len(lista_fon), 4):
-            batch = lista_fon[i:i+4]
             cols_grid = st.columns(4)
-            for j, f in enumerate(batch):
+            for j, f in enumerate(lista_fon[i:i+4]):
                 ini = df_s[df_s['fonte'] == f]['valor_inicial'].sum()
                 rec = df_t[(df_t['fonte'] == f) & (df_t['tipo'] == 'Receita')]['valor_eur'].sum()
                 des = df_t[(df_t['fonte'] == f) & (df_t['tipo'] == 'Despesa')]['valor_eur'].sum()
@@ -164,7 +155,6 @@ with tab3:
 
 with tab4:
     st.header("🏷️ Gestão Familiar")
-    # ... (Código de gestão de listas sem alterações)
     cols = st.columns(3)
     def ui_gestao(col, tit, tab, lst, k):
         with col:
@@ -179,7 +169,7 @@ with tab4:
                 nn = st.text_input("Novo nome", key=f"new_{k}_{v}")
                 if st.button("Salvar Edição", key=f"sv_{k}_{v}"):
                     c.execute(f"UPDATE {tab} SET nome=? WHERE nome=?", (nn, sel))
-                    conn.commit(); st.toast("✅ Nome alterado!"); limpar_campos(); st.rerun()
+                    conn.commit(); st.toast("✅ Alterado!"); limpar_campos(); st.rerun()
                 if st.button("Excluir Item", key=f"rm_{k}_{v}"):
                     c.execute(f"DELETE FROM {tab} WHERE nome=?", (sel,))
                     conn.commit(); st.toast("🗑️ Removido!"); limpar_campos(); st.rerun()
@@ -191,17 +181,18 @@ with tab4:
 with tab5:
     st.header("👤 Gestão de Usuários")
     st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
+    # CORREÇÃO: Aspas fechadas corretamente aqui
     with st.expander("➕ Cadastrar Novo Membro", expanded=False):
         n_nom = st.text_input("Nome Completo", key=f"cad_n_{v}")
         n_usr = st.text_input("Login", key=f"cad_u_{v}")
         n_eml = st.text_input("E-mail", key=f"cad_e_{v}")
-        n_sen = st.text_input("Senha Provisória", type="password", key=f"cad_s_{v}")
+        n_sen = st.text_input("Senha", type="password", key=f"cad_s_{v}")
         if st.button("Confirmar Cadastro", key=f"btn_cad_{v}"):
             if n_usr and n_sen:
                 try:
                     c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)", 
                               (n_usr, hash_password(n_sen), n_eml, n_nom))
-                    conn.commit(); st.toast("👤 Usuário cadastrado!"); limpar_campos(); st.rerun()
+                    conn.commit(); st.toast("👤 Cadastrado!"); limpar_campos(); st.rerun()
                 except: st.error("Erro: Usuário já existe.")
 
 conn.close()
