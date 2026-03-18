@@ -97,32 +97,29 @@ with tab1:
                 st.toast(f"✅ Registado: €{v_eur:,.2f}")
                 limpar_campos()
                 st.rerun()
-            else:
-                st.error("Insira um valor maior que zero.")
 
 with tab2:
-    st.subheader("📑 Edição de Histórico")
-    st.info("💡 Altere os valores diretamente na tabela ou use a lixeira para excluir. Clique em 'Salvar Alterações' no final.")
+    st.subheader("📑 Edição e Exclusão")
+    st.info("🗑️ Para excluir: Selecione a linha no check-box à esquerda e pressione 'Delete' ou use o ícone de lixeira no topo da tabela.")
     
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # Editor de dados com suporte a exclusão
+    # Ativa explicitamente a lixeira e edição dinâmica
     edited_df = st.data_editor(
         df_h, 
-        key=f"editor_{v}", 
-        num_rows="dynamic", 
+        key=f"editor_hist_{v}", 
+        num_rows="dynamic", # Habilita Adicionar/Excluir linhas
         use_container_width=True,
         hide_index=True,
         disabled=["id", "usuario"]
     )
 
-    if st.button("💾 Salvar Alterações na Tabela", key=f"btn_edit_{v}"):
+    if st.button("💾 Aplicar Alterações e Atualizar Saldos", key=f"save_edit_{v}"):
         try:
-            # Sincroniza o DataFrame editado com o Banco de Dados
             c.execute("DELETE FROM transacoes")
             edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
             conn.commit()
-            st.toast("✅ Dados atualizados e saldos recalculados!", icon="🔄")
+            st.toast("🔄 Histórico atualizado e saldos recalculados!", icon="✨")
             limpar_campos()
             st.rerun()
         except Exception as e:
@@ -131,44 +128,44 @@ with tab2:
 with tab3:
     st.header("⚙️ Gestão de Listas")
     cols = st.columns(3)
-    def ui_gestao_lista(col, titulo, tabela, lista, k):
+    def ui_gestao(col, tit, tab, lst, k):
         with col:
-            st.subheader(titulo)
-            nv = st.text_input(f"Novo {titulo}", key=f"in_{k}_{v}")
-            if st.button(f"Adicionar", key=f"bt_ad_{k}_{v}"):
+            st.subheader(tit)
+            nv = st.text_input(f"Adicionar {tit}", key=f"add_{k}_{v}")
+            if st.button(f"Confirmar", key=f"btn_add_{k}_{v}"):
                 if nv:
-                    c.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (nv,))
-                    conn.commit(); st.toast(f"✅ {titulo} criado!"); limpar_campos(); st.rerun()
-            sel = st.selectbox(f"Editar {titulo}", [""] + lista, key=f"sl_{k}_{v}")
+                    c.execute(f"INSERT OR IGNORE INTO {tab} (nome) VALUES (?)", (nv,))
+                    conn.commit(); st.toast(f"✅ {nv} adicionado!"); limpar_campos(); st.rerun()
+            sel = st.selectbox(f"Editar/Remover", [""] + lst, key=f"sel_{k}_{v}")
             if sel:
-                ed_n = st.text_input(f"Novo nome", key=f"ed_{k}_{v}")
-                b_ed, b_rm = st.columns(2)
-                if b_ed.button("Salvar", key=f"ok_{k}_{v}"):
-                    c.execute(f"UPDATE {tabela} SET nome=? WHERE nome=?", (ed_n, sel))
+                nn = st.text_input("Novo nome", key=f"new_{k}_{v}")
+                b1, b2 = st.columns(2)
+                if b1.button("Salvar", key=f"sv_{k}_{v}"):
+                    c.execute(f"UPDATE {tab} SET nome=? WHERE nome=?", (nn, sel))
                     conn.commit(); st.toast("✅ Atualizado!"); limpar_campos(); st.rerun()
-                if b_rm.button("Excluir", key=f"rm_{k}_{v}"):
-                    c.execute(f"DELETE FROM {tabela} WHERE nome=?", (sel,))
+                if b2.button("Apagar", key=f"rm_{k}_{v}"):
+                    c.execute(f"DELETE FROM {tab} WHERE nome=?", (sel,))
                     conn.commit(); st.toast("🗑️ Removido!"); limpar_campos(); st.rerun()
-            st.dataframe(pd.DataFrame(lista, columns=["Lista"]), hide_index=True)
 
-    ui_gestao_lista(cols[0], "Categoria", "categorias", lista_cat, "ct")
-    ui_gestao_lista(cols[1], "Beneficiário", "beneficiarios", lista_ben, "bn")
-    ui_gestao_lista(cols[2], "Fonte", "fontes", lista_fon, "fn")
+    ui_gestao(cols[0], "Categoria", "categorias", lista_cat, "c")
+    ui_gestao(cols[1], "Beneficiário", "beneficiarios", lista_ben, "b")
+    ui_gestao(cols[2], "Fonte", "fontes", lista_fon, "f")
 
 with tab4:
     st.header("💰 Saldos e Ajustes")
     c_f, c_v = st.columns([2, 1])
-    f_alvo = c_f.selectbox("Conta", lista_fon, key=f"f_saldo_{v}")
-    v_ini = c_v.number_input("Saldo de Abertura (€)", min_value=0.0, step=0.01, key=f"v_saldo_{v}")
-    if st.button("Gravar Saldo Inicial", key=f"btn_saldo_{v}"):
+    f_alvo = c_f.selectbox("Conta para Ajuste", lista_fon, key=f"f_aj_{v}")
+    v_ini = c_v.number_input("Novo Saldo Inicial (€)", min_value=0.0, step=0.01, key=f"v_aj_{v}")
+    
+    if st.button("Gravar Ajuste de Saldo", key=f"btn_aj_{v}"):
         if f_alvo:
             c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
             conn.commit()
-            st.toast(f"✅ Saldo de {f_alvo} atualizado!", icon='📈')
-            limpar_campos(); st.rerun()
+            st.toast(f"📈 Saldo de {f_alvo} ajustado!", icon="💰")
+            limpar_campos()
+            st.rerun()
 
     st.divider()
-    st.subheader("📊 Património por Conta")
     df_t = pd.read_sql_query("SELECT fonte, valor_eur, tipo FROM transacoes", conn)
     df_s = pd.read_sql_query("SELECT * FROM saldos_iniciais", conn)
     
@@ -183,19 +180,20 @@ with tab4:
                 cols_grid[j].metric(f, f"€ {ini+rec-des:,.2f}", f"Inicial: € {ini:,.2f}")
 
 with tab5:
-    st.header("👤 Gestão de Utilizadores")
-    st.table(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn))
+    st.header("👤 Gestão de Membros")
+    st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
+    # Correção do SyntaxError (aspas fechadas corretamente)
     with st.expander("➕ Cadastrar Novo Membro"):
-        n_n = st.text_input("Nome", key=f"un_{v}")
-        n_u = st.text_input("Login", key=f"uu_{v}")
-        n_e = st.text_input("Email", key=f"ue_{v}")
-        n_s = st.text_input("Senha", type="password", key=f"up_{v}")
-        if st.button("Finalizar Cadastro", key=f"ub_{v}"):
-            if n_u and n_s:
+        n_nom = st.text_input("Nome Completo", key=f"cad_n_{v}")
+        n_usr = st.text_input("Login (Usuário)", key=f"cad_u_{v}")
+        n_eml = st.text_input("E-mail para 2FA", key=f"cad_e_{v}")
+        n_sen = st.text_input("Senha Inicial", type="password", key=f"cad_s_{v}")
+        if st.button("Confirmar Cadastro", key=f"btn_cad_{v}"):
+            if n_usr and n_sen:
                 try:
                     c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)", 
-                              (n_u, hash_password(n_s), n_e, n_n))
-                    conn.commit(); st.toast("👤 Membro cadastrado!"); limpar_campos(); st.rerun()
-                except: st.error("Erro: Login já existe.")
+                              (n_usr, hash_password(n_sen), n_eml, n_nom))
+                    conn.commit(); st.toast("👤 Novo membro ativo!"); limpar_campos(); st.rerun()
+                except: st.error("Erro: Usuário já existe.")
 
 conn.close()
