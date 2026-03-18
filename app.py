@@ -61,7 +61,6 @@ def init_db():
     c.execute('CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
     c.execute('CREATE TABLE IF NOT EXISTS saldos_iniciais (fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)')
     
-    # Garantir usuário Admin com o seu e-mail
     senha_adm = hash_password("123456")
     c.execute("INSERT OR IGNORE INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,?)",
               ("admin", senha_adm, "ivanzimmbarros@gmail.com", "Administrador", 1))
@@ -71,10 +70,9 @@ def init_db():
 init_db()
 conn = get_conn()
 
-# --- SISTEMA DE LOGIN E 2FA ---
+# --- LOGIN E 2FA ---
 if not st.session_state.logado:
     st.title("🔐 Segurança ERP Familiar")
-    
     if st.session_state.auth_step == "login":
         u_in = st.text_input("Usuário")
         p_in = st.text_input("Senha", type="password")
@@ -89,109 +87,96 @@ if not st.session_state.logado:
                     st.session_state.auth_step = "2fa"
                     st.rerun()
                 else:
-                    st.warning("Falha no e-mail. Use a chave mestra para entrar.")
                     st.session_state.auth_step = "2fa"
                     st.rerun()
             else:
                 st.error("Credenciais inválidas.")
-
     elif st.session_state.auth_step == "2fa":
-        st.info(f"Código enviado para o e-mail cadastrado.")
-        cod_in = st.text_input("Digite o código de 6 dígitos")
-        bypass = st.secrets.get("seguranca", {}).get("chave_mestra", "999888")
-        
+        st.info("Código enviado ao e-mail.")
+        cod_in = st.text_input("Código de 6 dígitos")
         if st.button("Verificar"):
-            if cod_in == st.session_state.codigo_gerado or cod_in == bypass:
+            if cod_in == st.session_state.codigo_gerado or cod_in == st.secrets.get("seguranca", {}).get("chave_mestra", "999888"):
                 st.session_state.logado = True
                 st.session_state.display_name = st.session_state.temp_user[4]
                 st.session_state.is_admin = (st.session_state.temp_user[1] == 'admin')
                 st.rerun()
-            else:
-                st.error("Código incorreto.")
+            else: st.error("Incorreto.")
     st.stop()
 
-# --- CARREGAMENTO DE LISTAS (PROTEÇÃO CONTRA TELAS BRANCAS) ---
-try:
-    lista_cat = pd.read_sql_query("SELECT nome FROM categorias ORDER BY nome", conn)['nome'].tolist()
-except: lista_cat = []
-if not lista_cat: lista_cat = ["Alimentação", "Saúde", "Lazer", "Moradia"]
+# --- CARREGAMENTO DE LISTAS (PREVENÇÃO DE ERRO DE TELA VAZIA) ---
+def carregar_listas():
+    try:
+        cats = pd.read_sql_query("SELECT nome FROM categorias ORDER BY nome", conn)['nome'].tolist()
+        fons = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['nome'].tolist()
+        bens = pd.read_sql_query("SELECT nome FROM beneficiarios ORDER BY nome", conn)['nome'].tolist()
+    except:
+        cats, fons, bens = [], [], []
 
-try:
-    lista_fon = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['nome'].tolist()
-except: lista_fon = []
-if not lista_fon: lista_fon = ["Banco Principal", "Dinheiro"]
+    # Se estiver vazio no banco, injeta valores para a tela não quebrar
+    if not cats: cats = ["Alimentação", "Moradia", "Lazer", "Outros"]
+    if not fons: fons = ["Dinheiro", "Banco", "Cartão"]
+    if not bens: bens = ["Geral"]
+    return cats, fons, bens
 
-try:
-    lista_ben = pd.read_sql_query("SELECT nome FROM beneficiarios ORDER BY nome", conn)['nome'].tolist()
-except: lista_ben = []
-if not lista_ben: lista_ben = ["Geral"]
+lista_cat, lista_fon, lista_ben = carregar_listas()
 
 # --- INTERFACE PRINCIPAL ---
-st.title(f"🏠 ERP Familiar - Bem-vindo, {st.session_state.display_name}")
-
+st.title(f"🏠 Bem-vindo, {st.session_state.display_name}")
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["➕ Lançar", "📊 Lançamentos", "💰 Saldos", "🏷️ Gestão", "👤 Usuários"])
 
 with tab1:
-    st.subheader("Novo Lançamento")
-    with st.form(key=f"form_lanca_{st.session_state.ver}", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        valor = c1.number_input("Valor", min_value=0.0, step=0.01)
-        fonte = c2.selectbox("Fonte", lista_fon)
-        cat = c3.selectbox("Categoria", lista_cat)
+    with st.form(key=f"form_l_{st.session_state.ver}", clear_on_submit=True):
+        col1, col2, col3 = st.columns(3)
+        valor = col1.number_input("Valor", min_value=0.0, step=0.01)
+        fonte = col2.selectbox("Fonte", lista_fon)
+        cat = col3.selectbox("Categoria", lista_cat)
         
-        c4, c5 = st.columns(2)
-        ben = c4.selectbox("Beneficiário", lista_ben)
-        tipo = c5.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
+        col4, col5 = st.columns(2)
+        ben = col4.selectbox("Beneficiário", lista_ben)
+        tipo = col5.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
         
-        nota = st.text_input("Nota/Descrição")
+        nota = st.text_input("Descrição")
         data = st.date_input("Data", datetime.now())
         
-        if st.form_submit_button("Salvar Lançamento"):
+        if st.form_submit_button("Salvar"):
             c = conn.cursor()
             c.execute("INSERT INTO transacoes (data, categoria, beneficiario, fonte, valor_eur, tipo, nota, usuario) VALUES (?,?,?,?,?,?,?,?)",
                       (data.strftime('%Y-%m-%d'), cat, ben, fonte, valor, tipo, nota, st.session_state.display_name))
             conn.commit()
-            st.success("Lançado com sucesso!")
+            st.success("Salvo!")
             limpar_campos()
             st.rerun()
 
 with tab2:
-    st.subheader("Histórico de Transações")
-    df = pd.read_sql_query("SELECT * FROM transacoes ORDER BY data DESC", conn)
-    if not df.empty:
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.info("Nenhum lançamento encontrado.")
+    st.subheader("Histórico")
+    df = pd.read_sql_query("SELECT data, categoria, beneficiario, fonte, valor_eur, tipo, nota FROM transacoes ORDER BY data DESC", conn)
+    st.dataframe(df, use_container_width=True) if not df.empty else st.info("Sem dados.")
 
 with tab3:
-    st.subheader("Resumo de Saldos")
-    # Cálculo simples de saldo (Soma Receitas - Soma Despesas)
-    c_saldos = conn.cursor()
+    st.subheader("Saldos Atuais")
     for f in lista_fon:
-        c_saldos.execute("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Receita'", (f,))
-        rec = c_saldos.fetchone()[0] or 0
-        c_saldos.execute("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Despesa'", (f,))
-        des = c_saldos.fetchone()[0] or 0
-        
-        saldo_atual = rec - des
-        st.metric(label=f, value=f"€ {saldo_atual:,.2f}")
+        c_s = conn.cursor()
+        c_s.execute("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Receita'", (f,))
+        r = c_s.fetchone()[0] or 0
+        c_s.execute("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Despesa'", (f,))
+        d = c_s.fetchone()[0] or 0
+        st.metric(label=f, value=f"€ {r - d:,.2f}")
 
 with tab4:
-    st.subheader("Configurações do Sistema")
-    # Aqui você pode adicionar campos para inserir novas categorias/fontes
-    nova_cat = st.text_input("Nova Categoria")
-    if st.button("Adicionar Categoria"):
-        conn.execute("INSERT OR IGNORE INTO categorias (nome) VALUES (?)", (nova_cat,))
+    st.subheader("Gestão de Itens")
+    tipo_g = st.radio("O que deseja adicionar?", ["Categoria", "Fonte", "Beneficiário"], horizontal=True)
+    novo_item = st.text_input(f"Nome da nova {tipo_g}")
+    if st.button("Cadastrar"):
+        tabela = "categorias" if tipo_g == "Categoria" else "fontes" if tipo_g == "Fonte" else "beneficiarios"
+        conn.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (novo_item,))
         conn.commit()
+        st.success("Adicionado!")
         st.rerun()
 
 with tab5:
     if st.session_state.is_admin:
-        st.subheader("Gerenciamento de Usuários")
-        usuarios_df = pd.read_sql_query("SELECT id, username, email, nome_exibicao FROM usuarios", conn)
-        st.table(usuarios_df)
-    else:
-        st.warning("Acesso restrito ao Administrador.")
+        st.dataframe(pd.read_sql_query("SELECT id, username, email, nome_exibicao FROM usuarios", conn), use_container_width=True)
+    else: st.warning("Acesso restrito.")
 
 if st.sidebar.button("Sair"):
     st.session_state.logado = False
