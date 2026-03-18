@@ -7,7 +7,6 @@ from datetime import datetime
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
 
-# Sistema de versão para resetar widgets globalmente
 if 'ver' not in st.session_state:
     st.session_state.ver = 0
 
@@ -67,7 +66,6 @@ if st.sidebar.button("Sair"):
     st.session_state.clear()
     st.rerun()
 
-# Carregamento de Listas
 lista_cat = pd.read_sql_query("SELECT nome FROM categorias ORDER BY nome", conn)['nome'].tolist()
 lista_ben = pd.read_sql_query("SELECT nome FROM beneficiarios ORDER BY nome", conn)['nome'].tolist()
 lista_fon = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['nome'].tolist()
@@ -76,11 +74,11 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "➕ Lançar", "📊 Ver Dados", "🏷️ Gestão Familiar", "💰 Saldos e Ajustes", "👤 Gestão de Usuários"
 ])
 
-v = st.session_state.ver # Atalho para a versão atual
+v = st.session_state.ver
 
 with tab1:
     st.subheader("Novo Lançamento")
-    with st.form(key=f"form_lanca_{v}", clear_on_submit=True):
+    with st.form(key=f"f_lanca_{v}", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
         valor = c1.number_input("Valor", min_value=0.0, step=0.01)
         moeda = c2.selectbox("Moeda", ["EUR", "BRL"])
@@ -100,17 +98,39 @@ with tab1:
                 limpar_campos()
                 st.rerun()
             else:
-                st.error("O valor deve ser maior que zero.")
+                st.error("Insira um valor maior que zero.")
 
 with tab2:
-    st.subheader("📑 Histórico")
-    df_h = pd.read_sql_query("SELECT id, data, categoria, beneficiario, fonte, valor_eur, tipo, nota, usuario FROM transacoes ORDER BY id DESC", conn)
-    st.dataframe(df_h, use_container_width=True, hide_index=True)
+    st.subheader("📑 Edição de Histórico")
+    st.info("💡 Altere os valores diretamente na tabela ou use a lixeira para excluir. Clique em 'Salvar Alterações' no final.")
+    
+    df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
+    
+    # Editor de dados com suporte a exclusão
+    edited_df = st.data_editor(
+        df_h, 
+        key=f"editor_{v}", 
+        num_rows="dynamic", 
+        use_container_width=True,
+        hide_index=True,
+        disabled=["id", "usuario"]
+    )
+
+    if st.button("💾 Salvar Alterações na Tabela", key=f"btn_edit_{v}"):
+        try:
+            # Sincroniza o DataFrame editado com o Banco de Dados
+            c.execute("DELETE FROM transacoes")
+            edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
+            conn.commit()
+            st.toast("✅ Dados atualizados e saldos recalculados!", icon="🔄")
+            limpar_campos()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar: {e}")
 
 with tab3:
     st.header("⚙️ Gestão de Listas")
     cols = st.columns(3)
-    
     def ui_gestao_lista(col, titulo, tabela, lista, k):
         with col:
             st.subheader(titulo)
@@ -118,11 +138,7 @@ with tab3:
             if st.button(f"Adicionar", key=f"bt_ad_{k}_{v}"):
                 if nv:
                     c.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (nv,))
-                    conn.commit()
-                    st.toast(f"✅ {titulo} criado!")
-                    limpar_campos()
-                    st.rerun()
-            
+                    conn.commit(); st.toast(f"✅ {titulo} criado!"); limpar_campos(); st.rerun()
             sel = st.selectbox(f"Editar {titulo}", [""] + lista, key=f"sl_{k}_{v}")
             if sel:
                 ed_n = st.text_input(f"Novo nome", key=f"ed_{k}_{v}")
@@ -143,23 +159,19 @@ with tab4:
     st.header("💰 Saldos e Ajustes")
     c_f, c_v = st.columns([2, 1])
     f_alvo = c_f.selectbox("Conta", lista_fon, key=f"f_saldo_{v}")
-    # Campo limpa automaticamente devido ao key dinâmico
     v_ini = c_v.number_input("Saldo de Abertura (€)", min_value=0.0, step=0.01, key=f"v_saldo_{v}")
-    
     if st.button("Gravar Saldo Inicial", key=f"btn_saldo_{v}"):
         if f_alvo:
             c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
             conn.commit()
             st.toast(f"✅ Saldo de {f_alvo} atualizado!", icon='📈')
-            limpar_campos()
-            st.rerun()
+            limpar_campos(); st.rerun()
 
     st.divider()
     st.subheader("📊 Património por Conta")
     df_t = pd.read_sql_query("SELECT fonte, valor_eur, tipo FROM transacoes", conn)
     df_s = pd.read_sql_query("SELECT * FROM saldos_iniciais", conn)
     
-    # Grid Dinâmico: Máximo 4 colunas por linha
     if lista_fon:
         for i in range(0, len(lista_fon), 4):
             batch = lista_fon[i:i+4]
@@ -183,10 +195,7 @@ with tab5:
                 try:
                     c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)", 
                               (n_u, hash_password(n_s), n_e, n_n))
-                    conn.commit()
-                    st.toast("👤 Membro cadastrado!")
-                    limpar_campos()
-                    st.rerun()
+                    conn.commit(); st.toast("👤 Membro cadastrado!"); limpar_campos(); st.rerun()
                 except: st.error("Erro: Login já existe.")
 
 conn.close()
