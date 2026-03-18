@@ -100,30 +100,36 @@ with tab1:
 
 with tab2:
     st.subheader("📑 Edição e Exclusão")
-    st.info("🗑️ Para excluir: Selecione a linha no check-box à esquerda e pressione 'Delete' ou use o ícone de lixeira no topo da tabela.")
+    st.warning("⚠️ Atenção: Alterações ou exclusões na tabela impactam o saldo das contas imediatamente após salvar.")
     
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # Ativa explicitamente a lixeira e edição dinâmica
+    # Editor dinâmico com lixeira habilitada via num_rows="dynamic"
     edited_df = st.data_editor(
         df_h, 
         key=f"editor_hist_{v}", 
-        num_rows="dynamic", # Habilita Adicionar/Excluir linhas
+        num_rows="dynamic", 
         use_container_width=True,
         hide_index=True,
         disabled=["id", "usuario"]
     )
 
-    if st.button("💾 Aplicar Alterações e Atualizar Saldos", key=f"save_edit_{v}"):
-        try:
-            c.execute("DELETE FROM transacoes")
-            edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
-            conn.commit()
-            st.toast("🔄 Histórico atualizado e saldos recalculados!", icon="✨")
-            limpar_campos()
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao salvar: {e}")
+    # Controle de Confirmação
+    with st.expander("🔐 Painel de Confirmação", expanded=True):
+        confirmar = st.checkbox("Confirmo que desejo aplicar todas as alterações (edições e remoções) e atualizar os saldos.", key=f"chk_conf_{v}")
+        if st.button("💾 Executar Alterações", type="primary", key=f"save_edit_{v}"):
+            if confirmar:
+                try:
+                    c.execute("DELETE FROM transacoes")
+                    edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
+                    conn.commit()
+                    st.toast("🔄 Histórico e Saldos atualizados com sucesso!", icon="✨")
+                    limpar_campos()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro crítico ao salvar: {e}")
+            else:
+                st.error("❌ Erro: Você deve marcar a caixa de confirmação antes de salvar.")
 
 with tab3:
     st.header("⚙️ Gestão de Listas")
@@ -162,8 +168,7 @@ with tab4:
             c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
             conn.commit()
             st.toast(f"📈 Saldo de {f_alvo} ajustado!", icon="💰")
-            limpar_campos()
-            st.rerun()
+            limpar_campos(); st.rerun()
 
     st.divider()
     df_t = pd.read_sql_query("SELECT fonte, valor_eur, tipo FROM transacoes", conn)
@@ -182,7 +187,6 @@ with tab4:
 with tab5:
     st.header("👤 Gestão de Membros")
     st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
-    # Correção do SyntaxError (aspas fechadas corretamente)
     with st.expander("➕ Cadastrar Novo Membro"):
         n_nom = st.text_input("Nome Completo", key=f"cad_n_{v}")
         n_usr = st.text_input("Login (Usuário)", key=f"cad_u_{v}")
