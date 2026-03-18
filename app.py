@@ -3,6 +3,7 @@ import sqlite3
 import pandas as pd
 import hashlib
 from datetime import datetime
+from streamlit.column_config import SelectboxColumn
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
@@ -42,7 +43,7 @@ def init_db():
 
 init_db()
 
-# --- SEGURANÇA ---
+# --- SEGURANÇA E CONEXÃO ---
 if 'logado' not in st.session_state: st.session_state.logado = False
 conn = get_conn()
 c = conn.cursor()
@@ -60,12 +61,7 @@ if not st.session_state.logado:
             st.rerun()
     st.stop()
 
-# --- INTERFACE PRINCIPAL ---
-st.sidebar.title(f"👤 {st.session_state.display_name}")
-if st.sidebar.button("Sair"):
-    st.session_state.clear()
-    st.rerun()
-
+# --- CARREGAMENTO DE LISTAS ---
 lista_cat = pd.read_sql_query("SELECT nome FROM categorias ORDER BY nome", conn)['nome'].tolist()
 lista_ben = pd.read_sql_query("SELECT nome FROM beneficiarios ORDER BY nome", conn)['nome'].tolist()
 lista_fon = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['nome'].tolist()
@@ -100,36 +96,40 @@ with tab1:
 
 with tab2:
     st.subheader("📑 Edição e Exclusão")
-    st.warning("⚠️ Atenção: Alterações ou exclusões na tabela impactam o saldo das contas imediatamente após salvar.")
+    st.warning("⚠️ Atenção: Use as caixas seletoras para Categoria, Beneficiário, Fonte e Tipo.")
     
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # Editor dinâmico com lixeira habilitada via num_rows="dynamic"
+    # Validação via colunas de seleção no editor
     edited_df = st.data_editor(
         df_h, 
         key=f"editor_hist_{v}", 
         num_rows="dynamic", 
         use_container_width=True,
         hide_index=True,
-        disabled=["id", "usuario"]
+        disabled=["id", "usuario"],
+        column_config={
+            "categoria": SelectboxColumn("Categoria", options=lista_cat, required=True),
+            "beneficiario": SelectboxColumn("Beneficiário", options=lista_ben, required=True),
+            "fonte": SelectboxColumn("Fonte", options=lista_fon, required=True),
+            "tipo": SelectboxColumn("Tipo", options=["Despesa", "Receita"], required=True),
+        }
     )
 
-    # Controle de Confirmação
     with st.expander("🔐 Painel de Confirmação", expanded=True):
-        confirmar = st.checkbox("Confirmo que desejo aplicar todas as alterações (edições e remoções) e atualizar os saldos.", key=f"chk_conf_{v}")
+        confirmar = st.checkbox("Confirmo que as seleções e valores estão corretos.", key=f"chk_conf_{v}")
         if st.button("💾 Executar Alterações", type="primary", key=f"save_edit_{v}"):
             if confirmar:
                 try:
                     c.execute("DELETE FROM transacoes")
                     edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
                     conn.commit()
-                    st.toast("🔄 Histórico e Saldos atualizados com sucesso!", icon="✨")
-                    limpar_campos()
-                    st.rerun()
+                    st.toast("🔄 Dados e Saldos atualizados!")
+                    limpar_campos(); st.rerun()
                 except Exception as e:
-                    st.error(f"Erro crítico ao salvar: {e}")
+                    st.error(f"Erro: {e}")
             else:
-                st.error("❌ Erro: Você deve marcar a caixa de confirmação antes de salvar.")
+                st.error("Marque a caixa de confirmação.")
 
 with tab3:
     st.header("⚙️ Gestão de Listas")
@@ -141,7 +141,7 @@ with tab3:
             if st.button(f"Confirmar", key=f"btn_add_{k}_{v}"):
                 if nv:
                     c.execute(f"INSERT OR IGNORE INTO {tab} (nome) VALUES (?)", (nv,))
-                    conn.commit(); st.toast(f"✅ {nv} adicionado!"); limpar_campos(); st.rerun()
+                    conn.commit(); st.toast(f"✅ Adicionado!"); limpar_campos(); st.rerun()
             sel = st.selectbox(f"Editar/Remover", [""] + lst, key=f"sel_{k}_{v}")
             if sel:
                 nn = st.text_input("Novo nome", key=f"new_{k}_{v}")
@@ -167,7 +167,7 @@ with tab4:
         if f_alvo:
             c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
             conn.commit()
-            st.toast(f"📈 Saldo de {f_alvo} ajustado!", icon="💰")
+            st.toast(f"📈 Saldo de {f_alvo} ajustado!")
             limpar_campos(); st.rerun()
 
     st.divider()
@@ -187,6 +187,7 @@ with tab4:
 with tab5:
     st.header("👤 Gestão de Membros")
     st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
+    # Correção do erro de aspas na linha 186
     with st.expander("➕ Cadastrar Novo Membro"):
         n_nom = st.text_input("Nome Completo", key=f"cad_n_{v}")
         n_usr = st.text_input("Login (Usuário)", key=f"cad_u_{v}")
@@ -197,7 +198,7 @@ with tab5:
                 try:
                     c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)", 
                               (n_usr, hash_password(n_sen), n_eml, n_nom))
-                    conn.commit(); st.toast("👤 Novo membro ativo!"); limpar_campos(); st.rerun()
+                    conn.commit(); st.toast("👤 Novo membro cadastrado!"); limpar_campos(); st.rerun()
                 except: st.error("Erro: Usuário já existe.")
 
 conn.close()
