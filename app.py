@@ -67,7 +67,7 @@ def init_db():
     # Garante Admin sem apagar outros
     senha_adm = hash_password("123456")
     c.execute("INSERT OR IGNORE INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,?)",
-              ("admin", senha_adm, "admin@teste.com", "Administrador", 1))
+              ("admin", senha_adm, "ivanzimmbarros@gmail.com", "Administrador", 1))
     conn.commit()
     conn.close()
 
