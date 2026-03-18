@@ -91,8 +91,7 @@ with tab1:
                           (datetime.now().strftime("%d/%m/%Y"), cat, ben, fonte, v_eur, tipo, nota, st.session_state.display_name))
                 conn.commit()
                 st.toast("✅ Registado!")
-                limpar_campos()
-                st.rerun()
+                limpar_campos(); st.rerun()
 
 with tab2:
     st.subheader("📊 Controle Geral")
@@ -118,101 +117,4 @@ with tab2:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "id": st.column_config.Column(disabled=True),
-            "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat),
-            "beneficiario": st.column_config.SelectboxColumn("Beneficiário", options=lista_ben),
-            "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon),
-            "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
-            "usuario": st.column_config.Column(disabled=True)
-        }
-    )
-
-    if st.button("💾 Executar Alterações", type="primary"):
-        try:
-            ids_originais = df_f['id'].tolist()
-            if ids_originais:
-                placeholders = ','.join(['?'] * len(ids_originais))
-                query = f"DELETE FROM transacoes WHERE id IN ({placeholders})"
-                c.execute(query, tuple(ids_originais))
-            
-            edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
-            conn.commit()
-            st.success("🔄 Dados atualizados!")
-            limpar_campos()
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao salvar: {e}")
-
-with tab3:
-    st.header("💰 Saldos e Ajustes")
-    c_f, c_v = st.columns([2, 1])
-    f_alvo = c_f.selectbox("Escolha a Conta", lista_fon, key=f"f_aj_{v}")
-    v_ini = c_v.number_input("Definir Saldo Inicial (€)", min_value=0.0, step=0.01)
-    
-    if st.button("Gravar Ajuste de Saldo"):
-        c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
-        conn.commit()
-        st.toast("✅ Saldo Inicial Atualizado!")
-        limpar_campos()
-        st.rerun()
-
-    st.divider()
-    df_t = pd.read_sql_query("SELECT fonte, valor_eur, tipo FROM transacoes", conn)
-    df_s = pd.read_sql_query("SELECT * FROM saldos_iniciais", conn)
-    
-    st.subheader("Património por Conta")
-    cols_grid = st.columns(4)
-    for i, f in enumerate(lista_fon):
-        ini = df_s[df_s['fonte'] == f]['valor_inicial'].sum()
-        rec = df_t[(df_t['fonte'] == f) & (df_t['tipo'] == 'Receita')]['valor_eur'].sum()
-        des = df_t[(df_t['fonte'] == f) & (df_t['tipo'] == 'Despesa')]['valor_eur'].sum()
-        cols_grid[i % 4].metric(f, f"€ {ini+rec-des:,.2f}", f"Inicial: € {ini:,.2f}")
-
-with tab4:
-    st.header("🏷️ Gestão de Listas")
-    cols = st.columns(3)
-    def ui_gestao(col, tit, tab, lst, k):
-        with col:
-            st.subheader(tit)
-            nv = st.text_input(f"Novo {tit}", key=f"add_{k}_{v}")
-            if st.button(f"Adicionar", key=f"btn_add_{k}_{v}"):
-                if nv:
-                    c.execute(f"INSERT OR IGNORE INTO {tab} (nome) VALUES (?)", (nv,))
-                    conn.commit()
-                    limpar_campos()
-                    st.rerun()
-            sel = st.selectbox(f"Eliminar {tit}", [""] + lst, key=f"sel_{k}_{v}")
-            if st.button(f"Remover Item", key=f"rm_{k}_{v}"):
-                if sel:
-                    c.execute(f"DELETE FROM {tab} WHERE nome=?", (sel,))
-                    conn.commit()
-                    limpar_campos()
-                    st.rerun()
-
-    ui_gestao(cols[0], "Categoria", "categorias", lista_cat, "c")
-    ui_gestao(cols[1], "Beneficiário", "beneficiarios", lista_ben, "b")
-    ui_gestao(cols[2], "Fonte", "fontes", lista_fon, "f")
-
-with tab5:
-    st.header("👤 Usuários Cadastrados")
-    st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
-    
-    with st.expander("➕ Cadastrar Novo Membro", expanded=False):
-        with st.form(key=f"f_user_{v}"):
-            n_nome = st.text_input("Nome Completo")
-            n_user = st.text_input("Login (Usuário)")
-            n_mail = st.text_input("E-mail para 2FA")
-            n_pass = st.text_input("Senha Inicial", type="password")
-            if st.form_submit_button("Confirmar Cadastro"):
-                if n_user and n_pass:
-                    try:
-                        c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao) VALUES (?,?,?,?)",
-                                  (n_user, hash_password(n_pass), n_mail, n_nome))
-                        conn.commit()
-                        st.success("✅ Usuário criado!")
-                        limpar_campos()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
-
-conn.close()
+            "id": st.column
