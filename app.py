@@ -94,24 +94,26 @@ with tab1:
                 limpar_campos(); st.rerun()
 
 with tab2:
-    st.subheader("📊 Filtros e Histórico")
+    st.subheader("📊 Histórico e Filtros Manuais")
     
     # BUSCA DE DADOS
     df_full = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    # BARRA DE FILTROS (Solução para a falta de ícones nativos)
-    col_f1, col_f2, col_f3 = st.columns(3)
-    f_cat = col_f1.multiselect("Filtrar Categoria", options=lista_cat)
-    f_fon = col_f2.multiselect("Filtrar Fonte", options=lista_fon)
-    f_tipo = col_f3.multiselect("Filtrar Tipo", options=["Despesa", "Receita"])
+    # BARRA DE FILTROS AMPLIADA
+    f1, f2, f3, f4 = st.columns(4)
+    f_cat = f1.multiselect("Filtrar Categoria", options=lista_cat)
+    f_ben = f2.multiselect("Filtrar Beneficiário", options=lista_ben) # Novo filtro adicionado
+    f_fon = f3.multiselect("Filtrar Fonte", options=lista_fon)
+    f_tipo = f4.multiselect("Filtrar Tipo", options=["Despesa", "Receita"])
 
-    # APLICAÇÃO DOS FILTROS NO DATAFRAME
+    # APLICAÇÃO DOS FILTROS
     df_filtered = df_full.copy()
     if f_cat: df_filtered = df_filtered[df_filtered['categoria'].isin(f_cat)]
+    if f_ben: df_filtered = df_filtered[df_filtered['beneficiario'].isin(f_ben)] # Lógica do novo filtro
     if f_fon: df_filtered = df_filtered[df_filtered['fonte'].isin(f_fon)]
     if f_tipo: df_filtered = df_filtered[df_filtered['tipo'].isin(f_tipo)]
 
-    # TABELA EDITÁVEL
+    # TABELA EDITÁVEL COM CONFIGURAÇÕES DE COLUNA
     edited_df = st.data_editor(
         df_filtered,
         key=f"editor_hist_{v}",
@@ -119,47 +121,51 @@ with tab2:
         use_container_width=True,
         hide_index=True,
         column_config={
+            "id": st.column_config.Column(disabled=True),
             "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat),
             "beneficiario": st.column_config.SelectboxColumn("Beneficiário", options=lista_ben),
             "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon),
-            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="€ %.2f")
+            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="€ %.2f"),
+            "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
+            "usuario": st.column_config.Column(disabled=True)
         }
     )
 
-    if st.button("💾 Salvar Alterações", type="primary"):
-        # Lógica para atualizar apenas as linhas modificadas ou a tabela toda
-        try:
-            # Para simplificar e garantir integridade:
-            ids_na_tabela = edited_df['id'].tolist()
-            # 1. Remove do DB o que não está mais no DF filtrado (se deletou linhas)
-            # 2. Atualiza o restante. 
-            # (Nota: Em apps reais, usaríamos loops de UPDATE por ID)
-            st.warning("Funcionalidade de salvamento em lote processando...")
-            # Re-inserção simples para este exemplo:
-            c.execute("DELETE FROM transacoes WHERE id IN ({})".format(','.join(['?']*len(df_filtered))) if len(df_filtered)>0 else "SELECT 1", tuple(df_filtered['id'].tolist()))
-            edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
-            conn.commit()
-            st.success("✅ Histórico atualizado!")
-            limpar_campos(); st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao salvar: {e}")
+    with st.expander("🔐 Painel de Confirmação", expanded=True):
+        confirmar = st.checkbox("Confirmo que revisei as alterações (edições ou exclusões).", key=f"chk_conf_{v}")
+        if st.button("💾 Executar Alterações no Banco", type="primary", key=f"save_edit_{v}"):
+            if confirmar:
+                try:
+                    # Sincronização robusta: removemos o que estava no filtro original e reinserimos a versão editada
+                    ids_para_remover = df_filtered['id'].tolist()
+                    if ids_para_remover:
+                        placeholders = ','.join(['?'] * len(ids_para_remover))
+                        c.execute(f"DELETE FROM transacoes WHERE id IN ({placeholders})", tuple(ids_para_remover))
+                    
+                    edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
+                    conn.commit()
+                    st.success("🔄 Dados sincronizados com sucesso!")
+                    limpar_campos(); st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao salvar: {e}")
 
-# --- RESTANTE DAS ABAS (Saldos, Gestão, Usuários) ---
+# --- RESTANTE DAS ABAS ---
 with tab3:
     st.header("💰 Saldos e Ajustes")
     c_f, c_v = st.columns([2, 1])
-    f_alvo = c_f.selectbox("Conta", lista_fon, key=f"f_aj_{v}")
-    v_ini = c_v.number_input("Novo Saldo Inicial (€)", min_value=0.0, step=0.01)
+    f_alvo = c_f.selectbox("Escolha a Conta", lista_fon, key=f"f_aj_{v}")
+    v_ini = c_v.number_input("Definir Saldo Inicial (€)", min_value=0.0, step=0.01)
     
-    if st.button("Gravar Saldo Inicial"):
+    if st.button("Gravar Ajuste de Saldo"):
         c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
-        conn.commit(); st.toast("✅ Saldo Atualizado!"); limpar_campos(); st.rerun()
+        conn.commit(); st.toast("✅ Saldo Inicial Atualizado!"); limpar_campos(); st.rerun()
 
     st.divider()
     df_t = pd.read_sql_query("SELECT fonte, valor_eur, tipo FROM transacoes", conn)
     df_s = pd.read_sql_query("SELECT * FROM saldos_iniciais", conn)
     
     if lista_fon:
+        st.subheader("Património por Conta")
         cols_grid = st.columns(4)
         for i, f in enumerate(lista_fon):
             ini = df_s[df_s['fonte'] == f]['valor_inicial'].sum()
@@ -175,19 +181,15 @@ with tab4:
             st.subheader(tit)
             nv = st.text_input(f"Novo {tit}", key=f"add_{k}_{v}")
             if st.button(f"Adicionar", key=f"btn_add_{k}_{v}"):
-                c.execute(f"INSERT OR IGNORE INTO {tab} (nome) VALUES (?)", (nv,))
-                conn.commit(); limpar_campos(); st.rerun()
-            sel = st.selectbox(f"Eliminar {tit}", [""] + lst, key=f"sel_{k}_{v}")
-            if st.button(f"Remover", key=f"rm_{k}_{v}"):
-                c.execute(f"DELETE FROM {tab} WHERE nome=?", (sel,))
-                conn.commit(); limpar_campos(); st.rerun()
+                if nv:
+                    c.execute(f"INSERT OR IGNORE INTO {tab} (nome) VALUES (?)", (nv,))
+                    conn.commit(); limpar_campos(); st.rerun()
+            sel = st.selectbox(f"Remover {tit}", [""] + lst, key=f"sel_{k}_{v}")
+            if st.button(f"Excluir Item", key=f"rm_{k}_{v}"):
+                if sel:
+                    c.execute(f"DELETE FROM {tab} WHERE nome=?", (sel,))
+                    conn.commit(); limpar_campos(); st.rerun()
 
     ui_gestao(cols[0], "Categoria", "categorias", lista_cat, "c")
     ui_gestao(cols[1], "Beneficiário", "beneficiarios", lista_ben, "b")
-    ui_gestao(cols[2], "Fonte", "fontes", lista_fon, "f")
-
-with tab5:
-    st.header("👤 Usuários")
-    st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True)
-
-conn.close()
+    ui_gestao(cols[2], "Fonte", "fontes", lista_fon
