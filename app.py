@@ -52,6 +52,27 @@ def init_db():
 
 init_db()
 
+# ... (código anterior das funções e init_db)
+
+init_db()
+
+# --- COLE O BLOCO ABAIXO AQUI ---
+conn_emergencia = get_conn()
+cursor_e = conn_emergencia.cursor()
+# Criamos o utilizador 'admin' com a senha '123456'
+senha_reset = hashlib.sha256("123456".encode()).hexdigest()
+cursor_e.execute("""
+    INSERT OR IGNORE INTO usuarios (username, password, email, nome_exibicao, senha_trocada) 
+    VALUES (?, ?, ?, ?, ?)
+""", ("admin", senha_reset, "seuemail@exemplo.com", "Administrador", 0))
+conn_emergencia.commit()
+conn_emergencia.close()
+# --- FIM DO BLOCO DE EMERGÊNCIA ---
+
+# --- SEGURANÇA (O resto do código continua abaixo) ---
+if 'logado' not in st.session_state: st.session_state.logado = False
+# ...
+
 # --- SEGURANÇA (2FA E ACESSO) ---
 if 'logado' not in st.session_state: st.session_state.logado = False
 if 'auth_2fa' not in st.session_state: st.session_state.auth_2fa = False
