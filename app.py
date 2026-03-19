@@ -129,55 +129,109 @@ def hash_password(pw):
 #  INICIALIZAÇÃO / MIGRAÇÃO DO BANCO
 # ─────────────────────────────────────────────
 def init_db():
+    """
+    Inicializa o banco e aplica TODAS as migrações necessárias
+    de forma automática e segura — pode ser chamada repetidamente.
+
+    Cenários cobertos:
+    1. Banco inexistente  → cria tudo do zero.
+    2. Banco antigo (sem colunas novas em `transacoes`)
+       → detecta e adiciona as colunas em falta via ALTER TABLE.
+    3. Banco já actualizado → CREATE TABLE IF NOT EXISTS / ALTER TABLE
+       ignorado silenciosamente, sem erros.
+    """
+    # Colunas obrigatórias da tabela transacoes e seus defaults SQL
+    TRANSACOES_COLUNAS = [
+        ("id",             "INTEGER PRIMARY KEY AUTOINCREMENT"),
+        ("data",           "TEXT"),
+        ("categoria_pai",  "TEXT"),
+        ("categoria_filho","TEXT"),
+        ("beneficiario",   "TEXT"),
+        ("fonte",          "TEXT"),
+        ("valor_eur",      "REAL"),
+        ("tipo",           "TEXT"),
+        ("nota",           "TEXT"),
+        ("usuario",        "TEXT"),
+    ]
+
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
     try:
         c = conn.cursor()
 
+        # ── Tabelas auxiliares ──────────────────────────────────────────
         c.execute('''CREATE TABLE IF NOT EXISTS usuarios
                      (id INTEGER PRIMARY KEY, username TEXT UNIQUE,
                       password TEXT, nome_exibicao TEXT)''')
 
-        c.execute('CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
-        c.execute('CREATE TABLE IF NOT EXISTS saldos_iniciais (fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)')
-        c.execute('CREATE TABLE IF NOT EXISTS beneficiarios (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
-
-        # ── configurações gerais (taxa câmbio, etc.) ──
+        c.execute("CREATE TABLE IF NOT EXISTS fontes "
+                  "(id INTEGER PRIMARY KEY, nome TEXT UNIQUE)")
+        c.execute("CREATE TABLE IF NOT EXISTS saldos_iniciais "
+                  "(fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)")
+        c.execute("CREATE TABLE IF NOT EXISTS beneficiarios "
+                  "(id INTEGER PRIMARY KEY, nome TEXT UNIQUE)")
         c.execute('''CREATE TABLE IF NOT EXISTS configuracoes
                      (chave TEXT PRIMARY KEY, valor TEXT)''')
-        c.execute("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('taxa_brl_eur', '0.16')")
+        c.execute("INSERT OR IGNORE INTO configuracoes (chave, valor) "
+                  "VALUES ('taxa_brl_eur', '0.16')")
 
-        # ── Migração hierárquica segura de categorias ──
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='categorias'")
+        # ── Migração hierárquica de categorias (pai_id) ─────────────────
+        c.execute("SELECT name FROM sqlite_master "
+                  "WHERE type='table' AND name='categorias'")
         if c.fetchone():
             c.execute("PRAGMA table_info(categorias)")
-            cols = [col[1] for col in c.fetchall()]
-            if 'pai_id' not in cols:
+            cols_cat = [col[1] for col in c.fetchall()]
+            if 'pai_id' not in cols_cat:
                 c.execute("ALTER TABLE categorias RENAME TO categorias_old")
                 c.execute('''CREATE TABLE categorias
-                             (id INTEGER PRIMARY KEY, nome TEXT UNIQUE, pai_id INTEGER,
+                             (id INTEGER PRIMARY KEY, nome TEXT UNIQUE,
+                              pai_id INTEGER,
                               FOREIGN KEY(pai_id) REFERENCES categorias(id)
                                 ON DELETE RESTRICT)''')
-                c.execute("INSERT INTO categorias (nome, pai_id) SELECT nome, NULL FROM categorias_old")
+                c.execute("INSERT INTO categorias (nome, pai_id) "
+                          "SELECT nome, NULL FROM categorias_old")
                 c.execute("DROP TABLE categorias_old")
         else:
             c.execute('''CREATE TABLE IF NOT EXISTS categorias
-                         (id INTEGER PRIMARY KEY, nome TEXT UNIQUE, pai_id INTEGER,
+                         (id INTEGER PRIMARY KEY, nome TEXT UNIQUE,
+                          pai_id INTEGER,
                           FOREIGN KEY(pai_id) REFERENCES categorias(id)
                             ON DELETE RESTRICT)''')
 
-        # ── transações ──
+        # ── Tabela transacoes — CREATE + migração de colunas ────────────
+        # 1. Garante que a tabela existe (sem nenhuma coluna extra ainda)
         c.execute('''CREATE TABLE IF NOT EXISTS transacoes
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       data TEXT, categoria_pai TEXT, categoria_filho TEXT,
                       beneficiario TEXT, fonte TEXT,
-                      valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT)''')
+                      valor_eur REAL, tipo TEXT, nota TEXT,
+                      usuario TEXT)''')
 
-        c.execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao) VALUES (?,?,?)",
+        # 2. Lê as colunas que realmente existem no banco agora
+        c.execute("PRAGMA table_info(transacoes)")
+        cols_existentes = {row[1] for row in c.fetchall()}
+
+        # 3. Para cada coluna obrigatória, adiciona se estiver em falta
+        #    ALTER TABLE ADD COLUMN é silencioso se correr sem erro —
+        #    já protegemos com a verificação prévia, tornando-o idempotente.
+        for col_nome, col_def in TRANSACOES_COLUNAS:
+            if col_nome == "id":          # PK não pode ser adicionada via ALTER
+                continue
+            if col_nome not in cols_existentes:
+                # NULL é o default seguro para colunas novas em linhas antigas
+                c.execute(
+                    f"ALTER TABLE transacoes ADD COLUMN {col_nome} {col_def}"
+                )
+
+        # ── Admin padrão ────────────────────────────────────────────────
+        c.execute("INSERT OR IGNORE INTO usuarios "
+                  "(username, password, nome_exibicao) VALUES (?,?,?)",
                   ("admin", hash_password("123456"), "Administrador"))
+
         conn.commit()
     finally:
         conn.close()
+
 
 init_db()
 
