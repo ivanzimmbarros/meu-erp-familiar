@@ -77,32 +77,50 @@ init_session()
 # ─────────────────────────────────────────────
 DB_PATH = 'finance.db'
 
-def _get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")   # ← ativado em TODA conexão
-    return conn
-
 def db_query(sql, params=()):
-    """SELECT → list of tuples."""
-    with _get_conn() as c:
-        return c.execute(sql, params).fetchall()
+    """SELECT -> list of tuples."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
 
 def db_execute(sql, params=()):
-    """INSERT / UPDATE / DELETE com commit automático."""
-    with _get_conn() as c:
-        c.execute(sql, params)
+    """INSERT / UPDATE / DELETE com commit explicito."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(sql, params)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def db_execute_many(sqls_params):
-    """Múltiplas operações numa única transação."""
-    with _get_conn() as c:
+    """Multiplas operacoes numa unica transacao com commit explicito."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
         for sql, params in sqls_params:
-            c.execute(sql, params)
+            conn.execute(sql, params)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def db_df(sql, params=()):
-    """SELECT → DataFrame."""
-    with _get_conn() as c:
-        return pd.read_sql_query(sql, c, params=params)
-
+    """SELECT -> DataFrame."""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        return pd.read_sql_query(sql, conn, params=params)
+    finally:
+        conn.close()
 def hash_password(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
@@ -111,7 +129,9 @@ def hash_password(pw):
 #  INICIALIZAÇÃO / MIGRAÇÃO DO BANCO
 # ─────────────────────────────────────────────
 def init_db():
-    with _get_conn() as conn:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
         c = conn.cursor()
 
         c.execute('''CREATE TABLE IF NOT EXISTS usuarios
@@ -155,6 +175,9 @@ def init_db():
 
         c.execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao) VALUES (?,?,?)",
                   ("admin", hash_password("123456"), "Administrador"))
+        conn.commit()
+    finally:
+        conn.close()
 
 init_db()
 
