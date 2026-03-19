@@ -372,14 +372,14 @@ with tab3:
             classe_valor = "valor-positivo"       if saldo >= 0 else "valor-negativo"
             sinal = "+" if saldo > 0 else ""
 
+            ini_texto = f"&nbsp;|&nbsp; Saldo inicial: € {ini:,.2f}" if ini != 0 else ""
             with cols_saldo[i % 3]:
                 st.markdown(f"""
                 <div class="saldo-card {classe_card}">
                     <h3>🏦 {f}</h3>
                     <div class="{classe_valor}">{sinal}€ {saldo:,.2f}</div>
                     <div class="detalhe">
-                        Entradas: € {rec:,.2f} &nbsp;|&nbsp; Saídas: € {des:,.2f}
-                        {f' &nbsp;|&nbsp; Saldo inicial: € {ini:,.2f}' if ini != 0 else ''}
+                        Entradas: € {rec:,.2f} &nbsp;|&nbsp; Saídas: € {des:,.2f}{ini_texto}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
