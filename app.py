@@ -94,84 +94,68 @@ with tab1:
 with tab2:
     st.subheader("📊 Histórico e Edição")
     
-    # 1. Carregar dados e aplicar filtros
+    # 1. Carregamento de dados (sempre fresco do banco)
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    f1, f2, f3, f4 = st.columns(4)
-    s_cat = f1.multiselect("Categoria", lista_cat)
-    s_ben = f2.multiselect("Beneficiário", lista_ben)
-    s_fon = f3.multiselect("Fonte", lista_fon)
-    s_tip = f4.multiselect("Tipo", ["Despesa", "Receita"])
+    # Adicionamos uma coluna virtual de seleção para deleção
+    df_h.insert(0, "Selecionar", False)
 
-    df_f = df_h.copy()
-    if s_cat: df_f = df_f[df_f['categoria'].isin(s_cat)]
-    if s_ben: df_f = df_f[df_f['beneficiario'].isin(s_ben)]
-    if s_fon: df_f = df_f[df_f['fonte'].isin(s_fon)]
-    if s_tip: df_f = df_f[df_f['tipo'].isin(s_tip)]
-
-    # 2. O Editor (usando o v de st.session_state.ver para resetar se necessário)
-    st.write("Selecione as linhas e use 'Delete' no teclado. Depois clique em 'Confirmar Remoção'.")
+    # 2. Configuração do Editor
+    st.write("Marque a caixa 'Selecionar' e clique no botão vermelho para excluir registros.")
     edited_df = st.data_editor(
-        df_f, 
-        key=f"editor_hist_v{st.session_state.ver}", # O segredo do reset está aqui
+        df_h, 
+        key=f"editor_final_v{st.session_state.ver}", 
         use_container_width=True, 
         hide_index=True,
-        num_rows="dynamic",
         column_config={
+            "Selecionar": st.column_config.CheckboxColumn("🗑️", default=False),
             "id": st.column_config.Column(disabled=True),
-            "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat),
-            "beneficiario": st.column_config.SelectboxColumn("Beneficiário", options=lista_ben),
-            "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon),
+            "usuario": st.column_config.Column(disabled=True)
         }
     )
 
     st.divider()
-    
-    # 3. Botões de Ação
     c_save, c_del = st.columns(2)
-    
-    if c_save.button("💾 Salvar Alterações de Texto", use_container_width=True):
-        # Sobrescreve apenas os registros que estão aparecendo no editor filtrado
-        ids_no_editor = edited_df['id'].tolist()
-        if ids_no_editor:
-            placeholders = ','.join(['?'] * len(ids_no_editor))
-            conn.execute(f"DELETE FROM transacoes WHERE id IN ({placeholders})", tuple(ids_no_editor))
-            edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
-            conn.commit()
-            st.success("Dados salvos!")
-            st.rerun()
 
-    if c_del.button("🗑️ Remover Linhas Selecionadas", type="primary", use_container_width=True):
-        # Lógica de comparação para saber o que sumiu do editor
-        ids_antes = set(df_f['id'].tolist())
-        ids_depois = set(edited_df['id'].tolist())
-        ids_para_excluir = list(ids_antes - ids_depois)
+    # 3. Lógica de Salvar Edições
+    if c_save.button("💾 Salvar Alterações de Texto", use_container_width=True):
+        # Filtra apenas as linhas que não foram marcadas para seleção
+        df_para_salvar = edited_df.drop(columns=["Selecionar"])
+        df_para_salvar.to_sql("transacoes", conn, if_exists="replace", index=False)
+        conn.commit()
+        st.success("Alterações salvas!")
+        st.rerun()
+
+    # 4. Lógica de Remoção Segura
+    if c_del.button("🗑️ Remover Registros Marcados", type="primary", use_container_width=True):
+        # Identifica os IDs onde o checkbox "Selecionar" é True
+        ids_para_excluir = edited_df[edited_df["Selecionar"] == True]["id"].tolist()
         
         if ids_para_excluir:
-            st.session_state.temp_ids_excluir = ids_para_excluir
-            st.session_state.aguardando_confirmacao = True
+            st.session_state.temp_ids = ids_para_excluir
+            st.session_state.confirmar_agora = True
         else:
-            st.warning("Nenhuma linha foi marcada para exclusão no editor.")
+            st.warning("Nenhuma linha foi marcada no checkbox.")
 
-    # 4. Modal de Confirmação Real
-    if st.session_state.get('aguardando_confirmacao', False):
-        st.error(f"⚠️ Confirmar a exclusão permanente de {len(st.session_state.temp_ids_excluir)} registro(s)?")
-        cb1, cb2 = st.columns(2)
+    # 5. Modal de Confirmação
+    if st.session_state.get('confirmar_agora', False):
+        st.error(f"Deseja excluir permanentemente {len(st.session_state.temp_ids)} registro(s)?")
+        col_s, col_n = st.columns(2)
         
-        if cb1.button("✅ SIM, EXCLUIR", use_container_width=True):
-            ids = st.session_state.temp_ids_excluir
-            ph = ','.join(['?'] * len(ids))
-            conn.execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids))
+        if col_s.button("SIM, EXCLUIR AGORA", use_container_width=True):
+            ids = st.session_state.temp_ids
+            query = f"DELETE FROM transacoes WHERE id IN ({','.join(['?']*len(ids))})"
+            conn.execute(query, tuple(ids))
             conn.commit()
             
-            # Resetando estados
-            st.session_state.aguardando_confirmacao = False
-            st.session_state.ver += 1 # ISSO força o editor a limpar a "memória" visual
-            st.success("Excluído com sucesso!")
+            # Força o reset completo
+            st.session_state.confirmar_agora = False
+            st.session_state.ver += 1 
+            st.success("Excluído com sucesso e saldos atualizados!")
             st.rerun()
             
-        if cb2.button("❌ CANCELAR", use_container_width=True):
-            st.session_state.aguardando_confirmacao = False
+        if col_n.button("CANCELAR", use_container_width=True):
+            st.session_state.confirmar_agora = False
             st.rerun()
 
 with tab3:
