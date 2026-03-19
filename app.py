@@ -2,13 +2,12 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import hashlib
-import smtplib
-from email.mime.text import MIMEText
 from datetime import datetime
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="ERP Familiar Pro", layout="wide")
 
+# Inicialização do estado de versão para limpeza de campos
 if 'ver' not in st.session_state:
     st.session_state.ver = 0
 
@@ -40,6 +39,12 @@ def init_db():
     senha_adm = hash_password("123456")
     c.execute("INSERT OR IGNORE INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,?)",
               ("admin", senha_adm, "admin@teste.com", "Administrador", 1))
+    
+    # Inserção de dados iniciais para evitar abas vazias no primeiro acesso
+    c.execute("INSERT OR IGNORE INTO categorias (nome) VALUES ('Alimentação'), ('Moradia'), ('Lazer')")
+    c.execute("INSERT OR IGNORE INTO fontes (nome) VALUES ('Banco'), ('Dinheiro Vivo')")
+    c.execute("INSERT OR IGNORE INTO beneficiarios (nome) VALUES ('Geral')")
+    
     conn.commit()
     conn.close()
 
@@ -48,36 +53,34 @@ init_db()
 # --- SEGURANÇA E SESSÃO ---
 if 'logado' not in st.session_state: st.session_state.logado = False
 conn = get_conn()
-c = conn.cursor()
 
 if not st.session_state.logado:
     st.title("🔐 ERP Familiar - Acesso")
-    col_l, col_r = st.columns(2)
-    
-    with col_l:
-        u_in = st.text_input("Usuário", key=f"login_u_{st.session_state.ver}")
-        p_in = st.text_input("Senha", type="password", key=f"login_p_{st.session_state.ver}")
-        if st.button("Entrar"):
-            c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u_in, hash_password(p_in)))
-            user = c.fetchone()
-            if user:
-                st.session_state.logado = True
-                st.session_state.user_id = user[0]
-                st.session_state.display_name = user[4]
-                st.session_state.user_email = user[3]
-                st.rerun()
-            else:
-                st.error("Usuário ou senha incorretos.")
-    
-    with col_r:
-        st.info("💡 **Esqueceu a senha?** Em breve, utilize a opção de recuperação via e-mail cadastrado.")
-
+    u_in = st.text_input("Usuário", key=f"login_u_{st.session_state.ver}")
+    p_in = st.text_input("Senha", type="password", key=f"login_p_{st.session_state.ver}")
+    if st.button("Entrar"):
+        c = conn.cursor()
+        c.execute("SELECT * FROM usuarios WHERE username=? AND password=?", (u_in, hash_password(p_in)))
+        user = c.fetchone()
+        if user:
+            st.session_state.logado = True
+            st.session_state.display_name = user[4]
+            st.rerun()
+        else:
+            st.error("Usuário ou senha incorretos.")
     st.stop()
 
-# --- CARREGAMENTO DE LISTAS ---
-lista_cat = pd.read_sql_query("SELECT nome FROM categorias ORDER BY nome", conn)['nome'].tolist()
-lista_ben = pd.read_sql_query("SELECT nome FROM beneficiarios ORDER BY nome", conn)['nome'].tolist()
-lista_fon = pd.read_sql_query("SELECT nome FROM fontes ORDER BY nome", conn)['nome'].tolist()
+# --- CARREGAMENTO DE LISTAS COM TRATAMENTO DE ERRO (ABAS BLINDADAS) ---
+def carregar_lista(query, default):
+    try:
+        res = pd.read_sql_query(query, conn)['nome'].tolist()
+        return res if res else default
+    except:
+        return default
+
+lista_cat = carregar_lista("SELECT nome FROM categorias ORDER BY nome", ["Geral"])
+lista_ben = carregar_lista("SELECT nome FROM beneficiarios ORDER BY nome", ["Geral"])
+lista_fon = carregar_lista("SELECT nome FROM fontes ORDER BY nome", ["Padrão"])
 
 # --- NAVEGAÇÃO ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -92,88 +95,46 @@ with tab1:
         c1, c2, c3 = st.columns(3)
         valor = c1.number_input("Valor", min_value=0.0, step=0.01)
         moeda = c2.selectbox("Moeda", ["EUR", "BRL"])
-        fonte = c3.selectbox("Fonte", lista_fon if lista_fon else ["Padrão"])
-        cat = st.selectbox("Categoria", lista_cat if lista_cat else ["Geral"])
-        ben = st.selectbox("Beneficiário", lista_ben if lista_ben else ["Geral"])
+        fonte = c3.selectbox("Fonte", lista_fon)
+        cat = st.selectbox("Categoria", lista_cat)
+        ben = st.selectbox("Beneficiário", lista_ben)
         tipo = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True)
         nota = st.text_input("Nota")
         
         if st.form_submit_button("Salvar Registro"):
             if valor > 0:
                 v_eur = valor * 0.16 if moeda == "BRL" else valor
-                c.execute("INSERT INTO transacoes (data, categoria, beneficiario, fonte, valor_eur, tipo, nota, usuario) VALUES (?,?,?,?,?,?,?,?)",
+                conn.execute("INSERT INTO transacoes (data, categoria, beneficiario, fonte, valor_eur, tipo, nota, usuario) VALUES (?,?,?,?,?,?,?,?)",
                           (datetime.now().strftime("%d/%m/%Y"), cat, ben, fonte, v_eur, tipo, nota, st.session_state.display_name))
                 conn.commit()
                 st.toast("✅ Registado com sucesso!")
-                limpar_campos(); st.rerun()
+                limpar_campos()
+                st.rerun()
 
 with tab2:
     st.subheader("📊 Controle Geral")
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
-    f1, f2, f3, f4 = st.columns(4)
-    sel_cat = f1.multiselect("Filtrar Categoria", lista_cat)
-    sel_ben = f2.multiselect("Filtrar Beneficiário", lista_ben)
-    sel_fon = f3.multiselect("Filtrar Fonte", lista_fon)
-    sel_tipo = f4.multiselect("Filtrar Tipo", ["Despesa", "Receita"])
+    if not df_h.empty:
+        f1, f2, f3 = st.columns(3)
+        sel_cat = f1.multiselect("Filtrar Categoria", lista_cat)
+        sel_fon = f2.multiselect("Filtrar Fonte", lista_fon)
+        sel_tipo = f3.multiselect("Filtrar Tipo", ["Despesa", "Receita"])
 
-    df_f = df_h.copy()
-    if sel_cat: df_f = df_f[df_f['categoria'].isin(sel_cat)]
-    if sel_ben: df_f = df_f[df_f['beneficiario'].isin(sel_ben)]
-    if sel_fon: df_f = df_f[df_f['fonte'].isin(sel_fon)]
-    if sel_tipo: df_f = df_f[df_f['tipo'].isin(sel_tipo)]
+        df_f = df_h.copy()
+        if sel_cat: df_f = df_f[df_f['categoria'].isin(sel_cat)]
+        if sel_fon: df_f = df_f[df_f['fonte'].isin(sel_fon)]
+        if sel_tipo: df_f = df_f[df_f['tipo'].isin(sel_tipo)]
 
-    edited_df = st.data_editor(
-        df_f, 
-        key=f"edit_hist_{v}", 
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "id": st.column_config.Column(disabled=True),
-            "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat),
-            "beneficiario": st.column_config.SelectboxColumn("Beneficiário", options=lista_ben),
-            "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon),
-            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="%.2f"),
-            "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
-            "usuario": st.column_config.Column(disabled=True)
-        }
-    )
-
-    with st.expander("🔐 Painel de Confirmação", expanded=True):
-        confirmar = st.checkbox("Confirmo as alterações para sincronização de dados.", key=f"chk_{v}")
-        if st.button("💾 Executar Alterações", type="primary"):
-            if confirmar:
-                try:
-                    ids_originais = df_f['id'].tolist()
-                    if ids_originais:
-                        ph = ','.join(['?'] * len(ids_originais))
-                        c.execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_originais))
-                    
-                    edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
-                    conn.commit()
-                    st.success("🔄 Histórico atualizado!")
-                    limpar_campos(); st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao salvar: {e}")
+        st.data_editor(df_f, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum lançamento encontrado no histórico.")
 
 with tab3:
     st.header("💰 Patrimônio e Saldos")
-    c_f, c_v = st.columns([2, 1])
-    f_alvo = c_f.selectbox("Selecionar Conta/Fonte", lista_fon, key=f"f_aj_sel_{v}")
-    v_ini = c_v.number_input("Definir Saldo de Abertura (€)", step=0.01, key=f"v_ini_aj_{v}")
-    
-    if st.button("Atualizar Saldo"):
-        c.execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_alvo, v_ini))
-        conn.commit()
-        st.toast("✅ Saldo de abertura atualizado!")
-        limpar_campos(); st.rerun()
-
-    st.divider()
     df_t = pd.read_sql_query("SELECT fonte, valor_eur, tipo FROM transacoes", conn)
     df_s = pd.read_sql_query("SELECT * FROM saldos_iniciais", conn)
     
-    st.subheader("Visão Geral de Contas")
     cols_grid = st.columns(4)
     for i, f in enumerate(lista_fon):
         ini = df_s[df_s['fonte'] == f]['valor_inicial'].sum()
@@ -182,27 +143,29 @@ with tab3:
         saldo_total = ini + rec - des
         
         with cols_grid[i % 4]:
-            if saldo_total < 0:
-                st.metric(f, f"€ {saldo_total:,.2f}", delta="NEGATIVO", delta_color="inverse")
-            else:
-                st.metric(f, f"€ {saldo_total:,.2f}", f"Inicial: € {ini:,.2f}")
+            st.metric(f, f"€ {saldo_total:,.2f}", f"Inicial: € {ini:,.2f}")
 
 with tab4:
     st.header("🏷️ Gestão de Parâmetros")
     cols = st.columns(3)
+    
     def ui_gestao(col, tit, tab, lst, k):
         with col:
             st.subheader(tit)
             nv = st.text_input(f"Adicionar {tit}", key=f"add_{k}_{v}")
             if st.button(f"Confirmar {tit}", key=f"btn_add_{k}_{v}"):
                 if nv:
-                    c.execute(f"INSERT OR IGNORE INTO {tab} (nome) VALUES (?)", (nv,))
-                    conn.commit(); limpar_campos(); st.rerun()
+                    conn.execute(f"INSERT OR IGNORE INTO {tab} (nome) VALUES (?)", (nv,))
+                    conn.commit()
+                    limpar_campos()
+                    st.rerun()
             sel = st.selectbox(f"Remover {tit}", [""] + lst, key=f"sel_{k}_{v}")
             if st.button(f"Excluir Item", key=f"rm_{k}_{v}"):
                 if sel:
-                    c.execute(f"DELETE FROM {tab} WHERE nome=?", (sel,))
-                    conn.commit(); limpar_campos(); st.rerun()
+                    conn.execute(f"DELETE FROM {tab} WHERE nome=?", (sel,))
+                    conn.commit()
+                    limpar_campos()
+                    st.rerun()
 
     ui_gestao(cols[0], "Categoria", "categorias", lista_cat, "c")
     ui_gestao(cols[1], "Beneficiário", "beneficiarios", lista_ben, "b")
@@ -210,24 +173,9 @@ with tab4:
 
 with tab5:
     st.header("👤 Gestão de Usuários")
-    with st.expander("➕ Cadastrar Novo Usuário"):
-        with st.form("f_novo_u", clear_on_submit=True):
-            n_n = st.text_input("Nome de Exibição")
-            n_u = st.text_input("Username (Login)")
-            n_e = st.text_input("E-mail para 2FA")
-            n_p = st.text_input("Senha Temporária", type="password")
-            if st.form_submit_button("Criar Acesso"):
-                if n_u and n_p:
-                    try:
-                        c.execute("INSERT INTO usuarios (username, password, email, nome_exibicao, senha_trocada) VALUES (?,?,?,?,?)",
-                                  (n_u, hash_password(n_p), n_e, n_n, 0))
-                        conn.commit()
-                        st.success("Usuário criado com sucesso! Troca de senha obrigatória no 1º acesso.")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("Erro: Username já cadastrado.")
-    
-    st.subheader("Usuários Ativos")
     st.dataframe(pd.read_sql_query("SELECT nome_exibicao, username, email FROM usuarios", conn), use_container_width=True, hide_index=True)
+    if st.sidebar.button("Sair"):
+        st.session_state.logado = False
+        st.rerun()
 
 conn.close()
