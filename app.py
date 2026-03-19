@@ -153,56 +153,59 @@ with tab3:
 
 with tab4:
     st.header("⚙️ Controle de Registros")
-    st.write("Gerencie categorias, beneficiários e fontes de pagamento.")
+    st.write("Gerencie e visualize as listas de parâmetros do sistema.")
     st.divider()
 
-    # Função mestre para criar as seções de edição/remoção
-    def render_secao_controle(titulo, tabela, lista, icone, key_prefix):
+    # Função Mestre para Layout em Colunas com Tabela
+    def render_controle_completo(titulo, tabela, lista, icone, key_prefix):
         st.subheader(f"{icone} {titulo}")
-        col_add, col_edit = st.columns(2)
         
-        # Coluna de Adição
+        # Layout de 3 Colunas: Adicionar | Editar | Visualizar (Tabela)
+        col_add, col_edit, col_tab = st.columns([1, 1.2, 0.8])
+        
         with col_add:
-            st.markdown(f"**Novo {titulo}**")
-            n_val = st.text_input(f"Nome para adicionar", key=f"add_txt_{key_prefix}_{v}")
-            if st.button(f"Adicionar {titulo}", key=f"btn_add_{key_prefix}_{v}", use_container_width=True):
+            st.markdown(f"**➕ Adicionar**")
+            n_val = st.text_input(f"Novo {titulo.lower()}", key=f"add_txt_{key_prefix}_{v}", label_visibility="collapsed", placeholder=f"Nome do {titulo.lower()}...")
+            if st.button(f"Salvar {titulo}", key=f"btn_add_{key_prefix}_{v}", use_container_width=True):
                 if n_val:
                     conn.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (n_val,))
                     conn.commit()
-                    st.success(f"'{n_val}' adicionado!")
+                    st.success("Salvo!")
                     limpar_campos(); st.rerun()
-        
-        # Coluna de Alteração e Remoção
+
         with col_edit:
-            st.markdown(f"**Gerenciar Existente**")
-            item_sel = st.selectbox(f"Selecionar {titulo.lower()}", [""] + lista, key=f"sel_{key_prefix}_{v}")
+            st.markdown(f"**📝 Editar/Remover**")
+            item_sel = st.selectbox(f"Selecionar {titulo}", [""] + lista, key=f"sel_{key_prefix}_{v}", label_visibility="collapsed")
             
             if item_sel:
-                novo_nome = st.text_input(f"Mudar '{item_sel}' para:", key=f"ren_txt_{key_prefix}_{v}")
-                
-                c_1, c_2 = st.columns(2)
-                if c_1.button("📝 Renomear", key=f"btn_ren_{key_prefix}_{v}", use_container_width=True):
+                novo_nome = st.text_input(f"Novo nome para {item_sel}", key=f"ren_txt_{key_prefix}_{v}", placeholder="Novo nome...")
+                c1, c2 = st.columns(2)
+                if c1.button("Renomear", key=f"btn_ren_{key_prefix}_{v}", use_container_width=True):
                     if novo_nome:
-                        # 1. Atualiza na tabela de parâmetros
                         conn.execute(f"UPDATE {tabela} SET nome=? WHERE nome=?", (novo_nome, item_sel))
-                        # 2. Atualiza no histórico (Cascateamento manual)
                         col_ref = tabela[:-1] if tabela != 'fontes' else 'fonte'
                         conn.execute(f"UPDATE transacoes SET {col_ref}=? WHERE {col_ref}=?", (novo_nome, item_sel))
-                        conn.commit()
-                        st.success("Alterado com sucesso!")
-                        limpar_campos(); st.rerun()
+                        conn.commit(); st.rerun()
                 
-                if c_2.button("🗑️ Remover", key=f"btn_del_{key_prefix}_{v}", use_container_width=True, type="secondary"):
+                if c2.button("Excluir", key=f"btn_del_{key_prefix}_{v}", use_container_width=True, type="secondary"):
                     conn.execute(f"DELETE FROM {tabela} WHERE nome=?", (item_sel,))
-                    conn.commit()
-                    st.warning(f"'{item_sel}' removido.")
-                    limpar_campos(); st.rerun()
+                    conn.commit(); st.rerun()
+
+        with col_tab:
+            st.markdown(f"**📋 {titulo}s Atuais**")
+            # Tabela simples para visualização rápida
+            if lista:
+                df_temp = pd.DataFrame(lista, columns=["Existentes"])
+                st.dataframe(df_temp, hide_index=True, use_container_width=True, height=150)
+            else:
+                st.info("Lista vazia")
+
         st.divider()
 
-    # Execução para as 3 categorias solicitadas
-    render_secao_controle("Categoria", "categorias", lista_cat, "🏷️", "ct")
-    render_secao_controle("Beneficiário", "beneficiarios", lista_ben, "👤", "bn")
-    render_secao_controle("Fonte", "fontes", lista_fon, "🏦", "fn")
+    # Renderização alinhada e organizada
+    render_controle_completo("Categoria", "categorias", lista_cat, "🏷️", "ct")
+    render_controle_completo("Beneficiário", "beneficiarios", lista_ben, "👤", "bn")
+    render_controle_completo("Fonte", "fontes", lista_fon, "🏦", "fn")
 
 with tab5:
     st.header("👤 Gestão de Usuários")
