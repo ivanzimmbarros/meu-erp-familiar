@@ -93,13 +93,16 @@ with tab1:
 
 with tab2:
     st.subheader("📊 Histórico e Edição")
+    
+    # Busca dados atualizados do banco
     df_h = pd.read_sql_query("SELECT * FROM transacoes ORDER BY id DESC", conn)
     
+    # --- FILTROS DE VISUALIZAÇÃO ---
     f1, f2, f3, f4 = st.columns(4)
-    s_cat = f1.multiselect("Categoria", lista_cat)
-    s_ben = f2.multiselect("Beneficiário", lista_ben)
-    s_fon = f3.multiselect("Fonte", lista_fon)
-    s_tip = f4.multiselect("Tipo", ["Despesa", "Receita"])
+    s_cat = f1.multiselect("Filtrar Categoria", lista_cat, key=f"f_cat_{v}")
+    s_ben = f2.multiselect("Filtrar Beneficiário", lista_ben, key=f"f_ben_{v}")
+    s_fon = f3.multiselect("Filtrar Fonte", lista_fon, key=f"f_fon_{v}")
+    s_tip = f4.multiselect("Filtrar Tipo", ["Despesa", "Receita"], key=f"f_tip_{v}")
 
     df_f = df_h.copy()
     if s_cat: df_f = df_f[df_f['categoria'].isin(s_cat)]
@@ -107,26 +110,57 @@ with tab2:
     if s_fon: df_f = df_f[df_f['fonte'].isin(s_fon)]
     if s_tip: df_f = df_f[df_f['tipo'].isin(s_tip)]
 
+    # --- EDITOR DE DADOS (Edição e Seleção para Deleção) ---
+    st.write("Selecione as linhas na lateral esquerda para editar ou excluir:")
     edited_df = st.data_editor(
-        df_f, key=f"ed_hist_{v}", use_container_width=True, hide_index=True,
+        df_f, 
+        key=f"editor_hist_{v}", 
+        use_container_width=True, 
+        hide_index=True,
+        num_rows="dynamic", # Permite deletar linhas selecionando e apertando 'delete' ou pelo botão
         column_config={
             "id": st.column_config.Column(disabled=True),
-            "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat),
+            "data": st.column_config.Column(width="small"),
+            "categoria": st.column_config.SelectboxColumn("Categoria", options=lista_cat, required=True),
             "beneficiario": st.column_config.SelectboxColumn("Beneficiário", options=lista_ben),
-            "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon),
+            "fonte": st.column_config.SelectboxColumn("Fonte", options=lista_fon, required=True),
+            "valor_eur": st.column_config.NumberColumn("Valor (€)", format="%.2f"),
             "tipo": st.column_config.SelectboxColumn("Tipo", options=["Despesa", "Receita"]),
             "usuario": st.column_config.Column(disabled=True)
         }
     )
     
-    if st.checkbox("Confirmar alterações para salvar"):
-        if st.button("💾 Aplicar Mudanças", type="primary"):
-            ids_excluir = df_f['id'].tolist()
-            if ids_excluir:
-                ph = ','.join(['?'] * len(ids_excluir))
-                conn.execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_excluir))
-            edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
-            conn.commit(); st.success("Atualizado!"); limpar_campos(); st.rerun()
+    # --- AÇÕES DE SALVAMENTO E EXCLUSÃO ---
+    st.divider()
+    col_btn1, col_btn2 = st.columns([1, 4])
+    
+    confirma = col_btn1.checkbox("⚠️ Confirmar Ação", key=f"check_del_{v}")
+    
+    if confirma:
+        if st.button("💾 Salvar Alterações / Excluir Linhas", type="primary", use_container_width=True):
+            try:
+                # 1. Identifica o que foi removido comparando o DF original filtrado com o editado
+                ids_originais = set(df_f['id'].tolist())
+                ids_restantes = set(edited_df['id'].tolist())
+                ids_para_deletar = list(ids_originais - ids_restantes)
+                
+                # 2. Executa a exclusão no Banco de Dados
+                if ids_para_deletar:
+                    placeholder = ','.join(['?'] * len(ids_para_deletar))
+                    conn.execute(f"DELETE FROM transacoes WHERE id IN ({placeholder})", tuple(ids_para_deletar))
+                
+                # 3. Atualiza os registros existentes (Update via substituição da tabela filtrada)
+                # Removemos os registros antigos do set filtrado e reinserimos os novos editados
+                placeholder_del = ','.join(['?'] * len(list(ids_originais)))
+                conn.execute(f"DELETE FROM transacoes WHERE id IN ({placeholder_del})", tuple(list(ids_originais)))
+                edited_df.to_sql("transacoes", conn, if_exists="append", index=False)
+                
+                conn.commit()
+                st.success("Banco de dados atualizado! Saldos recalculados automaticamente.")
+                limpar_campos()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao atualizar: {e}")
 
 with tab3:
     st.header("💰 Saldos e Abertura")
