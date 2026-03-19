@@ -153,54 +153,56 @@ with tab3:
 
 with tab4:
     st.header("⚙️ Controle de Registros")
-    st.write("Gerencie aqui os parâmetros fundamentais do sistema.")
+    st.write("Gerencie categorias, beneficiários e fontes de pagamento.")
     st.divider()
 
-    # Função interna para renderizar as seções de forma idêntica
-    def render_secao_gestao(titulo, tabela, lista, icone, key_prefix):
+    # Função mestre para criar as seções de edição/remoção
+    def render_secao_controle(titulo, tabela, lista, icone, key_prefix):
         st.subheader(f"{icone} {titulo}")
-        col_esq, col_dir = st.columns(2)
+        col_add, col_edit = st.columns(2)
         
-        with col_esq:
-            st.markdown(f"**Adicionar Novo**")
-            nv = st.text_input(f"Nome do novo {titulo.lower()}", key=f"add_in_{key_prefix}_{v}")
-            if st.button(f"➕ Adicionar {titulo}", key=f"btn_add_{key_prefix}_{v}", use_container_width=True):
-                if nv:
-                    conn.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (nv,))
+        # Coluna de Adição
+        with col_add:
+            st.markdown(f"**Novo {titulo}**")
+            n_val = st.text_input(f"Nome para adicionar", key=f"add_txt_{key_prefix}_{v}")
+            if st.button(f"Adicionar {titulo}", key=f"btn_add_{key_prefix}_{v}", use_container_width=True):
+                if n_val:
+                    conn.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (n_val,))
                     conn.commit()
-                    st.success(f"{titulo} adicionado!")
+                    st.success(f"'{n_val}' adicionado!")
                     limpar_campos(); st.rerun()
-                else:
-                    st.warning("Digite um nome.")
-
-        with col_dir:
-            st.markdown(f"**Editar ou Remover**")
-            sel = st.selectbox(f"Selecionar {titulo.lower()}", [""] + lista, key=f"sel_{key_prefix}_{v}")
-            if sel:
-                novo_n = st.text_input(f"Novo nome para '{sel}'", key=f"ren_in_{key_prefix}_{v}")
-                c_btn1, c_btn2 = st.columns(2)
-                if c_btn1.button(f"📝 Renomear", key=f"btn_ren_{key_prefix}_{v}", use_container_width=True):
-                    if novo_n:
-                        # Atualiza na tabela de parâmetros
-                        conn.execute(f"UPDATE {tabela} SET nome=? WHERE nome=?", (novo_n, sel))
-                        # Atualiza o histórico para não perder dados antigos
-                        col_transaca = tabela[:-1] if tabela != 'fontes' else 'fonte'
-                        conn.execute(f"UPDATE transacoes SET {col_transaca}=? WHERE {col_transaca}=?", (novo_n, sel))
+        
+        # Coluna de Alteração e Remoção
+        with col_edit:
+            st.markdown(f"**Gerenciar Existente**")
+            item_sel = st.selectbox(f"Selecionar {titulo.lower()}", [""] + lista, key=f"sel_{key_prefix}_{v}")
+            
+            if item_sel:
+                novo_nome = st.text_input(f"Mudar '{item_sel}' para:", key=f"ren_txt_{key_prefix}_{v}")
+                
+                c_1, c_2 = st.columns(2)
+                if c_1.button("📝 Renomear", key=f"btn_ren_{key_prefix}_{v}", use_container_width=True):
+                    if novo_nome:
+                        # 1. Atualiza na tabela de parâmetros
+                        conn.execute(f"UPDATE {tabela} SET nome=? WHERE nome=?", (novo_nome, item_sel))
+                        # 2. Atualiza no histórico (Cascateamento manual)
+                        col_ref = tabela[:-1] if tabela != 'fontes' else 'fonte'
+                        conn.execute(f"UPDATE transacoes SET {col_ref}=? WHERE {col_ref}=?", (novo_nome, item_sel))
                         conn.commit()
-                        st.success("Renomeado com sucesso!")
+                        st.success("Alterado com sucesso!")
                         limpar_campos(); st.rerun()
                 
-                if c_btn2.button(f"🗑️ Excluir", key=f"btn_del_{key_prefix}_{v}", use_container_width=True, type="secondary"):
-                    conn.execute(f"DELETE FROM {tabela} WHERE nome=?", (sel,))
+                if c_2.button("🗑️ Remover", key=f"btn_del_{key_prefix}_{v}", use_container_width=True, type="secondary"):
+                    conn.execute(f"DELETE FROM {tabela} WHERE nome=?", (item_sel,))
                     conn.commit()
-                    st.warning(f"'{sel}' removido.")
+                    st.warning(f"'{item_sel}' removido.")
                     limpar_campos(); st.rerun()
         st.divider()
 
-    # Renderização das 3 seções com o mesmo estilo
-    render_secao_gestao("Categoria", "categorias", lista_cat, "🏷️", "cat")
-    render_secao_gestao("Beneficiário", "beneficiarios", lista_ben, "👤", "ben")
-    render_secao_gestao("Fonte", "fontes", lista_fon, "🏦", "fon")
+    # Execução para as 3 categorias solicitadas
+    render_secao_controle("Categoria", "categorias", lista_cat, "🏷️", "ct")
+    render_secao_controle("Beneficiário", "beneficiarios", lista_ben, "👤", "bn")
+    render_secao_controle("Fonte", "fontes", lista_fon, "🏦", "fn")
 
 with tab5:
     st.header("👤 Gestão de Usuários")
