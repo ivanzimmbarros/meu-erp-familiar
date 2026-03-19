@@ -152,30 +152,55 @@ with tab3:
             st.metric(f, f"€ {total:,.2f}", f"Inicial: {ini}", delta_color=color)
 
 with tab4:
-    st.header("⚙️ Gestão de Parâmetros")
-    def gerenciar(tit, tabela, lista, k):
-        st.subheader(tit)
-        col1, col2 = st.columns(2)
-        with col1:
-            nv = st.text_input(f"Novo {tit}", key=f"add_{k}_{v}")
-            if st.button(f"Adicionar", key=f"btn_add_{k}_{v}"):
-                conn.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (nv,))
-                conn.commit(); limpar_campos(); st.rerun()
-        with col2:
-            sel = st.selectbox(f"Editar/Remover {tit}", [""] + lista, key=f"sel_{k}_{v}")
-            if sel:
-                novo_n = st.text_input(f"Novo nome para {sel}", key=f"ren_{k}_{v}")
-                if st.button(f"Renomear", key=f"btn_ren_{k}_{v}"):
-                    conn.execute(f"UPDATE {tabela} SET nome=? WHERE nome=?", (novo_n, sel))
-                    conn.execute(f"UPDATE transacoes SET {tabela[:-1] if tabela != 'fontes' else 'fonte'}=? WHERE {tabela[:-1] if tabela != 'fontes' else 'fonte'}=?", (novo_n, sel))
-                    conn.commit(); limpar_campos(); st.rerun()
-                if st.button(f"Excluir {sel}", key=f"btn_del_{k}_{v}"):
-                    conn.execute(f"DELETE FROM {tabela} WHERE nome=?", (sel,))
-                    conn.commit(); limpar_campos(); st.rerun()
+    st.header("⚙️ Controle de Registros")
+    st.write("Gerencie aqui os parâmetros fundamentais do sistema.")
+    st.divider()
 
-    gerenciar("Categoria", "categorias", lista_cat, "c")
-    gerenciar("Beneficiário", "beneficiarios", lista_ben, "b")
-    gerenciar("Fonte", "fontes", lista_fon, "f")
+    # Função interna para renderizar as seções de forma idêntica
+    def render_secao_gestao(titulo, tabela, lista, icone, key_prefix):
+        st.subheader(f"{icone} {titulo}")
+        col_esq, col_dir = st.columns(2)
+        
+        with col_esq:
+            st.markdown(f"**Adicionar Novo**")
+            nv = st.text_input(f"Nome do novo {titulo.lower()}", key=f"add_in_{key_prefix}_{v}")
+            if st.button(f"➕ Adicionar {titulo}", key=f"btn_add_{key_prefix}_{v}", use_container_width=True):
+                if nv:
+                    conn.execute(f"INSERT OR IGNORE INTO {tabela} (nome) VALUES (?)", (nv,))
+                    conn.commit()
+                    st.success(f"{titulo} adicionado!")
+                    limpar_campos(); st.rerun()
+                else:
+                    st.warning("Digite um nome.")
+
+        with col_dir:
+            st.markdown(f"**Editar ou Remover**")
+            sel = st.selectbox(f"Selecionar {titulo.lower()}", [""] + lista, key=f"sel_{key_prefix}_{v}")
+            if sel:
+                novo_n = st.text_input(f"Novo nome para '{sel}'", key=f"ren_in_{key_prefix}_{v}")
+                c_btn1, c_btn2 = st.columns(2)
+                if c_btn1.button(f"📝 Renomear", key=f"btn_ren_{key_prefix}_{v}", use_container_width=True):
+                    if novo_n:
+                        # Atualiza na tabela de parâmetros
+                        conn.execute(f"UPDATE {tabela} SET nome=? WHERE nome=?", (novo_n, sel))
+                        # Atualiza o histórico para não perder dados antigos
+                        col_transaca = tabela[:-1] if tabela != 'fontes' else 'fonte'
+                        conn.execute(f"UPDATE transacoes SET {col_transaca}=? WHERE {col_transaca}=?", (novo_n, sel))
+                        conn.commit()
+                        st.success("Renomeado com sucesso!")
+                        limpar_campos(); st.rerun()
+                
+                if c_btn2.button(f"🗑️ Excluir", key=f"btn_del_{key_prefix}_{v}", use_container_width=True, type="secondary"):
+                    conn.execute(f"DELETE FROM {tabela} WHERE nome=?", (sel,))
+                    conn.commit()
+                    st.warning(f"'{sel}' removido.")
+                    limpar_campos(); st.rerun()
+        st.divider()
+
+    # Renderização das 3 seções com o mesmo estilo
+    render_secao_gestao("Categoria", "categorias", lista_cat, "🏷️", "cat")
+    render_secao_gestao("Beneficiário", "beneficiarios", lista_ben, "👤", "ben")
+    render_secao_gestao("Fonte", "fontes", lista_fon, "🏦", "fon")
 
 with tab5:
     st.header("👤 Gestão de Usuários")
