@@ -2,6 +2,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import hashlib
+import io
 from datetime import datetime
 
 # ─────────────────────────────────────────────
@@ -40,6 +41,12 @@ st.markdown("""
     .secao-titulo { font-size: 1.1rem; font-weight: 700; color: #1e293b; padding: 8px 0 4px 0; }
     .secao-sub { font-size: 0.85rem; color: #64748b; margin-bottom: 16px; }
 
+    .aviso-bloqueio {
+        background: #fff7ed; border: 1px solid #fed7aa;
+        border-radius: 10px; padding: 14px 18px; margin-bottom: 8px;
+        color: #9a3412; font-size: 0.9rem;
+    }
+
     footer { visibility: hidden; }
     #MainMenu { visibility: hidden; }
 </style>
@@ -50,7 +57,12 @@ st.markdown("""
 #  ESTADO DA SESSÃO
 # ─────────────────────────────────────────────
 def init_session():
-    defaults = {'ver': 0, 'logado': False, 'display_name': None}
+    defaults = {
+        'ver': 0,
+        'logado': False,
+        'display_name': None,
+        'taxa_brl_eur': 0.16,   # taxa de câmbio padrão
+    }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
@@ -59,50 +71,63 @@ init_session()
 
 
 # ─────────────────────────────────────────────
-#  HELPERS DE BANCO — conexão local por operação
+#  HELPERS DE BANCO
+#  • PRAGMA foreign_keys = ON em todas as conexões
+#  • Cada operação abre e fecha sua própria conexão
 # ─────────────────────────────────────────────
 DB_PATH = 'finance.db'
 
+def _get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")   # ← ativado em TODA conexão
+    return conn
+
 def db_query(sql, params=()):
-    """Executa SELECT e retorna fetchall."""
-    with sqlite3.connect(DB_PATH) as c:
+    """SELECT → list of tuples."""
+    with _get_conn() as c:
         return c.execute(sql, params).fetchall()
 
 def db_execute(sql, params=()):
-    """Executa INSERT/UPDATE/DELETE com commit automático."""
-    with sqlite3.connect(DB_PATH) as c:
+    """INSERT / UPDATE / DELETE com commit automático."""
+    with _get_conn() as c:
         c.execute(sql, params)
 
 def db_execute_many(sqls_params):
-    """Executa múltiplas operações numa única conexão."""
-    with sqlite3.connect(DB_PATH) as c:
+    """Múltiplas operações numa única transação."""
+    with _get_conn() as c:
         for sql, params in sqls_params:
             c.execute(sql, params)
 
 def db_df(sql, params=()):
-    """Executa SELECT e retorna DataFrame."""
-    with sqlite3.connect(DB_PATH) as c:
+    """SELECT → DataFrame."""
+    with _get_conn() as c:
         return pd.read_sql_query(sql, c, params=params)
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+def hash_password(pw):
+    return hashlib.sha256(pw.encode()).hexdigest()
 
 
 # ─────────────────────────────────────────────
-#  INICIALIZAÇÃO DO BANCO
+#  INICIALIZAÇÃO / MIGRAÇÃO DO BANCO
 # ─────────────────────────────────────────────
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         c = conn.cursor()
 
         c.execute('''CREATE TABLE IF NOT EXISTS usuarios
                      (id INTEGER PRIMARY KEY, username TEXT UNIQUE,
                       password TEXT, nome_exibicao TEXT)''')
+
         c.execute('CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
         c.execute('CREATE TABLE IF NOT EXISTS saldos_iniciais (fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)')
         c.execute('CREATE TABLE IF NOT EXISTS beneficiarios (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)')
 
-        # Migração hierárquica segura
+        # ── configurações gerais (taxa câmbio, etc.) ──
+        c.execute('''CREATE TABLE IF NOT EXISTS configuracoes
+                     (chave TEXT PRIMARY KEY, valor TEXT)''')
+        c.execute("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('taxa_brl_eur', '0.16')")
+
+        # ── Migração hierárquica segura de categorias ──
         c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='categorias'")
         if c.fetchone():
             c.execute("PRAGMA table_info(categorias)")
@@ -111,14 +136,17 @@ def init_db():
                 c.execute("ALTER TABLE categorias RENAME TO categorias_old")
                 c.execute('''CREATE TABLE categorias
                              (id INTEGER PRIMARY KEY, nome TEXT UNIQUE, pai_id INTEGER,
-                              FOREIGN KEY(pai_id) REFERENCES categorias(id))''')
+                              FOREIGN KEY(pai_id) REFERENCES categorias(id)
+                                ON DELETE RESTRICT)''')
                 c.execute("INSERT INTO categorias (nome, pai_id) SELECT nome, NULL FROM categorias_old")
                 c.execute("DROP TABLE categorias_old")
         else:
             c.execute('''CREATE TABLE IF NOT EXISTS categorias
                          (id INTEGER PRIMARY KEY, nome TEXT UNIQUE, pai_id INTEGER,
-                          FOREIGN KEY(pai_id) REFERENCES categorias(id))''')
+                          FOREIGN KEY(pai_id) REFERENCES categorias(id)
+                            ON DELETE RESTRICT)''')
 
+        # ── transações ──
         c.execute('''CREATE TABLE IF NOT EXISTS transacoes
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       data TEXT, categoria_pai TEXT, categoria_filho TEXT,
@@ -130,13 +158,20 @@ def init_db():
 
 init_db()
 
+# Carrega a taxa de câmbio salva no banco para o session_state
+_taxa_salva = db_query("SELECT valor FROM configuracoes WHERE chave='taxa_brl_eur'")
+if _taxa_salva:
+    st.session_state['taxa_brl_eur'] = float(_taxa_salva[0][0])
+
 
 # ─────────────────────────────────────────────
-#  LOGIN
+#  LOGIN  ← st.stop() garante que nada mais
+#           é renderizado para utilizadores
+#           não autenticados
 # ─────────────────────────────────────────────
 if not st.session_state.logado:
-    col_left, col_center, col_right = st.columns([1, 1.4, 1])
-    with col_center:
+    col_l, col_c, col_r = st.columns([1, 1.4, 1])
+    with col_c:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown("## 🏠 ERP Familiar")
         st.markdown("##### Controle financeiro da sua família")
@@ -152,12 +187,13 @@ if not st.session_state.logado:
                 st.session_state.update({'logado': True, 'display_name': row[0][0]})
                 st.rerun()
             else:
-                st.error("❌ Usuário ou senha incorretos. Tente novamente.")
+                st.error("❌ Usuário ou senha incorretos.")
+    # ← STOP aqui: sidebar e abas NÃO chegam a ser construídas
     st.stop()
 
 
 # ─────────────────────────────────────────────
-#  BARRA LATERAL
+#  BARRA LATERAL  (só chega aqui se logado)
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown(f"### 👋 Olá, {st.session_state.display_name}!")
@@ -168,6 +204,9 @@ with st.sidebar:
     st.markdown("📋 **Lançamentos** → Ver e apagar registros")
     st.markdown("💰 **Saldos** → Ver dinheiro disponível")
     st.markdown("⚙️ **Gestão** → Configurar categorias e contas")
+    st.divider()
+    taxa_atual = st.session_state['taxa_brl_eur']
+    st.caption(f"💱 Taxa BRL → EUR: **{taxa_atual:.4f}**")
     st.divider()
     if st.button("🚪 Sair da conta", use_container_width=True):
         st.session_state.clear()
@@ -181,7 +220,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "➕  Novo Lançamento",
     "📋  Todos os Lançamentos",
     "💰  Saldos por Conta",
-    "⚙️  Gestão"
+    "⚙️  Gestão",
 ])
 
 
@@ -193,19 +232,29 @@ with tab1:
     st.caption("Registre aqui qualquer entrada ou saída de dinheiro da sua família.")
     st.divider()
 
-    cat_df     = db_df("SELECT id, nome, pai_id FROM categorias")
-    pai_opts   = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
-    fontes_row = db_query("SELECT nome FROM fontes")
+    cat_df       = db_df("SELECT id, nome, pai_id FROM categorias")
+    pai_opts     = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
+    fontes_row   = db_query("SELECT nome FROM fontes")
     fontes_lista = [r[0] for r in fontes_row] if fontes_row else ["Padrão"]
-    benef_row  = db_query("SELECT nome FROM beneficiarios")
-    benef_opts = [r[0] for r in benef_row] if benef_row else ["Não especificado"]
+    benef_row    = db_query("SELECT nome FROM beneficiarios")
+    benef_opts   = [r[0] for r in benef_row] if benef_row else ["Não especificado"]
+
+    # ── Aviso de bloqueio se não houver categorias ──
+    sem_categorias = len(pai_opts) == 0
+    if sem_categorias:
+        st.markdown("""
+        <div class="aviso-bloqueio">
+        ⚠️ <strong>Nenhuma categoria cadastrada.</strong>
+        Vá até a aba <strong>⚙️ Gestão → Seção 1</strong> e adicione ao menos uma
+        Categoria Principal antes de lançar uma transação.
+        </div>
+        """, unsafe_allow_html=True)
+
+    taxa_cambio = st.session_state['taxa_brl_eur']
 
     with st.form(key=f"f_lanca_{st.session_state.ver}", clear_on_submit=True):
-        tipo = st.radio(
-            "**Tipo de movimentação**",
-            ["💸 Despesa", "💵 Receita"],
-            horizontal=True
-        )
+        tipo = st.radio("**Tipo de movimentação**",
+                        ["💸 Despesa", "💵 Receita"], horizontal=True)
         tipo_val = "Despesa" if "Despesa" in tipo else "Receita"
 
         st.markdown("---")
@@ -214,7 +263,7 @@ with tab1:
             val = st.number_input("**Valor**", min_value=0.0, step=0.01, format="%.2f")
         with col2:
             moeda = st.selectbox("**Moeda**", ["EUR", "BRL"],
-                                 help="BRL será convertido para EUR (taxa: 0,16)")
+                                 help=f"BRL será convertido para EUR (taxa atual: {taxa_cambio:.4f})")
         with col3:
             data_lancamento = st.date_input("**Data**", value=datetime.now())
 
@@ -228,12 +277,10 @@ with tab1:
                                        label_visibility="collapsed")
                 pid = int(cat_df[cat_df['nome'] == sel_pai]['id'].iloc[0])
                 filhos = cat_df[cat_df['pai_id'] == pid]['nome'].tolist()
-                sel_filho = st.selectbox(
-                    "Detalhamento (opcional)",
-                    filhos if filhos else ["Geral"]
-                )
+                sel_filho = st.selectbox("Detalhamento (opcional)",
+                                         filhos if filhos else ["Geral"])
             else:
-                st.warning("⚠️ Cadastre categorias na aba Gestão primeiro.")
+                st.warning("Sem categorias — cadastre na aba Gestão.")
                 sel_pai   = "Sem categoria"
                 sel_filho = "Geral"
 
@@ -246,15 +293,19 @@ with tab1:
         nota = st.text_input("📝 Observação (opcional)",
                              placeholder="Ex: Supermercado do mês, Salário de março...")
 
-        submitted = st.form_submit_button("✅ Salvar Lançamento",
-                                          use_container_width=True,
-                                          type="primary")
+        # Botão desabilitado se não houver categorias
+        submitted = st.form_submit_button(
+            "✅ Salvar Lançamento",
+            use_container_width=True,
+            type="primary",
+            disabled=sem_categorias,
+        )
 
         if submitted:
             if val == 0:
                 st.error("O valor não pode ser zero.")
             else:
-                v_eur    = val * 0.16 if moeda == "BRL" else val
+                v_eur    = val * taxa_cambio if moeda == "BRL" else val
                 data_str = data_lancamento.strftime("%d/%m/%Y")
                 db_execute(
                     """INSERT INTO transacoes
@@ -273,7 +324,7 @@ with tab1:
 # ══════════════════════════════════════════════
 with tab2:
     st.markdown("## 📋 Histórico de Lançamentos")
-    st.caption("Visualize e remova registros. Marque a caixa e clique em 'Confirmar Remoção'.")
+    st.caption("Visualize, filtre, exporte ou remova registros.")
     st.divider()
 
     fontes_row2 = db_query("SELECT nome FROM fontes")
@@ -285,8 +336,7 @@ with tab2:
     with col_f2:
         filtro_fonte = st.selectbox("Filtrar por conta", fontes_disp)
     with col_f3:
-        filtro_busca = st.text_input("🔍 Buscar por nota ou categoria",
-                                     placeholder="Digite para filtrar...")
+        filtro_busca = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
 
     df = db_df("SELECT * FROM transacoes ORDER BY id DESC")
 
@@ -303,14 +353,44 @@ with tab2:
 
     st.caption(f"📌 {len(df)} registro(s) encontrado(s)")
 
+    # ── Exportação ──────────────────────────────
     if not df.empty:
-        df.insert(0, "Remover", False)
-        df_display = df.rename(columns={
+        col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 4])
+
+        # CSV
+        csv_bytes = df.to_csv(index=False).encode('utf-8-sig')
+        col_exp1.download_button(
+            label="⬇️ Exportar CSV",
+            data=csv_bytes,
+            file_name=f"lancamentos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+        # Excel
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Lançamentos')
+        col_exp2.download_button(
+            label="⬇️ Exportar Excel",
+            data=excel_buffer.getvalue(),
+            file_name=f"lancamentos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    st.markdown("---")
+
+    # ── Tabela editável ──────────────────────────
+    if not df.empty:
+        df_edit = df.copy()
+        df_edit.insert(0, "Remover", False)
+        df_display = df_edit.rename(columns={
             'id': 'ID', 'data': 'Data',
             'categoria_pai': 'Categoria', 'categoria_filho': 'Detalhamento',
             'beneficiario': 'Beneficiário', 'fonte': 'Conta',
             'valor_eur': 'Valor (€)', 'tipo': 'Tipo',
-            'nota': 'Observação', 'usuario': 'Registrado por'
+            'nota': 'Observação', 'usuario': 'Registrado por',
         })
 
         editor = st.data_editor(
@@ -318,23 +398,25 @@ with tab2:
             key=f"ed_{st.session_state.ver}",
             use_container_width=True,
             column_config={
-                "Remover": st.column_config.CheckboxColumn("🗑️ Remover"),
+                "Remover":   st.column_config.CheckboxColumn("🗑️ Remover"),
                 "Valor (€)": st.column_config.NumberColumn(format="€ %.2f"),
             }
         )
 
-        if st.button("🗑️ Confirmar Remoção", type="secondary", key="rm_trans"):
+        if st.button("🗑️ Confirmar Remoção dos Selecionados", type="secondary", key="rm_trans"):
             ids_rm = editor[editor["Remover"] == True]["ID"].tolist()
-            if ids_rm:
+            if not ids_rm:
+                st.warning("Marque pelo menos um registro para remover.")
+            else:
+                # Parâmetros parametrizados — sem concatenação de strings
+                placeholders = ",".join(["?"] * len(ids_rm))
                 db_execute(
-                    f"DELETE FROM transacoes WHERE id IN ({','.join(['?']*len(ids_rm))})",
+                    f"DELETE FROM transacoes WHERE id IN ({placeholders})",
                     tuple(ids_rm)
                 )
                 st.session_state.ver += 1
                 st.success(f"{len(ids_rm)} registro(s) removido(s).")
                 st.rerun()
-            else:
-                st.warning("Marque pelo menos um registro para remover.")
     else:
         st.info("Nenhum lançamento encontrado com os filtros aplicados.")
 
@@ -352,8 +434,8 @@ with tab3:
     if not fontes_saldo:
         st.info("💡 Você ainda não tem contas cadastradas. Vá até a aba **Gestão** para adicionar (ex: Banco, Carteira, Poupança).")
     else:
-        total_geral  = 0.0
-        cols_saldo   = st.columns(min(len(fontes_saldo), 3))
+        total_geral = 0.0
+        cols_saldo  = st.columns(min(len(fontes_saldo), 3))
 
         for i, f in enumerate(fontes_saldo):
             ini_row = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (f,))
@@ -370,9 +452,9 @@ with tab3:
 
             classe_card  = "saldo-card-positivo" if saldo >= 0 else "saldo-card-negativo"
             classe_valor = "valor-positivo"       if saldo >= 0 else "valor-negativo"
-            sinal = "+" if saldo > 0 else ""
+            sinal        = "+" if saldo > 0 else ""
+            ini_texto    = f"&nbsp;|&nbsp; Saldo inicial: € {ini:,.2f}" if ini != 0 else ""
 
-            ini_texto = f"&nbsp;|&nbsp; Saldo inicial: € {ini:,.2f}" if ini != 0 else ""
             with cols_saldo[i % 3]:
                 st.markdown(f"""
                 <div class="saldo-card {classe_card}">
@@ -400,7 +482,7 @@ with tab3:
         st.caption("Use se as contas já tinham dinheiro antes de começar a usar o sistema.")
 
         for f in fontes_saldo:
-            ini_row2 = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (f,))
+            ini_row2  = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (f,))
             ini_atual = ini_row2[0][0] if ini_row2 else 0.0
 
             col_si1, col_si2 = st.columns([3, 1])
@@ -431,7 +513,35 @@ with tab4:
     cat_df2   = db_df("SELECT id, nome, pai_id FROM categorias")
     pai_opts2 = cat_df2[cat_df2['pai_id'].isna()]['nome'].tolist()
 
-    # ── SEÇÃO 1: CATEGORIAS ────────────────────
+    # ══ SEÇÃO 0: TAXA DE CÂMBIO ═══════════════════
+    st.markdown("---")
+    st.markdown('<div class="secao-titulo">💱 Seção 0 — Taxa de Câmbio BRL → EUR</div>', unsafe_allow_html=True)
+    st.markdown('<div class="secao-sub">Define quanto 1 Real brasileiro vale em Euro ao converter lançamentos.</div>', unsafe_allow_html=True)
+
+    col_tx1, col_tx2, col_tx3 = st.columns([1.5, 1, 3])
+    with col_tx1:
+        nova_taxa = st.number_input(
+            "Taxa de conversão (1 BRL = X EUR)",
+            min_value=0.0001, max_value=10.0,
+            value=float(st.session_state['taxa_brl_eur']),
+            step=0.001, format="%.4f",
+            key="inp_taxa"
+        )
+    with col_tx2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("💾 Salvar Taxa", use_container_width=True, key="btn_taxa"):
+            db_execute(
+                "INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('taxa_brl_eur', ?)",
+                (str(nova_taxa),)
+            )
+            st.session_state['taxa_brl_eur'] = nova_taxa
+            st.success(f"Taxa atualizada para {nova_taxa:.4f}. Novos lançamentos em BRL usarão este valor.")
+            st.rerun()
+    with col_tx3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.info(f"💡 Atualmente: 1 BRL = **{st.session_state['taxa_brl_eur']:.4f} EUR**  |  Ex: R$ 100,00 = € {100 * st.session_state['taxa_brl_eur']:.2f}")
+
+    # ══ SEÇÃO 1: CATEGORIAS ═══════════════════════
     st.markdown("---")
     st.markdown('<div class="secao-titulo">📂 Seção 1 — Categorias</div>', unsafe_allow_html=True)
     st.markdown('<div class="secao-sub">Organize seus gastos e receitas em categorias e detalhamentos.</div>', unsafe_allow_html=True)
@@ -441,8 +551,7 @@ with tab4:
     with col_cat1:
         st.markdown("**Adicionar Categoria Principal**")
         st.caption("Ex: Alimentação, Transporte, Saúde, Lazer")
-        n_pai = st.text_input("Nome da categoria principal", key="inp_pai",
-                               placeholder="Ex: Alimentação")
+        n_pai = st.text_input("Nome", key="inp_pai", placeholder="Ex: Alimentação")
         if st.button("➕ Adicionar Categoria Principal", use_container_width=True):
             if n_pai.strip():
                 try:
@@ -459,8 +568,7 @@ with tab4:
         st.caption("Ex: Dentro de 'Alimentação' → Supermercado, Restaurante...")
         if pai_opts2:
             pai_sel_gest = st.selectbox("Dentro de qual categoria?", pai_opts2, key="sel_pai_gest")
-            n_sub = st.text_input("Nome do detalhamento", key="inp_sub",
-                                   placeholder="Ex: Supermercado")
+            n_sub = st.text_input("Nome do detalhamento", key="inp_sub", placeholder="Ex: Supermercado")
             if st.button("➕ Adicionar Detalhamento", use_container_width=True):
                 if n_sub.strip():
                     try:
@@ -493,19 +601,38 @@ with tab4:
         )
         if st.button("🗑️ Remover Categorias Selecionadas", key="rm_cat"):
             ids_cat = ed_cat[ed_cat["Remover"] == True]["id"].tolist()
-            if ids_cat:
-                db_execute(
-                    f"DELETE FROM categorias WHERE id IN ({','.join(['?']*len(ids_cat))})",
-                    tuple(ids_cat)
-                )
-                st.success(f"{len(ids_cat)} categoria(s) removida(s).")
-                st.rerun()
-            else:
+            if not ids_cat:
                 st.warning("Selecione pelo menos uma categoria para remover.")
+            else:
+                # Verifica se alguma categoria pai tem filhos — impede deleção (RESTRICT)
+                erros = []
+                for cid in ids_cat:
+                    filhos_count = db_query(
+                        "SELECT COUNT(*) FROM categorias WHERE pai_id=?", (cid,)
+                    )[0][0]
+                    if filhos_count > 0:
+                        nome_cat = cat_df2[cat_df2['id'] == cid]['Nome'].values
+                        nome_cat = nome_cat[0] if len(nome_cat) else str(cid)
+                        erros.append(nome_cat)
+
+                if erros:
+                    st.error(
+                        f"⛔ Não é possível remover: **{', '.join(erros)}** "
+                        f"porque {'possui' if len(erros)==1 else 'possuem'} detalhamentos vinculados. "
+                        "Remova os detalhamentos primeiro."
+                    )
+                else:
+                    placeholders = ",".join(["?"] * len(ids_cat))
+                    db_execute(
+                        f"DELETE FROM categorias WHERE id IN ({placeholders})",
+                        tuple(ids_cat)
+                    )
+                    st.success(f"{len(ids_cat)} categoria(s) removida(s).")
+                    st.rerun()
     else:
         st.info("Nenhuma categoria cadastrada ainda.")
 
-    # ── SEÇÃO 2: CONTAS E FONTES ───────────────
+    # ══ SEÇÃO 2: CONTAS E FONTES ══════════════════
     st.markdown("---")
     st.markdown('<div class="secao-titulo">🏦 Seção 2 — Contas e Fontes de Dinheiro</div>', unsafe_allow_html=True)
     st.markdown('<div class="secao-sub">Cadastre as contas onde o dinheiro da sua família fica guardado ou circula.</div>', unsafe_allow_html=True)
@@ -539,22 +666,22 @@ with tab4:
             column_config={"Remover": st.column_config.CheckboxColumn("🗑️")}
         )
         if st.button("🗑️ Remover Contas Selecionadas", key="rm_fontes"):
-            ids_f = ed_fontes[ed_fontes["Remover"] == True]["id"].tolist()
-            if ids_f:
-                nomes_f = ed_fontes[ed_fontes["Remover"] == True]["Nome da Conta"].tolist()
-                ops = [(f"DELETE FROM fontes WHERE id IN ({','.join(['?']*len(ids_f))})",
-                        tuple(ids_f))]
+            ids_f   = ed_fontes[ed_fontes["Remover"] == True]["id"].tolist()
+            nomes_f = ed_fontes[ed_fontes["Remover"] == True]["Nome da Conta"].tolist()
+            if not ids_f:
+                st.warning("Selecione pelo menos uma conta para remover.")
+            else:
+                ph = ",".join(["?"] * len(ids_f))
+                ops = [(f"DELETE FROM fontes WHERE id IN ({ph})", tuple(ids_f))]
                 for nm in nomes_f:
                     ops.append(("DELETE FROM saldos_iniciais WHERE fonte=?", (nm,)))
                 db_execute_many(ops)
                 st.success(f"{len(ids_f)} conta(s) removida(s).")
                 st.rerun()
-            else:
-                st.warning("Selecione pelo menos uma conta para remover.")
     else:
         st.info("Nenhuma conta cadastrada ainda. Adicione sua primeira conta acima.")
 
-    # ── SEÇÃO 3: BENEFICIÁRIOS ─────────────────
+    # ══ SEÇÃO 3: BENEFICIÁRIOS ════════════════════
     st.markdown("---")
     st.markdown('<div class="secao-titulo">👤 Seção 3 — Beneficiários</div>', unsafe_allow_html=True)
     st.markdown('<div class="secao-sub">Registe quem costuma enviar ou receber dinheiro da sua família.</div>', unsafe_allow_html=True)
@@ -589,19 +716,17 @@ with tab4:
         )
         if st.button("🗑️ Remover Beneficiários Selecionados", key="rm_benef"):
             ids_b = ed_benef[ed_benef["Remover"] == True]["id"].tolist()
-            if ids_b:
-                db_execute(
-                    f"DELETE FROM beneficiarios WHERE id IN ({','.join(['?']*len(ids_b))})",
-                    tuple(ids_b)
-                )
+            if not ids_b:
+                st.warning("Selecione pelo menos um beneficiário para remover.")
+            else:
+                ph = ",".join(["?"] * len(ids_b))
+                db_execute(f"DELETE FROM beneficiarios WHERE id IN ({ph})", tuple(ids_b))
                 st.success(f"{len(ids_b)} beneficiário(s) removido(s).")
                 st.rerun()
-            else:
-                st.warning("Selecione pelo menos um beneficiário para remover.")
     else:
         st.info("Nenhum beneficiário cadastrado ainda.")
 
-    # ── SEÇÃO 4: UTILIZADORES ──────────────────
+    # ══ SEÇÃO 4: UTILIZADORES ════════════════════
     st.markdown("---")
     st.markdown('<div class="secao-titulo">👥 Seção 4 — Utilizadores do Sistema</div>', unsafe_allow_html=True)
     st.markdown('<div class="secao-sub">Adicione os membros da família que também podem usar o sistema.</div>', unsafe_allow_html=True)
