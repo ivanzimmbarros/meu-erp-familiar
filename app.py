@@ -227,19 +227,31 @@ def init_db():
             conta_pagamento TEXT NOT NULL
         )''')
 
-        # ── NOVA TABELA: orcamentos ─────────────────────────────────────
-        # categoria_filho e beneficiario usam '' (string vazia) quando não
-        # especificados — garante que UNIQUE funciona correctamente no SQLite
-        # (NULL != NULL impediria a deduplicação).
-        c.execute('''CREATE TABLE IF NOT EXISTS orcamentos (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            mes_ano          TEXT NOT NULL,
-            categoria_pai    TEXT NOT NULL,
-            categoria_filho  TEXT NOT NULL DEFAULT '',
-            beneficiario     TEXT NOT NULL DEFAULT '',
-            valor_previsto   REAL NOT NULL DEFAULT 0,
-            UNIQUE(mes_ano, categoria_pai, categoria_filho, beneficiario)
-        )''')
+        # ── NOVA TABELA: orcamentos ─────────────────────────────────────────
+        # UNIQUE inclui tipo_meta: mesma categoria pode ter meta de Despesa
+        # E de Receita ao mesmo tempo — sem conflito de chave UNIQUE.
+        # categoria_filho e beneficiario usam '' em vez de NULL para que
+        # a constraint UNIQUE funcione correctamente no SQLite.
+        c.execute(
+            "CREATE TABLE IF NOT EXISTS orcamentos ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "mes_ano TEXT NOT NULL, "
+            "categoria_pai TEXT NOT NULL, "
+            "categoria_filho TEXT NOT NULL DEFAULT '', "
+            "beneficiario TEXT NOT NULL DEFAULT '', "
+            "valor_previsto REAL NOT NULL DEFAULT 0, "
+            "tipo_meta TEXT NOT NULL DEFAULT 'Despesa', "
+            "UNIQUE(mes_ano, categoria_pai, categoria_filho, beneficiario, tipo_meta)"
+            ")"
+        )
+        # Migração segura: bancos antigos sem tipo_meta recebem a coluna agora
+        c.execute("PRAGMA table_info(orcamentos)")
+        _orc_cols = {row[1] for row in c.fetchall()}
+        if 'tipo_meta' not in _orc_cols:
+            c.execute(
+                "ALTER TABLE orcamentos "
+                "ADD COLUMN tipo_meta TEXT NOT NULL DEFAULT 'Despesa'"
+            )
 
         # transacoes + migração de colunas
         c.execute('''CREATE TABLE IF NOT EXISTS transacoes
@@ -357,20 +369,16 @@ def pagar_fatura(cartao_id, fatura_ref, usuario):
 # ─────────────────────────────────────────────
 #  FUNÇÕES DE NEGÓCIO — ORÇAMENTO / DASHBOARD
 # ─────────────────────────────────────────────
-def get_realizado_mes(mes_ano, categoria_pai=None, categoria_filho=None, taxa=None):
+def get_realizado_mes(mes_ano, tipo="Despesa",
+                      categoria_pai=None, categoria_filho=None):
     """
-    Soma todas as DESPESAS de um mês (regime de competência):
-    inclui dinheiro/débito E cartão de crédito pendente.
+    Soma transacoes do mês por tipo ('Despesa' ou 'Receita').
+    Despesas incluem crédito pendente (regime de competência).
     mes_ano = 'YYYY-MM'
     """
-    if taxa is None:
-        taxa = st.session_state.get('taxa_brl_eur', 0.16)
     ano, mes = mes_ano.split("-")
-
-    params = [mes, ano]
-    filtros = ["tipo='Despesa'",
-               "substr(data,4,2)=?",
-               "substr(data,7,4)=?"]
+    params  = [tipo, mes, ano]
+    filtros = ["tipo=?", "substr(data,4,2)=?", "substr(data,7,4)=?"]
 
     if categoria_pai:
         filtros.append("categoria_pai=?")
@@ -385,54 +393,68 @@ def get_realizado_mes(mes_ano, categoria_pai=None, categoria_filho=None, taxa=No
     return (r[0][0] or 0.0) if r else 0.0
 
 
-def get_top_beneficiarios(mes_ano, n=3):
-    """Top N beneficiários por despesa no mês (regime competência)."""
+def get_top_beneficiarios(mes_ano, tipo="Despesa", n=3):
+    """Top N beneficiários por tipo (Despesa ou Receita) no mês."""
     ano, mes = mes_ano.split("-")
     return db_query(
         """SELECT beneficiario, COALESCE(SUM(valor_eur),0) as total
            FROM transacoes
-           WHERE tipo='Despesa'
+           WHERE tipo=?
              AND substr(data,4,2)=? AND substr(data,7,4)=?
              AND beneficiario IS NOT NULL AND beneficiario != ''
            GROUP BY beneficiario
            ORDER BY total DESC
            LIMIT ?""",
-        (mes, ano, n)
+        (tipo, mes, ano, n)
     )
 
 
 def get_saude_orcamento(mes_ano):
     """
-    Retorna lista de dicts com saúde de cada meta do mês.
-    status: 'verde' (<80%), 'amarelo' (80–100%), 'vermelho' (>100%)
+    Saúde de cada meta com semáforo diferenciado por tipo_meta.
+
+    Despesa (gastar menos é bom):
+      verde < 80% | amarelo 80-100% | vermelho > 100%
+    Receita (receber mais é bom — lógica INVERTIDA):
+      verde >= 100% | amarelo 80-99% | vermelho < 80%
     """
     metas = db_query(
-        "SELECT categoria_pai, categoria_filho, beneficiario, valor_previsto "
-        "FROM orcamentos WHERE mes_ano=? ORDER BY categoria_pai, categoria_filho",
+        "SELECT categoria_pai, categoria_filho, beneficiario, "
+        "valor_previsto, tipo_meta "
+        "FROM orcamentos WHERE mes_ano=? "
+        "ORDER BY tipo_meta, categoria_pai, categoria_filho",
         (mes_ano,)
     )
     resultado = []
-    for cat_pai, cat_filho, benef, previsto in metas:
+    for cat_pai, cat_filho, benef, previsto, tipo_meta in metas:
         realizado = get_realizado_mes(
             mes_ano,
+            tipo=tipo_meta,
             categoria_pai=cat_pai,
             categoria_filho=cat_filho if cat_filho else None
         )
         pct = (realizado / previsto * 100) if previsto > 0 else 0.0
-        if pct < 80:
-            status = "verde"
-        elif pct <= 100:
-            status = "amarelo"
+
+        if tipo_meta == "Receita":
+            # Invertido: atingir/superar a meta é verde
+            if pct >= 100:    status = "verde"
+            elif pct >= 80:   status = "amarelo"
+            else:             status = "vermelho"
         else:
-            status = "vermelho"
+            # Despesa: ficar abaixo do limite é verde
+            if pct < 80:      status = "verde"
+            elif pct <= 100:  status = "amarelo"
+            else:             status = "vermelho"
+
         resultado.append({
-            "cat_pai":    cat_pai,
-            "cat_filho":  cat_filho,
+            "cat_pai":      cat_pai,
+            "cat_filho":    cat_filho,
             "beneficiario": benef,
-            "previsto":   previsto,
-            "realizado":  realizado,
-            "pct":        pct,
-            "status":     status,
+            "previsto":     previsto,
+            "realizado":    realizado,
+            "pct":          pct,
+            "status":       status,
+            "tipo_meta":    tipo_meta,
         })
     return resultado
 
@@ -954,13 +976,15 @@ with tab4:
 
 
 # ══════════════════════════════════════════════
+
+# ══════════════════════════════════════════════
 #  TAB 5 — METAS (PLANEJAMENTO DE ORÇAMENTO)
 # ══════════════════════════════════════════════
 with tab5:
     st.markdown("## 🎯 Planejamento de Metas")
     st.caption(
-        "Defina quanto pretende gastar por categoria e mês. "
-        "As metas alimentam o Dashboard de Saúde Financeira."
+        "Defina metas de Despesa (teto de gastos) e de Receita (piso esperado) "
+        "por categoria e mês. As metas alimentam o Dashboard de Saúde Financeira."
     )
     st.divider()
 
@@ -979,15 +1003,15 @@ with tab5:
     st.divider()
 
     # ── Formulário de nova meta ───────────────
-    st.markdown('<div class="secao-titulo">➕ Adicionar / Actualizar Meta</div>',
+    st.markdown('''<div class="secao-titulo">➕ Adicionar / Actualizar Meta</div>''',
                 unsafe_allow_html=True)
-    st.markdown('<div class="secao-sub">Se já existe meta para esta combinação, o valor será actualizado.</div>',
+    st.markdown('''<div class="secao-sub">Se já existe meta para esta combinação, o valor será actualizado.</div>''',
                 unsafe_allow_html=True)
 
-    cat_df_m = db_df("SELECT id, nome, pai_id FROM categorias")
+    cat_df_m   = db_df("SELECT id, nome, pai_id FROM categorias")
     pai_opts_m = cat_df_m[cat_df_m['pai_id'].isna()]['nome'].tolist()
     benef_row_m = db_query("SELECT nome FROM beneficiarios ORDER BY nome")
-    benef_m = ["(Todos)"] + [r[0] for r in benef_row_m]
+    benef_m    = ["(Todos)"] + [r[0] for r in benef_row_m]
 
     if not pai_opts_m:
         st.warning("⚠️ Cadastre categorias em ⚙️ Gestão antes de definir metas.")
@@ -995,84 +1019,111 @@ with tab5:
         with st.form("f_meta", clear_on_submit=True):
             col_m_a, col_m_b, col_m_c = st.columns(3)
             with col_m_a:
+                # Tipo de meta — determina a lógica do semáforo
+                meta_tipo = st.radio(
+                    "**Tipo de Meta**",
+                    ["💸 Despesa", "💵 Receita"],
+                    horizontal=True,
+                    help=(
+                        "Despesa: define o teto máximo de gastos (verde = abaixo do limite). "
+                        "Receita: define o piso mínimo esperado (verde = acima da meta)."
+                    )
+                )
+                meta_tipo_val = "Despesa" if "Despesa" in meta_tipo else "Receita"
+
                 meta_pai = st.selectbox("Categoria Principal", pai_opts_m)
                 pid_m = int(cat_df_m[cat_df_m['nome'] == meta_pai]['id'].iloc[0])
                 filhos_m = cat_df_m[cat_df_m['pai_id'] == pid_m]['nome'].tolist()
-                meta_filho = st.selectbox("Detalhamento",
-                                          ["(Todos)"] + filhos_m)
+                meta_filho = st.selectbox("Detalhamento", ["(Todos)"] + filhos_m)
+
             with col_m_b:
                 meta_benef = st.selectbox("Beneficiário", benef_m)
-                meta_valor = st.number_input("Valor previsto (€)",
-                    min_value=0.01, step=10.0, format="%.2f", value=100.0)
+                meta_valor = st.number_input(
+                    "Valor previsto (€)",
+                    min_value=0.01, step=10.0, format="%.2f", value=100.0,
+                    help="Para Despesa: limite máximo. Para Receita: mínimo esperado."
+                )
+
             with col_m_c:
-                st.markdown("<br><br><br>", unsafe_allow_html=True)
+                st.markdown("<br><br><br><br>", unsafe_allow_html=True)
                 submitted_meta = st.form_submit_button(
                     "💾 Salvar Meta", use_container_width=True, type="primary")
 
             if submitted_meta:
-                filho_db  = "" if meta_filho  == "(Todos)" else meta_filho
-                benef_db  = "" if meta_benef  == "(Todos)" else meta_benef
-                # Verifica se já existe → UPDATE; senão → INSERT
+                filho_db = "" if meta_filho == "(Todos)" else meta_filho
+                benef_db = "" if meta_benef == "(Todos)" else meta_benef
                 existe = db_query(
                     "SELECT id FROM orcamentos "
                     "WHERE mes_ano=? AND categoria_pai=? "
-                    "AND categoria_filho=? AND beneficiario=?",
-                    (mes_ano_sel, meta_pai, filho_db, benef_db))
+                    "AND categoria_filho=? AND beneficiario=? AND tipo_meta=?",
+                    (mes_ano_sel, meta_pai, filho_db, benef_db, meta_tipo_val))
                 if existe:
                     db_execute(
                         "UPDATE orcamentos SET valor_previsto=? "
                         "WHERE mes_ano=? AND categoria_pai=? "
-                        "AND categoria_filho=? AND beneficiario=?",
-                        (meta_valor, mes_ano_sel, meta_pai, filho_db, benef_db))
+                        "AND categoria_filho=? AND beneficiario=? AND tipo_meta=?",
+                        (meta_valor, mes_ano_sel, meta_pai,
+                         filho_db, benef_db, meta_tipo_val))
                     log_audit("META_UPDATE",
-                              f"mes={mes_ano_sel} cat={meta_pai}/{filho_db} "
-                              f"benef={benef_db} valor={meta_valor}",
+                              f"mes={mes_ano_sel} tipo={meta_tipo_val} "
+                              f"cat={meta_pai}/{filho_db} benef={benef_db} valor={meta_valor}",
                               st.session_state.display_name)
-                    st.success(f"Meta actualizada: {meta_pai}/{meta_filho or 'Todos'} → €{meta_valor:.2f}")
+                    st.success(
+                        f"Meta actualizada: [{meta_tipo_val}] "
+                        f"{meta_pai}/{meta_filho or 'Todos'} → €{meta_valor:.2f}")
                 else:
                     db_execute(
                         "INSERT INTO orcamentos "
-                        "(mes_ano,categoria_pai,categoria_filho,beneficiario,valor_previsto) "
-                        "VALUES (?,?,?,?,?)",
-                        (mes_ano_sel, meta_pai, filho_db, benef_db, meta_valor))
+                        "(mes_ano,categoria_pai,categoria_filho,"
+                        "beneficiario,valor_previsto,tipo_meta) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (mes_ano_sel, meta_pai, filho_db,
+                         benef_db, meta_valor, meta_tipo_val))
                     log_audit("META_INSERT",
-                              f"mes={mes_ano_sel} cat={meta_pai}/{filho_db} "
-                              f"benef={benef_db} valor={meta_valor}",
+                              f"mes={mes_ano_sel} tipo={meta_tipo_val} "
+                              f"cat={meta_pai}/{filho_db} benef={benef_db} valor={meta_valor}",
                               st.session_state.display_name)
-                    st.success(f"Meta criada: {meta_pai}/{meta_filho or 'Todos'} → €{meta_valor:.2f}")
+                    st.success(
+                        f"Meta criada: [{meta_tipo_val}] "
+                        f"{meta_pai}/{meta_filho or 'Todos'} → €{meta_valor:.2f}")
                 st.session_state.ver += 1
                 st.rerun()
 
     st.divider()
 
-    # ── Tabela de metas do mês ────────────────
+    # ── Tabela de metas do mês (separada por tipo) ────────────────
     st.markdown(f"**Metas definidas para {mes_ano_sel}:**")
+
     metas_df = db_df(
-        "SELECT id, categoria_pai, categoria_filho, beneficiario, valor_previsto "
+        "SELECT id, tipo_meta, categoria_pai, categoria_filho, "
+        "beneficiario, valor_previsto "
         "FROM orcamentos WHERE mes_ano=? "
-        "ORDER BY categoria_pai, categoria_filho",
+        "ORDER BY tipo_meta DESC, categoria_pai, categoria_filho",
         params=(mes_ano_sel,))
 
     if metas_df.empty:
         st.info(f"Nenhuma meta definida para {mes_ano_sel}. Use o formulário acima.")
     else:
-        # Calcula realizado para cada linha
+        # Calcula o realizado para cada linha respeitando o tipo_meta
         metas_df['realizado'] = metas_df.apply(
             lambda r: get_realizado_mes(
                 mes_ano_sel,
-                r['categoria_pai'],
-                r['categoria_filho'] if r['categoria_filho'] else None
+                tipo=r['tipo_meta'],
+                categoria_pai=r['categoria_pai'],
+                categoria_filho=r['categoria_filho'] if r['categoria_filho'] else None
             ), axis=1)
         metas_df['% uso'] = metas_df.apply(
             lambda r: round(r['realizado'] / r['valor_previsto'] * 100, 1)
             if r['valor_previsto'] > 0 else 0.0, axis=1)
 
         metas_df = metas_df.rename(columns={
-            'categoria_pai': 'Categoria', 'categoria_filho': 'Detalhamento',
-            'beneficiario': 'Beneficiário', 'valor_previsto': 'Previsto (€)',
-            'realizado': 'Realizado (€)'})
+            'tipo_meta':      'Tipo',
+            'categoria_pai':  'Categoria',
+            'categoria_filho':'Detalhamento',
+            'beneficiario':   'Beneficiário',
+            'valor_previsto': 'Previsto (€)',
+            'realizado':      'Realizado (€)'})
 
-        # Coluna de remoção
         metas_df.insert(0, "Remover", False)
         ed_metas = st.data_editor(
             metas_df,
@@ -1092,23 +1143,44 @@ with tab5:
                 st.warning("Selecione pelo menos uma meta.")
             else:
                 ph = ",".join(["?"] * len(ids_rm_m))
-                db_execute(f"DELETE FROM orcamentos WHERE id IN ({ph})", tuple(ids_rm_m))
-                log_audit("META_DELETE", f"ids={ids_rm_m}", st.session_state.display_name)
+                db_execute(f"DELETE FROM orcamentos WHERE id IN ({ph})",
+                           tuple(ids_rm_m))
+                log_audit("META_DELETE", f"ids={ids_rm_m}",
+                          st.session_state.display_name)
                 st.success(f"{len(ids_rm_m)} meta(s) removida(s).")
                 st.session_state.ver += 1
                 st.rerun()
 
-        # Totais rápidos
+        # ── Totais por tipo ───────────────────────────────────────
         st.divider()
-        total_prev_m  = metas_df['Previsto (€)'].sum()
-        total_real_m  = metas_df['Realizado (€)'].sum()
-        col_tp1, col_tp2, col_tp3 = st.columns(3)
-        col_tp1.metric("Total Planejado",  f"€ {total_prev_m:,.2f}")
-        col_tp2.metric("Total Realizado",  f"€ {total_real_m:,.2f}")
-        delta = total_prev_m - total_real_m
-        col_tp3.metric("Saldo de Metas",   f"€ {delta:,.2f}",
-                        delta=f"€ {delta:,.2f}",
-                        delta_color="normal" if delta >= 0 else "inverse")
+        col_tot_d, col_tot_r = st.columns(2)
+
+        df_desp = metas_df[metas_df['Tipo'] == 'Despesa']
+        df_rec  = metas_df[metas_df['Tipo'] == 'Receita']
+
+        with col_tot_d:
+            st.markdown("**💸 Despesas**")
+            prev_d = df_desp['Previsto (€)'].sum() if not df_desp.empty else 0.0
+            real_d = df_desp['Realizado (€)'].sum() if not df_desp.empty else 0.0
+            delta_d = prev_d - real_d
+            col_d1, col_d2, col_d3 = st.columns(3)
+            col_d1.metric("Planejado",  f"€ {prev_d:,.2f}")
+            col_d2.metric("Realizado",  f"€ {real_d:,.2f}")
+            col_d3.metric("Margem",     f"€ {delta_d:,.2f}",
+                          delta=f"€ {delta_d:,.2f}",
+                          delta_color="normal" if delta_d >= 0 else "inverse")
+
+        with col_tot_r:
+            st.markdown("**💵 Receitas**")
+            prev_r = df_rec['Previsto (€)'].sum() if not df_rec.empty else 0.0
+            real_r = df_rec['Realizado (€)'].sum() if not df_rec.empty else 0.0
+            delta_r = real_r - prev_r   # Receita: realizado > previsto é positivo
+            col_r1, col_r2, col_r3 = st.columns(3)
+            col_r1.metric("Meta",      f"€ {prev_r:,.2f}")
+            col_r2.metric("Realizado", f"€ {real_r:,.2f}")
+            col_r3.metric("Superávit", f"€ {delta_r:,.2f}",
+                          delta=f"€ {delta_r:,.2f}",
+                          delta_color="normal" if delta_r >= 0 else "inverse")
 
 
 # ══════════════════════════════════════════════
@@ -1119,7 +1191,6 @@ with tab6:
     st.caption("Painel em tempo real — compare o planejado com o realizado e identifique desvios.")
     st.divider()
 
-    # Seleção do mês do dashboard
     hoje_d = datetime.now()
     col_d1, col_d2, col_d3 = st.columns([1, 1, 4])
     with col_d1:
@@ -1129,49 +1200,45 @@ with tab6:
         dash_mes = st.number_input("Mês", min_value=1, max_value=12,
                                     value=hoje_d.month, step=1, key="dash_mes")
     dash_mes_ano = f"{int(dash_ano):04d}-{int(dash_mes):02d}"
-
-    taxa_dash = st.session_state.get('taxa_brl_eur', 0.16)
+    ano_d, mes_d = dash_mes_ano.split("-")
 
     # ── Indicadores Globais ────────────────────
     st.markdown(f"### 🌍 Visão Geral — {dash_mes_ano}")
 
-    total_prev_d  = db_query(
-        "SELECT COALESCE(SUM(valor_previsto),0) FROM orcamentos WHERE mes_ano=?",
+    # Totais de despesa
+    prev_des_d = db_query(
+        "SELECT COALESCE(SUM(valor_previsto),0) FROM orcamentos "
+        "WHERE mes_ano=? AND tipo_meta='Despesa'",
         (dash_mes_ano,))[0][0]
-    total_real_d  = get_realizado_mes(dash_mes_ano)
+    real_des_d = get_realizado_mes(dash_mes_ano, tipo="Despesa")
 
-    # Receitas do mês
-    ano_d, mes_d = dash_mes_ano.split("-")
-    total_rec_d = db_query(
-        "SELECT COALESCE(SUM(valor_eur),0) FROM transacoes "
-        "WHERE tipo='Receita' AND substr(data,4,2)=? AND substr(data,7,4)=?",
-        (mes_d, ano_d))[0][0]
+    # Totais de receita
+    prev_rec_d = db_query(
+        "SELECT COALESCE(SUM(valor_previsto),0) FROM orcamentos "
+        "WHERE mes_ano=? AND tipo_meta='Receita'",
+        (dash_mes_ano,))[0][0]
+    real_rec_d = get_realizado_mes(dash_mes_ano, tipo="Receita")
 
-    saldo_mes_d = total_rec_d - total_real_d
-    pct_global  = (total_real_d / total_prev_d * 100) if total_prev_d > 0 else 0
+    saldo_mes_d = real_rec_d - real_des_d
+    pct_des_d   = (real_des_d / prev_des_d * 100) if prev_des_d > 0 else 0
+    pct_rec_d   = (real_rec_d / prev_rec_d * 100) if prev_rec_d > 0 else 0
 
     col_g1, col_g2, col_g3, col_g4 = st.columns(4)
     with col_g1:
+        cls_d = "valor-negativo" if real_des_d > prev_des_d and prev_des_d > 0 else "valor-neutro"
         st.markdown(f"""<div class="saldo-card">
-            <h3>🎯 Planejado</h3>
-            <div class="valor-neutro">€ {total_prev_d:,.2f}</div>
-            <div class="detalhe">Total de metas do mês</div>
+            <h3>💸 Despesas</h3>
+            <div class="{cls_d}">€ {real_des_d:,.2f}</div>
+            <div class="detalhe">Meta: €{prev_des_d:,.2f} | {pct_des_d:.0f}% utilizado</div>
         </div>""", unsafe_allow_html=True)
     with col_g2:
-        cls_rd = "valor-negativo" if total_real_d > total_prev_d else "valor-positivo"
-        st.markdown(f"""<div class="saldo-card">
-            <h3>💸 Realizado</h3>
-            <div class="{cls_rd}">€ {total_real_d:,.2f}</div>
-            <div class="detalhe">Despesas (competência)</div>
-        </div>""", unsafe_allow_html=True)
-    with col_g3:
-        cls_rc = "valor-positivo" if total_rec_d > 0 else "valor-negativo"
+        cls_r = "valor-positivo" if real_rec_d >= prev_rec_d and prev_rec_d > 0 else                 "valor-neutro"   if real_rec_d >= prev_rec_d * 0.8 else "valor-negativo"
         st.markdown(f"""<div class="saldo-card">
             <h3>💵 Receitas</h3>
-            <div class="{cls_rc}">€ {total_rec_d:,.2f}</div>
-            <div class="detalhe">Entradas do mês</div>
+            <div class="{cls_r}">€ {real_rec_d:,.2f}</div>
+            <div class="detalhe">Meta: €{prev_rec_d:,.2f} | {pct_rec_d:.0f}% atingido</div>
         </div>""", unsafe_allow_html=True)
-    with col_g4:
+    with col_g3:
         cls_sl = "valor-positivo" if saldo_mes_d >= 0 else "valor-negativo"
         sinal_sl = "+" if saldo_mes_d > 0 else ""
         st.markdown(f"""<div class="saldo-card">
@@ -1179,16 +1246,28 @@ with tab6:
             <div class="{cls_sl}">{sinal_sl}€ {saldo_mes_d:,.2f}</div>
             <div class="detalhe">Receitas − Despesas</div>
         </div>""", unsafe_allow_html=True)
+    with col_g4:
+        pl_all = sum(calcular_patrimonio_liquido(f)
+                     for f in [r[0] for r in db_query("SELECT nome FROM fontes")])
+        cls_pl = "valor-positivo" if pl_all >= 0 else "valor-negativo"
+        sinal_pl = "+" if pl_all > 0 else ""
+        st.markdown(f"""<div class="saldo-card">
+            <h3>📊 Patrimônio Líquido</h3>
+            <div class="{cls_pl}">{sinal_pl}€ {pl_all:,.2f}</div>
+            <div class="detalhe">Contas − crédito pendente</div>
+        </div>""", unsafe_allow_html=True)
 
-    # Barra de progresso global
-    if total_prev_d > 0:
-        st.markdown("**Consumo global do orçamento:**")
-        prog = min(pct_global / 100, 1.0)
-        cor_prog = (
-            "🟢" if pct_global < 80 else
-            "🟡" if pct_global <= 100 else "🔴"
-        )
-        st.progress(prog, text=f"{cor_prog} {pct_global:.1f}% do orçamento total utilizado")
+    # Barras de progresso globais
+    if prev_des_d > 0:
+        prog_des = min(pct_des_d / 100, 1.0)
+        ic_des   = "🟢" if pct_des_d < 80 else "🟡" if pct_des_d <= 100 else "🔴"
+        st.progress(prog_des,
+            text=f"💸 Despesas: {ic_des} {pct_des_d:.1f}% do orçamento utilizado")
+    if prev_rec_d > 0:
+        prog_rec = min(pct_rec_d / 100, 1.0)
+        ic_rec   = "🟢" if pct_rec_d >= 100 else "🟡" if pct_rec_d >= 80 else "🔴"
+        st.progress(prog_rec,
+            text=f"💵 Receitas: {ic_rec} {pct_rec_d:.1f}% da meta atingida")
 
     st.divider()
 
@@ -1200,81 +1279,110 @@ with tab6:
     if not saude:
         st.info(f"Nenhuma meta definida para {dash_mes_ano}. Crie metas na aba 🎯 Metas.")
     else:
-        col_s1, col_s2 = st.columns(2)
-        for idx, item in enumerate(saude):
-            cat_pai   = item["cat_pai"]
-            cat_filho = item["cat_filho"] or "Todos"
-            previsto  = item["previsto"]
-            realizado = item["realizado"]
-            pct       = item["pct"]
-            status    = item["status"]
+        # Separa por tipo para exibir em grupos
+        saude_des = [s for s in saude if s['tipo_meta'] == 'Despesa']
+        saude_rec = [s for s in saude if s['tipo_meta'] == 'Receita']
 
-            css_class = f"gauge-{status}"
-            icone = "🟢" if status == "verde" else "🟡" if status == "amarelo" else "🔴"
-            prog_val  = min(pct / 100, 1.0)
+        for grupo_label, grupo_items in [
+            ("💸 Metas de Despesa", saude_des),
+            ("💵 Metas de Receita", saude_rec)
+        ]:
+            if not grupo_items:
+                continue
+            st.markdown(f"**{grupo_label}**")
+            col_s1, col_s2 = st.columns(2)
+            for idx, item in enumerate(grupo_items):
+                cat_pai   = item["cat_pai"]
+                cat_filho = item["cat_filho"] or "Todos"
+                previsto  = item["previsto"]
+                realizado = item["realizado"]
+                pct       = item["pct"]
+                status    = item["status"]
+                tipo_m    = item["tipo_meta"]
 
-            label_cat = f"{cat_pai}" + (f" / {cat_filho}" if cat_filho != "Todos" else "")
-            diferenca = previsto - realizado
-            sinal_dif = "+" if diferenca > 0 else ""
-            msg_dif   = (f"Sobra €{abs(diferenca):,.2f}" if diferenca >= 0
-                         else f"⚠️ Estourou €{abs(diferenca):,.2f}")
+                css_class = f"gauge-{status}"
+                icone     = "🟢" if status == "verde" else "🟡" if status == "amarelo" else "🔴"
+                prog_val  = min(pct / 100, 1.0)
+                label_cat = cat_pai + (f" / {cat_filho}" if cat_filho != "Todos" else "")
 
-            with (col_s1 if idx % 2 == 0 else col_s2):
+                diferenca = previsto - realizado if tipo_m == "Despesa" else realizado - previsto
+                if tipo_m == "Despesa":
+                    msg_dif = (f"Margem: €{abs(diferenca):,.2f}" if diferenca >= 0
+                               else f"⚠️ Estouro: €{abs(diferenca):,.2f}")
+                else:
+                    msg_dif = (f"Superávit: €{abs(diferenca):,.2f}" if diferenca >= 0
+                               else f"⚠️ Déficit: €{abs(diferenca):,.2f}")
+
+                with (col_s1 if idx % 2 == 0 else col_s2):
+                    st.markdown(f"""
+                    <div class="{css_class}">
+                        <div class="gauge-titulo">{icone} {label_cat}</div>
+                        <div class="gauge-sub">
+                            Realizado: <strong>€{realizado:,.2f}</strong>
+                            &nbsp;/&nbsp;
+                            {"Limite" if tipo_m == "Despesa" else "Meta"}: <strong>€{previsto:,.2f}</strong>
+                            &nbsp;—&nbsp; {msg_dif}
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                    st.progress(prog_val, text=f"{pct:.1f}% {'utilizado' if tipo_m == 'Despesa' else 'atingido'}")
+
+    st.divider()
+
+    # ── Top 3 Beneficiários (Despesa e Receita) ──
+    st.markdown("### 🔎 Análise de Causa Raiz")
+    col_top_d, col_top_r = st.columns(2)
+
+    with col_top_d:
+        st.markdown("**💸 Top 3 — Quem mais gastou**")
+        top3_des = get_top_beneficiarios(dash_mes_ano, tipo="Despesa", n=3)
+        if not top3_des:
+            st.info("Nenhuma despesa registada.")
+        else:
+            max_d = max(t[1] for t in top3_des) or 1
+            medalhas = ["🥇","🥈","🥉"]
+            for i,(nome,total) in enumerate(top3_des):
                 st.markdown(f"""
-                <div class="{css_class}">
-                    <div class="gauge-titulo">{icone} {label_cat}</div>
-                    <div class="gauge-sub">
-                        Realizado: <strong>€{realizado:,.2f}</strong>
-                        &nbsp;/&nbsp;
-                        Previsto: <strong>€{previsto:,.2f}</strong>
-                        &nbsp;—&nbsp; {msg_dif}
-                    </div>
+                <div class="top-benef-card">
+                    <div><span style="font-size:1.2rem;">{medalhas[i]}</span>
+                    <strong style="margin-left:8px;">{nome}</strong></div>
+                    <div style="font-weight:700;">€ {total:,.2f}</div>
                 </div>""", unsafe_allow_html=True)
-                st.progress(prog_val,
-                    text=f"{pct:.1f}% utilizado")
+                st.progress(total/max_d)
+
+    with col_top_r:
+        st.markdown("**💵 Top 3 — Quem mais trouxe receita**")
+        top3_rec = get_top_beneficiarios(dash_mes_ano, tipo="Receita", n=3)
+        if not top3_rec:
+            st.info("Nenhuma receita registada.")
+        else:
+            max_r = max(t[1] for t in top3_rec) or 1
+            medalhas = ["🥇","🥈","🥉"]
+            for i,(nome,total) in enumerate(top3_rec):
+                st.markdown(f"""
+                <div class="top-benef-card">
+                    <div><span style="font-size:1.2rem;">{medalhas[i]}</span>
+                    <strong style="margin-left:8px;">{nome}</strong></div>
+                    <div style="font-weight:700;color:#16a34a;">€ {total:,.2f}</div>
+                </div>""", unsafe_allow_html=True)
+                st.progress(total/max_r)
 
     st.divider()
 
-    # ── Top 3 Beneficiários ─────────────────────
-    st.markdown("### 🔎 Análise de Causa Raiz — Top 3 Beneficiários")
-    st.caption("Quem mais consumiu orçamento neste mês.")
-
-    top3 = get_top_beneficiarios(dash_mes_ano, 3)
-
-    if not top3:
-        st.info("Nenhuma despesa registada neste mês ainda.")
-    else:
-        max_val = max(t[1] for t in top3) if top3 else 1
-        medalhas = ["🥇", "🥈", "🥉"]
-        for i, (nome, total) in enumerate(top3):
-            pct_top = (total / max_val * 100) if max_val > 0 else 0
-            medalha = medalhas[i] if i < 3 else "•"
-            st.markdown(f"""
-            <div class="top-benef-card">
-                <div>
-                    <span style="font-size:1.3rem;">{medalha}</span>
-                    <strong style="margin-left:10px;">{nome}</strong>
-                </div>
-                <div style="font-size:1.2rem;font-weight:700;color:#1e293b;">
-                    € {total:,.2f}
-                </div>
-            </div>""", unsafe_allow_html=True)
-            st.progress(pct_top / 100)
-
-    st.divider()
-
-    # ── Previsto vs Realizado — Tabela ──────────
+    # ── Relatório Previsto vs Realizado ──────────
     st.markdown("### 📋 Relatório Previsto vs. Realizado")
 
     if saude:
         df_report = pd.DataFrame([{
-            "Categoria":    (s["cat_pai"] + (" / " + s["cat_filho"] if s["cat_filho"] else "")),
-            "Beneficiário": s["beneficiario"] or "Todos",
-            "Previsto (€)": s["previsto"],
-            "Realizado (€)":s["realizado"],
-            "Δ (€)":        s["previsto"] - s["realizado"],
-            "% Uso":        round(s["pct"], 1),
-            "Status":       s["status"].upper(),
+            "Tipo":          s["tipo_meta"],
+            "Categoria":     (s["cat_pai"] + (" / " + s["cat_filho"] if s["cat_filho"] else "")),
+            "Beneficiário":  s["beneficiario"] or "Todos",
+            "Previsto (€)":  s["previsto"],
+            "Realizado (€)": s["realizado"],
+            "Δ (€)":         (s["previsto"] - s["realizado"]
+                               if s["tipo_meta"] == "Despesa"
+                               else s["realizado"] - s["previsto"]),
+            "% Atingido":    round(s["pct"], 1),
+            "Status":        s["status"].upper(),
         } for s in saude])
 
         st.dataframe(df_report, use_container_width=True, hide_index=True,
@@ -1282,22 +1390,15 @@ with tab6:
                 "Previsto (€)":  st.column_config.NumberColumn(format="€ %.2f"),
                 "Realizado (€)": st.column_config.NumberColumn(format="€ %.2f"),
                 "Δ (€)":         st.column_config.NumberColumn(format="€ %.2f"),
-                "% Uso":         st.column_config.NumberColumn(format="%.1f %%"),
+                "% Atingido":    st.column_config.NumberColumn(format="%.1f %%"),
             })
 
-        # Exportar relatório
         csv_rep = df_report.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            "⬇️ Exportar Relatório CSV",
-            csv_rep,
-            f"relatorio_{dash_mes_ano}.csv",
-            "text/csv",
-            use_container_width=False)
+        st.download_button("⬇️ Exportar Relatório CSV", csv_rep,
+            f"relatorio_{dash_mes_ano}.csv", "text/csv")
     else:
         st.info("Defina metas na aba 🎯 Metas para ver o relatório comparativo.")
 
-
-# ══════════════════════════════════════════════
 #  TAB 7 — GESTÃO
 # ══════════════════════════════════════════════
 with tab7:
