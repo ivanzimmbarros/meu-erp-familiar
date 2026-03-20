@@ -13,6 +13,15 @@ def criar_quadro_legivel(titulo):
         </div>
     """, unsafe_allow_html=True)
 
+def formatar_descricao(row):
+    nota = str(row['nota'])
+    cat = f"{row['categoria_pai']}/{row['categoria_filho']}"
+    
+    # Se for parcela, exibe com ícone de cartão
+    if "(Parc" in nota:
+        return f"💳 <strong>{cat}</strong> | {nota}"
+    return f"📝 <strong>{cat}</strong> | {row['beneficiario'] or 'Sem beneficiário'}"
+
 # ─────────────────────────────────────────────
 #  AUDITORIA — log para terminal
 # ─────────────────────────────────────────────
@@ -973,14 +982,14 @@ with tab2:
                     badge  = f'<span class="badge-pendente">PENDENTE</span>' if sliq == 'PENDENTE' \
                              else f'<span class="badge-previsto">PREVISTO</span>'
                     
+                    desc_formatada = formatar_descricao(row)
                     col_a, col_b = st.columns([5, 1])
                     with col_a:
                         st.markdown(
                             f'<div class="liquidar-row">'
                             f'{badge} &nbsp; {row["data"]} &nbsp;|&nbsp; '
-                            f'{row["categoria_pai"]}/{row["categoria_filho"] or "—"} &nbsp;|&nbsp; '
-                            f'{row["beneficiario"] or "—"} &nbsp;|&nbsp; '
-                            f'<strong>€{float(row["valor_eur"]):,.2f}</strong> ({row["tipo"]})'
+                            f'{desc_formatada} &nbsp;|&nbsp; '  # <--- AQUI A MÁGICA
+                            f'<strong>€{float(row["valor_eur"]):,.2f}</strong>'
                             f'</div>',
                             unsafe_allow_html=True)
                     with col_b:
