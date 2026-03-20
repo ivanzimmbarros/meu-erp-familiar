@@ -279,7 +279,6 @@ def init_db():
 
 # 1. Inicializa o banco
 init_db()
-processar_recorrencias_do_mes()
 
 # 2. Definição da função de segurança (VERSÃO SEGURA)
 def verificar_bloqueio_delecao(tabela, id_item):
