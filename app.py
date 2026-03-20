@@ -722,34 +722,39 @@ with tab1:
     st.markdown("## ➕ Registrar uma Movimentação")
     st.divider()
 
-    # --- 1. Dados iniciais ---
+    # --- 1. Dados iniciais e Validações ---
     cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
     if cat_df.empty:
         st.warning("⚠️ Nenhuma categoria cadastrada.")
         st.stop()
-        
-    # --- 3. Formulário (TUDO O QUE FOR INPUT DEVE FICAR AQUI DENTRO) ---
-    with st.form("form_transacao", clear_on_submit=True):
-        col_in1, col_in2 = st.columns(2)
-        
-        # Data
-        if 'last_date' not in st.session_state: st.session_state.last_date = date.today()
-        data_input = col_in1.date_input("Data", value=st.session_state.last_date)
-        
-        # Tipo e Forma (Radio buttons dentro do form)
-        tipo_input = col_in1.radio("Tipo", ["💸 Despesa", "💵 Receita"], horizontal=True)
-        forma_pag = col_in2.radio("Pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
-        tipo_val = "Despesa" if "Despesa" in tipo_input else "Receita"
 
-        # Fonte ou Cartão
+    # --- 2. O Formulário ---
+    with st.form("form_transacao", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        
+        # Radio para Tipo e Forma de Pagamento
+        tipo_input = col1.radio("Tipo de movimentação", ["💸 Despesa", "💵 Receita"], horizontal=True)
+        forma_pag = col2.radio("Forma de pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
+        
+        tipo_val = "Despesa" if "Despesa" in tipo_input else "Receita"
+        
+        # Lógica de seleção (Cartão vs Fonte)
         if forma_pag == "Cartão de Crédito" and tipo_val == "Despesa":
-            opcoes_lista = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
+            label_fonte = "💳 Selecione o Cartão"
+            opcoes_raw = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
         else:
-            opcoes_lista = db_query("SELECT id, nome FROM fontes ORDER BY nome")
+            label_fonte = "🏦 Conta / Fonte"
+            opcoes_raw = db_query("SELECT id, nome FROM fontes ORDER BY nome")
         
-        fonte_selecionada = st.selectbox("Conta / Cartão", [f"{op[1]}" for op in opcoes_lista])
+        # Dropdown que se ajusta automaticamente
+        fonte_selecionada = st.selectbox(label_fonte, [op[1] for op in opcoes_raw])
         
-        # Categoria
+        # Resto dos campos
+        col_in1, col_in2 = st.columns(2)
+        data_input = col_in1.date_input("Data", value=date.today())
+        valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
+        
+        # Categoria Principal (Pegando os nomes das categorias pai)
         pai_opts = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
         cat_pai = st.selectbox("Categoria Principal", pai_opts)
         
@@ -757,32 +762,31 @@ with tab1:
         benef_db = db_query("SELECT nome FROM beneficiarios ORDER BY nome")
         beneficiario = st.selectbox("Beneficiário", [""] + [b[0] for b in benef_db])
         
-        # Valor e Nota
-        valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
-        nota = st.text_input("Observação")
+        nota = st.text_input("Observação (opcional)")
         
         submit_button = st.form_submit_button("Salvar Transação")
 
-    # --- LÓGICA DE VALIDAÇÃO E SALVAMENTO (FORA DO FORM) ---
+    # --- 3. Processamento do Envio ---
     if submit_button:
         if not beneficiario:
             st.error("Por favor, selecione um beneficiário.")
-        elif not fonte_selecionada:
-            st.error("Por favor, selecione uma fonte ou cartão.")
         else:
-            # 1. Atualiza data no session
-            st.session_state.last_date = data_input
+            # 1. Recupera o ID da fonte/cartão selecionado
+            # Filtra a query original para pegar o ID correto
+            sel_id = [op[0] for op in opcoes_raw if op[1] == fonte_selecionada][0]
             
-            # 2. Lógica de decisão (Cartão vs Conta)
-            # (Aqui você coloca o seu código de processamento/INSERT que já tinha)
-            
-            # Exemplo de salvamento (adaptar ao seu código de insert):
+            # 2. Insere no Banco
             try:
-                # ... seu código de db_execute aqui ...
-                st.success(f"Transação de €{valor_input:.2f} salva com sucesso!")
+                # Exemplo da sua lógica de inserção
+                # Ajuste os campos conforme sua tabela transacoes
+                db_execute('''INSERT INTO transacoes 
+                    (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento) 
+                    VALUES (?,?,?,?,?,?,?,?,?)''',
+                    (data_input.strftime("%d/%m/%Y"), cat_pai, beneficiario, fonte_selecionada, valor_input, tipo_val, nota, st.session_state.get('display_name', 'Admin'), forma_pag))
+                
+                st.success(f"Transação de €{valor_input:.2f} registrada com sucesso!")
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
-
 
 
 # ══════════════════════════════════════════════
