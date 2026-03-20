@@ -6,6 +6,13 @@ import io
 import logging
 from datetime import datetime, date, timedelta
 
+def criar_quadro_legivel(titulo):
+    st.markdown(f"""
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #dee2e6;">
+            <p style="color: #212529; font-weight: bold; font-size: 18px; margin: 0;">{titulo}</p>
+        </div>
+    """, unsafe_allow_html=True)
+
 # ─────────────────────────────────────────────
 #  AUDITORIA — log para terminal
 # ─────────────────────────────────────────────
@@ -1014,9 +1021,12 @@ with tab3:
                 comp_txt += "</div>"
 
             with cols_saldo[i % 3]:
+                # 1. Chama sua função para desenhar o título/moldura superior
+                criar_quadro_legivel(f"🏦 {f}")
+                
+                # 2. Chama o restante do card (sem o título antigo)
                 st.markdown(
-                    f'<div class="saldo-card {cls_r}">'
-                    f'<h3>🏦 {f}</h3>'
+                    f'<div class="saldo-card {cls_r}" style="border-top-left-radius: 0; border-top-right-radius: 0; border-top: none;">'
                     f'<div class="{cls_vr}">{sinal_r}€ {saldo_r:,.2f}</div>'
                     f'<div class="detalhe">Saldo Real (PAGO){ini_txt}</div>'
                     '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;">'
@@ -1026,7 +1036,8 @@ with tab3:
                     '</div>'
                     f'{risco_txt}'
                     '</div>',
-                    unsafe_allow_html=True)
+                    unsafe_allow_html=True
+                )
 
         st.divider()
 
