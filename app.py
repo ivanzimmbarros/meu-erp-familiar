@@ -723,65 +723,78 @@ with tab1:
     st.caption("Registre entradas, saídas e compromissos futuros.")
     st.divider()
 
+    # --- 1. Dados iniciais ---
     cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
     pai_opts = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
+    
+    if not pai_opts:
+        st.warning("⚠️ Nenhuma categoria cadastrada. Por favor, adicione categorias antes de lançar.")
+        st.stop()
+
     fontes_row = db_query("SELECT nome FROM fontes")
-    fontes_lista = [r[0] for r in fontes_row] if fontes_row else []
+    fontes_lista = [r[0] for r in fontes_row] if fontes_row else ["⚠️ Nenhuma conta cadastrada"]
+    
     cartoes_row = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
+    cartao_nomes = [r[1] for r in cartoes_row] if cartoes_row else ["⚠️ Nenhum cartão cadastrado"]
 
-    with st.form(key=f"f_lanca_{st.session_state.ver}", clear_on_submit=True):
-        col_tp1, col_tp2 = st.columns(2)
-        with col_tp1:
-            tipo_input = st.radio("**Tipo de movimentação**", ["💸 Despesa", "💵 Receita"], horizontal=True)
-            tipo_val = "Despesa" if "Despesa" in tipo_input else "Receita"
-        with col_tp2:
-            forma_pag = st.radio("**Forma de pagamento**", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
+    # --- 2. Interface Reativa ---
+    col_tp1, col_tp2 = st.columns(2)
+    tipo_input = col_tp1.radio("**Tipo de movimentação**", ["💸 Despesa", "💵 Receita"], horizontal=True)
+    tipo_val = "Despesa" if "Despesa" in tipo_input else "Receita"
+    
+    # Esta escolha altera o label e as opções logo abaixo
+    forma_pag = col_tp2.radio("**Forma de pagamento**", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
 
-        cartao_sel_id = None
-        if forma_pag == "Cartão de Crédito":
-            if tipo_val == "Receita":
-                st.info("ℹ️ Receitas são lançadas apenas em conta bancária (Dinheiro/Débito).")
-            else:
-                cartao_nomes = [r[1] for r in cartoes_row]
-                if cartao_nomes:
-                    selecionado = st.selectbox("💳 Qual cartão?", cartao_nomes, key="selectbox_cartao_lanca")
-                    cartao_sel_id = next(r[0] for r in cartoes_row if r[1] == selecionado)
-                else:
-                    st.error("Nenhum cartão cadastrado!")
+    col_in1, col_in2 = st.columns(2)
+    data_input = col_in1.date_input("Data", value=date.today())
+    valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
 
-        col_in1, col_in2 = st.columns(2)
-        data_input = col_in1.date_input("Data", value=date.today()).strftime("%d/%m/%Y")
-        valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
-        
-        cat_pai = st.selectbox("Categoria Principal", pai_opts)
-        pid = int(cat_df[cat_df['nome'] == cat_pai]['id'].iloc[0])
-        sub_cats = cat_df[cat_df['pai_id'] == pid]['nome'].tolist()
-        cat_filho = st.selectbox("Detalhamento", [""] + sub_cats)
-        
-        beneficiario = st.text_input("Beneficiário")
-        fonte_sel = st.selectbox("Conta/Fonte", fontes_lista)
-        nota = st.text_area("Nota")
+    # Categoria Principal e Detalhamento dinâmico
+    cat_pai = st.selectbox("Categoria Principal", pai_opts)
+    pid = int(cat_df[cat_df['nome'] == cat_pai]['id'].iloc[0])
+    sub_cats = cat_df[cat_df['pai_id'] == pid]['nome'].tolist()
+    cat_filho = st.selectbox("Detalhamento", [""] + sub_cats)
 
-        if st.form_submit_button("✅ Salvar Lançamento"):
-            fatura_ref = None
-            status_cartao = 'pago'
-            if forma_pag == "Cartão de Crédito" and cartao_sel_id:
-                # Busca dia de fechamento do cartão
-                d_fech = db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (cartao_sel_id,))[0][0]
-                fatura_ref = calcular_fatura_ref(data_input, d_fech)
-                status_cartao = 'pendente'
+    # Lógica de seleção de Fonte
+    if forma_pag == "Cartão de Crédito" and tipo_val == "Despesa":
+        label_fonte = "💳 Selecione o Cartão"
+        opcoes_fonte = cartao_nomes
+    else:
+        label_fonte = "🏦 Conta / Fonte"
+        opcoes_fonte = fontes_lista
 
-            status_liq = determinar_status_liquidacao(data_input)
+    beneficiario = st.text_input("Beneficiário")
+    fonte_ou_cartao = st.selectbox(label_fonte, opcoes_fonte)
+    nota = st.text_area("Nota")
+
+    # --- 3. Ação de Salvar ---
+    if st.button("✅ Salvar Lançamento", type="primary"):
+        if "⚠️" in fonte_ou_cartao:
+            st.error("Por favor, selecione uma conta ou cartão válido antes de salvar.")
+        else:
+            # Preparação de variáveis para o banco
+            fatura_ref, status_cartao, cartao_sel_id = None, 'pago', None
             
+            if forma_pag == "Cartão de Crédito" and tipo_val == "Despesa":
+                cartao_info = next(r for r in cartoes_row if r[1] == fonte_ou_cartao)
+                cartao_sel_id = cartao_info[0]
+                db_dados = db_query("SELECT conta_pagamento, dia_fechamento FROM cartoes WHERE id=?", (cartao_sel_id,))[0]
+                fonte_sel = db_dados[0] 
+                fatura_ref = calcular_fatura_ref(data_input.strftime("%d/%m/%Y"), db_dados[1])
+                status_cartao = 'pendente'
+            else:
+                fonte_sel = fonte_ou_cartao
+
+            # Execução SQL
             db_execute('''INSERT INTO transacoes 
                 (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, 
                  usuario, forma_pagamento, cartao_id, fatura_ref, status_cartao, status_liquidacao) 
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                (data_input, cat_pai, cat_filho, beneficiario, fonte_sel, valor_input, tipo_val, nota, 
-                 st.session_state.display_name, forma_pag, cartao_sel_id, fatura_ref, status_cartao, status_liq))
+                (data_input.strftime("%d/%m/%Y"), cat_pai, cat_filho, beneficiario, fonte_sel, valor_input, tipo_val, nota, 
+                 st.session_state.get('display_name', 'Admin'), forma_pag, cartao_sel_id, fatura_ref, status_cartao, determinar_status_liquidacao(data_input)))
             
-            st.session_state.ver += 1
-            st.rerun()
+            st.success("Lançamento efetuado com sucesso!")
+            st.rerun() # Limpa os campos e reseta a interface
 
 
 # ══════════════════════════════════════════════
