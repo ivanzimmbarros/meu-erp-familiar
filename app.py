@@ -718,71 +718,82 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 # ─────────────────────────────────────────────
 #  TAB 1 — NOVO LANÇAMENTO (COMPLETA E VALIDADA)
 # ─────────────────────────────────────────────
+
 with tab1:
     st.markdown("## ➕ Registrar uma Movimentação")
     st.divider()
 
-    # --- 1. Dados iniciais e Validações ---
-    cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
-    if cat_df.empty:
-        st.warning("⚠️ Nenhuma categoria cadastrada.")
-        st.stop()
+    # --- 1. Estado Inicial (Session State) ---
+    if 'tipo_mov' not in st.session_state: st.session_state.tipo_mov = "💸 Despesa"
+    if 'forma_pag' not in st.session_state: st.session_state.forma_pag = "Dinheiro/Débito"
 
-    # --- 2. O Formulário ---
+    # --- 2. Controles de Escolha (Reativos) ---
+    # Estes ficam fora do form para que a página re-renderize ao clicar
+    col_tp1, col_tp2 = st.columns(2)
+    st.session_state.tipo_mov = col_tp1.radio(
+        "Tipo de movimentação", 
+        ["💸 Despesa", "💵 Receita"], 
+        index=0 if st.session_state.tipo_mov == "💸 Despesa" else 1,
+        horizontal=True
+    )
+    st.session_state.forma_pag = col_tp2.radio(
+        "Forma de pagamento", 
+        ["Dinheiro/Débito", "Cartão de Crédito"], 
+        index=0 if st.session_state.forma_pag == "Dinheiro/Débito" else 1,
+        horizontal=True
+    )
+
+    # Lógica de seleção de Fonte
+    is_cartao = (st.session_state.forma_pag == "Cartão de Crédito" and "Despesa" in st.session_state.tipo_mov)
+    
+    if is_cartao:
+        label_fonte = "💳 Selecione o Cartão"
+        dados_fonte = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
+    else:
+        label_fonte = "🏦 Conta / Fonte"
+        dados_fonte = db_query("SELECT id, nome FROM fontes ORDER BY nome")
+
+    # --- 3. Formulário ---
     with st.form("form_transacao", clear_on_submit=True):
-        col1, col2 = st.columns(2)
         
-        # Radio para Tipo e Forma de Pagamento
-        tipo_input = col1.radio("Tipo de movimentação", ["💸 Despesa", "💵 Receita"], horizontal=True)
-        forma_pag = col2.radio("Forma de pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
+        # Dropdown dinâmico (a lista muda conforme a lógica acima)
+        fonte_selecionada = st.selectbox(label_fonte, [op[1] for op in dados_fonte])
         
-        tipo_val = "Despesa" if "Despesa" in tipo_input else "Receita"
-        
-        # Lógica de seleção (Cartão vs Fonte)
-        if forma_pag == "Cartão de Crédito" and tipo_val == "Despesa":
-            label_fonte = "💳 Selecione o Cartão"
-            opcoes_raw = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
-        else:
-            label_fonte = "🏦 Conta / Fonte"
-            opcoes_raw = db_query("SELECT id, nome FROM fontes ORDER BY nome")
-        
-        # Dropdown que se ajusta automaticamente
-        fonte_selecionada = st.selectbox(label_fonte, [op[1] for op in opcoes_raw])
-        
-        # Resto dos campos
         col_in1, col_in2 = st.columns(2)
         data_input = col_in1.date_input("Data", value=date.today())
         valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
         
-        # Categoria Principal (Pegando os nomes das categorias pai)
+        # Categoria
+        cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
         pai_opts = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
         cat_pai = st.selectbox("Categoria Principal", pai_opts)
         
         # Beneficiário
         benef_db = db_query("SELECT nome FROM beneficiarios ORDER BY nome")
-        beneficiario = st.selectbox("Beneficiário", [""] + [b[0] for b in benef_db])
+        lista_benef = [""] + [b[0] for b in benef_db]
+        beneficiario = st.selectbox("Beneficiário", lista_benef)
         
         nota = st.text_input("Observação (opcional)")
         
         submit_button = st.form_submit_button("Salvar Transação")
 
-    # --- 3. Processamento do Envio ---
+    # --- 4. Processamento ---
     if submit_button:
         if not beneficiario:
             st.error("Por favor, selecione um beneficiário.")
         else:
-            # 1. Recupera o ID da fonte/cartão selecionado
-            # Filtra a query original para pegar o ID correto
-            sel_id = [op[0] for op in opcoes_raw if op[1] == fonte_selecionada][0]
-            
-            # 2. Insere no Banco
             try:
-                # Exemplo da sua lógica de inserção
-                # Ajuste os campos conforme sua tabela transacoes
+                # Recuperar ID correto da fonte/cartão selecionado
+                # Encontra o ID onde o nome bate com a escolha
+                id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
+                
+                # Inserção no banco
                 db_execute('''INSERT INTO transacoes 
                     (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento) 
                     VALUES (?,?,?,?,?,?,?,?,?)''',
-                    (data_input.strftime("%d/%m/%Y"), cat_pai, beneficiario, fonte_selecionada, valor_input, tipo_val, nota, st.session_state.get('display_name', 'Admin'), forma_pag))
+                    (data_input.strftime("%d/%m/%Y"), cat_pai, beneficiario, fonte_selecionada, 
+                     valor_input, st.session_state.tipo_mov, nota, 
+                     st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag))
                 
                 st.success(f"Transação de €{valor_input:.2f} registrada com sucesso!")
             except Exception as e:
