@@ -782,16 +782,17 @@ with tab1:
         if not beneficiario:
             st.error("Por favor, selecione um beneficiário.")
         else:
-             # 1. Recuperar o ID do Cartão ou Fonte selecionado
+            try:
+                # 1. Recuperar o ID do Cartão ou Fonte selecionado
                 id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
                 
-                # 2. Definir o cartao_id (se for cartão, guarda o id, se não, fica None)
+                # 2. Definir o cartao_id
                 valor_cartao_id = id_fonte if st.session_state.forma_pag == "Cartão de Crédito" else None
                 
-                # 3. Definir status: Cartão = PENDENTE, Dinheiro = PAGO
+                # 3. Definir status
                 status_liq = "PENDENTE" if st.session_state.forma_pag == "Cartão de Crédito" else "PAGO"
 
-                # 4. Inserção no banco com as novas colunas
+                # 4. Inserção no banco
                 db_execute('''INSERT INTO transacoes 
                     (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao) 
                     VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
@@ -800,9 +801,10 @@ with tab1:
                      st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, 
                      valor_cartao_id, status_liq))
                 
-                st.success(f"Transação de €{valor_input:.2f} registrada como '{status_liq}' com sucesso!")
+                st.success(f"Transação de €{valor_input:.2f} registrada com sucesso!")
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
+
 
 
 # ══════════════════════════════════════════════
