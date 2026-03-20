@@ -948,7 +948,8 @@ with tab2:
         st.markdown("**✅ Liquidar transações pendentes / previstas:**")
         
         # Converte coluna 'data' para datetime para facilitar o agrupamento
-        df_liquidaveis['data_dt'] = pd.to_datetime(df_liquidaveis['data'])
+        # Tenta converter especificando que o dia vem primeiro (formato brasileiro/europeu)
+        df_liquidaveis['data_dt'] = pd.to_datetime(df_liquidaveis['data'], dayfirst=True)
         df_liquidaveis = df_liquidaveis.sort_values('data_dt')
         
         # Cria a coluna de referência de mês/ano
