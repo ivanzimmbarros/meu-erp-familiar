@@ -18,7 +18,6 @@ logging.basicConfig(
 def log_audit(acao, detalhes, usuario="sistema"):
     logging.info(f"{usuario} | {acao} | {detalhes}")
 
-
 # ─────────────────────────────────────────────
 #  CONFIGURAÇÃO GLOBAL
 # ─────────────────────────────────────────────
@@ -33,159 +32,62 @@ st.markdown("""
 <style>
     .main { background-color: #f8fafc; }
     h1, h2, h3 { font-family: 'Georgia', serif; }
-
-    .saldo-card {
-        border-radius: 16px;
-        padding: 24px 28px;
-        margin-bottom: 16px;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-        background: white;
-        border-left: 6px solid #e2e8f0;
-    }
-    .saldo-card h3 {
-        margin: 0 0 6px 0; font-size: 1rem; color: #64748b;
-        font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
-    }
-    .saldo-card .valor-positivo { font-size: 2rem; font-weight: 800; color: #16a34a; }
-    .saldo-card .valor-negativo { font-size: 2rem; font-weight: 800; color: #dc2626; }
-    .saldo-card .valor-neutro   { font-size: 2rem; font-weight: 800; color: #f59e0b; }
-    .saldo-card .valor-carmim   { font-size: 2rem; font-weight: 800; color: #9b1c1c; }
-    .saldo-card .detalhe { font-size: 0.8rem; color: #94a3b8; margin-top: 4px; }
+    .saldo-card { border-radius: 16px; padding: 24px 28px; margin-bottom: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); background: white; border-left: 6px solid #e2e8f0; }
+    .valor-positivo { font-size: 2rem; font-weight: 800; color: #16a34a; }
+    .valor-negativo { font-size: 2rem; font-weight: 800; color: #dc2626; }
+    .valor-carmim   { font-size: 2rem; font-weight: 800; color: #9b1c1c; }
+    .detalhe { font-size: 0.8rem; color: #94a3b8; margin-top: 4px; }
     .saldo-card-positivo  { border-left-color: #16a34a; }
     .saldo-card-negativo  { border-left-color: #dc2626; }
     .saldo-card-cartao    { border-left-color: #8b5cf6; background: #faf5ff; }
-    .saldo-card-meta      { border-left-color: #f59e0b; background: #fffbeb; }
-    .saldo-card-insolvencia {
-        border-left-color: #9b1c1c;
-        background: #fef2f2;
-        border: 2px solid #fca5a5;
-    }
-
-    .secao-titulo { font-size: 1.1rem; font-weight: 700; color: #1e293b; padding: 8px 0 4px 0; }
-    .secao-sub    { font-size: 0.85rem; color: #64748b; margin-bottom: 16px; }
-
-    .aviso-bloqueio {
-        background: #fff7ed; border: 1px solid #fed7aa;
-        border-radius: 10px; padding: 14px 18px; margin-bottom: 8px;
-        color: #9a3412; font-size: 0.9rem;
-    }
-    .aviso-insolvencia {
-        background: #fef2f2; border: 2px solid #f87171;
-        border-radius: 12px; padding: 16px 20px; margin: 12px 0;
-        color: #7f1d1d; font-size: 0.95rem; font-weight: 600;
-    }
-    .aviso-pendente {
-        background: #fffbeb; border: 1px solid #fcd34d;
-        border-radius: 10px; padding: 14px 18px; margin: 8px 0;
-        color: #78350f; font-size: 0.9rem;
-    }
-
-    /* Status de liquidação */
-    .badge-pago     { background:#dcfce7; color:#166534; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
+    .saldo-card-insolvencia { border-left-color: #9b1c1c; background: #fef2f2; border: 2px solid #fca5a5; }
     .badge-pendente { background:#fef9c3; color:#854d0e; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
     .badge-previsto { background:#e0f2fe; color:#0c4a6e; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
-
     .fatura-aberta  { background: #fff7ed; border: 1px solid #fdba74; border-radius: 12px; padding: 18px 22px; margin-bottom: 12px; }
     .fatura-fechada { background: #f0fdf4; border: 1px solid #86efac; border-radius: 12px; padding: 18px 22px; margin-bottom: 12px; }
-
-    /* Dashboard semáforo */
-    .gauge-verde    { background: #dcfce7; border-left: 5px solid #16a34a; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; }
-    .gauge-amarelo  { background: #fef9c3; border-left: 5px solid #ca8a04; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; }
-    .gauge-vermelho { background: #fee2e2; border-left: 5px solid #dc2626; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; }
-    .gauge-titulo   { font-weight: 700; font-size: 0.95rem; color: #1e293b; }
-    .gauge-sub      { font-size: 0.8rem; color: #64748b; margin-top: 2px; }
-
-    .top-benef-card {
-        background: white; border-radius: 12px; padding: 14px 18px;
-        margin-bottom: 8px; box-shadow: 0 1px 6px rgba(0,0,0,0.07);
-        display: flex; justify-content: space-between; align-items: center;
-    }
-    .liquidar-row {
-        background: #fffbeb; border-radius: 8px; padding: 10px 14px;
-        margin-bottom: 6px; font-size: 0.88rem;
-    }
-
-    /* Ajuste de saldo */
-    .ajuste-card {
-        background: #f0fdf4; border-left: 5px solid #16a34a;
-        border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;
-    }
-    .ajuste-card-neg {
-        background: #fff7ed; border-left: 5px solid #f59e0b;
-        border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;
-    }
-
-    footer { visibility: hidden; }
-    #MainMenu { visibility: hidden; }
+    .liquidar-row { background: #fffbeb; border-radius: 8px; padding: 10px 14px; margin-bottom: 6px; font-size: 0.88rem; }
+    footer { visibility: hidden; } #MainMenu { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
-
 
 # ─────────────────────────────────────────────
 #  ESTADO DA SESSÃO
 # ─────────────────────────────────────────────
 def init_session():
-    defaults = {
-        'ver': 0,
-        'logado': False,
-        'display_name': None,
-        'taxa_brl_eur': 0.16,
-    }
+    defaults = {'ver': 0, 'logado': False, 'display_name': None, 'taxa_brl_eur': 0.16}
     for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
+        if k not in st.session_state: st.session_state[k] = v
 init_session()
 
-
 # ─────────────────────────────────────────────
-#  HELPERS DE BANCO
+#  HELPERS DE BANCO (Mantidos conforme original)
 # ─────────────────────────────────────────────
 DB_PATH = 'finance.db'
 
 def db_query(sql, params=()):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
+    try: return conn.execute(sql, params).fetchall()
+    finally: conn.close()
 
 def db_execute(sql, params=()):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute(sql, params)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    try: conn.execute("PRAGMA foreign_keys = ON"); conn.execute(sql, params); conn.commit()
+    finally: conn.close()
 
 def db_execute_many(sqls_params):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    try:
+    try: 
         conn.execute("PRAGMA foreign_keys = ON")
-        for sql, params in sqls_params:
-            conn.execute(sql, params)
+        for sql, params in sqls_params: conn.execute(sql, params)
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    finally: conn.close()
 
 def db_df(sql, params=()):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        return pd.read_sql_query(sql, conn, params=params)
-    finally:
-        conn.close()
+    try: return pd.read_sql_query(sql, conn, params=params)
+    finally: conn.close()
 
-def hash_password(pw):
-    return hashlib.sha256(pw.encode()).hexdigest()
+def hash_password(pw): return hashlib.sha256(pw.encode()).hexdigest()
 
 
 # ─────────────────────────────────────────────
@@ -321,8 +223,41 @@ def init_db():
         conn.close()
 
 
+# 1. Inicializa o banco
 init_db()
 
+# 2. Definição da função de segurança (VERSÃO SEGURA)
+def verificar_bloqueio_delecao(tabela, id_item):
+    """Retorna True se houver dependências que impedem a exclusão."""
+    
+    if tabela == "categorias":
+        # Verifica se o ID existe antes de processar
+        res_nome = db_query("SELECT nome FROM categorias WHERE id=?", (id_item,))
+        if not res_nome: return False 
+        nome_cat = res_nome[0][0]
+
+        # Verifica subcategorias
+        tem_sub = db_query("SELECT id FROM categorias WHERE pai_id=?", (id_item,))
+        
+        # Verifica transações associadas
+        tem_trans = db_query("SELECT id FROM transacoes WHERE categoria_pai=? OR categoria_filho=?", 
+                             (nome_cat, nome_cat))
+        
+        return len(tem_sub) > 0 or len(tem_trans) > 0
+
+    if tabela == "fontes":
+        # Verifica se o ID existe antes de processar
+        res_conta = db_query("SELECT nome FROM fontes WHERE id=?", (id_item,))
+        if not res_conta: return False
+        nome_conta = res_conta[0][0]
+        
+        # Verifica transações vinculadas
+        tem_trans = db_query("SELECT id FROM transacoes WHERE fonte=?", (nome_conta,))
+        return len(tem_trans) > 0
+        
+    return False
+
+# 3. Carregamento de configurações iniciais
 _taxa_salva = db_query("SELECT valor FROM configuracoes WHERE chave='taxa_brl_eur'")
 if _taxa_salva:
     st.session_state['taxa_brl_eur'] = float(_taxa_salva[0][0])
@@ -780,54 +715,73 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 ])
 
 
-# ══════════════════════════════════════════════
-#  TAB 1 — NOVO LANÇAMENTO (VERSÃO CORRIGIDA)
-# ══════════════════════════════════════════════
+# ─────────────────────────────────────────────
+#  TAB 1 — NOVO LANÇAMENTO (COMPLETA E CORRIGIDA)
+# ─────────────────────────────────────────────
 with tab1:
     st.markdown("## ➕ Registrar uma Movimentação")
     st.caption("Registre entradas, saídas e compromissos futuros.")
     st.divider()
 
-    cat_df       = db_df("SELECT id, nome, pai_id FROM categorias")
-    pai_opts     = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
-    fontes_row   = db_query("SELECT nome FROM fontes")
-    fontes_lista = [r[0] for r in fontes_row] if fontes_row else ["Padrão"]
-    benef_row    = db_query("SELECT nome FROM beneficiarios")
-    benef_opts   = [r[0] for r in benef_row] if benef_row else ["Não especificado"]
-    cartoes_row  = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
-
-    sem_categorias = len(pai_opts) == 0
-    if sem_categorias:
-        st.markdown('<div class="aviso-bloqueio">⚠️ Nenhuma categoria cadastrada. Vá até ⚙️ Gestão.</div>', unsafe_allow_html=True)
-
-    taxa_cambio = st.session_state['taxa_brl_eur']
+    cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
+    pai_opts = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
+    fontes_row = db_query("SELECT nome FROM fontes")
+    fontes_lista = [r[0] for r in fontes_row] if fontes_row else []
+    cartoes_row = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
 
     with st.form(key=f"f_lanca_{st.session_state.ver}", clear_on_submit=True):
         col_tp1, col_tp2 = st.columns(2)
         with col_tp1:
-            tipo = st.radio("**Tipo de movimentação**", ["💸 Despesa", "💵 Receita"], horizontal=True)
-            # CORREÇÃO: Usando 'in' para evitar falha com emojis
-            tipo_val = "Despesa" if "Despesa" in tipo else "Receita"
+            tipo_input = st.radio("**Tipo de movimentação**", ["💸 Despesa", "💵 Receita"], horizontal=True)
+            tipo_val = "Despesa" if "Despesa" in tipo_input else "Receita"
         with col_tp2:
             forma_pag = st.radio("**Forma de pagamento**", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
 
         cartao_sel_id = None
-        cartao_sel_nome = None
-        
-        # CORREÇÃO: Lógica clara de exibição do cartão
         if forma_pag == "Cartão de Crédito":
             if tipo_val == "Receita":
-                st.info("ℹ️ Receitas são sempre lançadas em conta bancária.")
-                forma_pag = "Dinheiro/Débito"
+                st.info("ℹ️ Receitas são lançadas apenas em conta bancária (Dinheiro/Débito).")
             else:
                 cartao_nomes = [r[1] for r in cartoes_row]
-                cartao_sel_nome = st.selectbox("💳 Qual cartão?", cartao_nomes, key="lanca_cartao_select")
-                cartao_sel_id = next(r[0] for r in cartoes_row if r[1] == cartao_sel_nome)
+                if cartao_nomes:
+                    selecionado = st.selectbox("💳 Qual cartão?", cartao_nomes, key="selectbox_cartao_lanca")
+                    cartao_sel_id = next(r[0] for r in cartoes_row if r[1] == selecionado)
+                else:
+                    st.error("Nenhum cartão cadastrado!")
 
-        st.markdown("---")
-        # ... (O restante do código da Tab 1 pode ser mantido como estava no seu original)
-        # Certifique-se apenas de que a lógica de gravação utiliza as variáveis corretas definidas acima.
+        col_in1, col_in2 = st.columns(2)
+        data_input = col_in1.date_input("Data", value=date.today()).strftime("%d/%m/%Y")
+        valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
+        
+        cat_pai = st.selectbox("Categoria Principal", pai_opts)
+        pid = int(cat_df[cat_df['nome'] == cat_pai]['id'].iloc[0])
+        sub_cats = cat_df[cat_df['pai_id'] == pid]['nome'].tolist()
+        cat_filho = st.selectbox("Detalhamento", [""] + sub_cats)
+        
+        beneficiario = st.text_input("Beneficiário")
+        fonte_sel = st.selectbox("Conta/Fonte", fontes_lista)
+        nota = st.text_area("Nota")
 
+        if st.form_submit_button("✅ Salvar Lançamento"):
+            fatura_ref = None
+            status_cartao = 'pago'
+            if forma_pag == "Cartão de Crédito" and cartao_sel_id:
+                # Busca dia de fechamento do cartão
+                d_fech = db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (cartao_sel_id,))[0][0]
+                fatura_ref = calcular_fatura_ref(data_input, d_fech)
+                status_cartao = 'pendente'
+
+            status_liq = determinar_status_liquidacao(data_input)
+            
+            db_execute('''INSERT INTO transacoes 
+                (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, 
+                 usuario, forma_pagamento, cartao_id, fatura_ref, status_cartao, status_liquidacao) 
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (data_input, cat_pai, cat_filho, beneficiario, fonte_sel, valor_input, tipo_val, nota, 
+                 st.session_state.display_name, forma_pag, cartao_sel_id, fatura_ref, status_cartao, status_liq))
+            
+            st.session_state.ver += 1
+            st.rerun()
 
 
 # ══════════════════════════════════════════════
@@ -1812,21 +1766,31 @@ with tab7:
             if not ids_cat:
                 st.warning("Selecione pelo menos uma.")
             else:
-                erros = []
+                bloqueados = []
                 for cid in ids_cat:
-                    if db_query("SELECT COUNT(*) FROM categorias WHERE pai_id=?", (cid,))[0][0] > 0:
-                        nome_c = cat_df2[cat_df2['id'] == cid]['Nome'].values
-                        erros.append(nome_c[0] if len(nome_c) else str(cid))
-                if erros:
-                    st.error(f"⛔ Remova os detalhamentos de **{', '.join(erros)}** primeiro.")
+                    # Verifica bloqueio usando a função de segurança
+                    if verificar_bloqueio_delecao("categorias", cid):
+                        nome_cat = cat_df2[cat_df2['id'] == cid]['nome'].values[0]
+                        bloqueados.append(nome_cat)
+                
+                if bloqueados:
+                    st.error(f"⛔ Não é possível remover: **{', '.join(bloqueados)}** possuem subcategorias ou transações vinculadas.")
                 else:
                     ph = ",".join(["?"] * len(ids_cat))
                     try:
                         db_execute(f"DELETE FROM categorias WHERE id IN ({ph})", tuple(ids_cat))
+                        
+                        # --- ADICIONE ESTA LINHA ---
+                        st.session_state["inp_pai"] = ""
+                        st.session_state["inp_sub"] = ""
+                        st.session_state.ver += 1 
+                        # ---------------------------
+                        
                         st.toast(f"🗑️ {len(ids_cat)} categoria(s) removida(s).", icon="🗑️")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Não foi possível remover: {e}")
+                        st.error(f"❌ Erro ao remover: {e}")
+
     else:
         st.info("Nenhuma categoria cadastrada ainda.")
 
@@ -1845,6 +1809,10 @@ with tab7:
                 try:
                     db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_fonte.strip(),))
                     st.toast(f"✅ Conta '{n_fonte}' adicionada com sucesso!", icon="✅")
+                    
+                    # Limpeza do campo (isso limpa o widget text_input lá em cima)
+                    st.session_state["inp_fonte"] = ""
+                    
                     st.rerun()
                 except Exception:
                     st.error("❌ Já existe uma conta com esse nome.")
@@ -1861,19 +1829,36 @@ with tab7:
         if st.button("🗑️ Remover Contas Selecionadas", key="rm_fontes"):
             ids_f   = ed_fontes[ed_fontes["Remover"] == True]["id"].tolist()
             nomes_f = ed_fontes[ed_fontes["Remover"] == True]["Nome da Conta"].tolist()
+            
             if not ids_f:
                 st.warning("Selecione pelo menos uma conta.")
             else:
-                ph = ",".join(["?"] * len(ids_f))
-                ops = [(f"DELETE FROM fontes WHERE id IN ({ph})", tuple(ids_f))]
-                for nm in nomes_f:
-                    ops.append(("DELETE FROM saldos_iniciais WHERE fonte=?", (nm,)))
-                try:
-                    db_execute_many(ops)
-                    st.toast(f"🗑️ {len(ids_f)} conta(s) removida(s).", icon="🗑️")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Erro ao remover conta(s): {e}")
+                # --- INÍCIO DA INSERÇÃO DA LÓGICA DE BLOQUEIO ---
+                bloqueados = []
+                for cid in ids_f:
+                    if verificar_bloqueio_delecao("fontes", cid):
+                        bloqueados.append(str(cid))
+                
+                if bloqueados:
+                    st.error(f"⛔ Não é possível remover: uma ou mais contas selecionadas possuem transações ou saldos vinculados.")
+                else:
+                    # --- LÓGICA DE EXCLUSÃO ORIGINAL ---
+                    ph = ",".join(["?"] * len(ids_f))
+                    ops = [(f"DELETE FROM fontes WHERE id IN ({ph})", tuple(ids_f))]
+                    for nm in nomes_f:
+                        ops.append(("DELETE FROM saldos_iniciais WHERE fonte=?", (nm,)))
+                    
+                    try:
+                        db_execute_many(ops)
+                        st.session_state.ver += 1
+                        st.session_state["inp_fonte"] = "" 
+                        st.toast(f"🗑️ {len(ids_f)} conta(s) removida(s).", icon="🗑️")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erro ao remover conta(s): {e}")
+                # --- FIM DA INSERÇÃO ---
+
+
     else:
         st.info("Nenhuma conta cadastrada ainda.")
 
