@@ -1006,25 +1006,35 @@ with tab3:
             cls_vl  = "valor-positivo" if saldo_l >= 0 else "valor-carmim"
             sinal_l = "+" if saldo_l > 0 else ""
 
+
+            # Pré-calcula strings — evita f-strings aninhadas no HTML
             risco_txt = ""
             if saldo_l < 0:
-                risco_txt = "<div style='margin-top:6px;font-size:0.8rem;color:#9b1c1c;font-weight:700;'>🚨 RISCO DE INSOLVÊNCIA</div>"
+                risco_txt = ("<div style='margin-top:6px;font-size:0.8rem;"
+                             "color:#9b1c1c;font-weight:700;'>"
+                             "🚨 RISCO DE INSOLVÊNCIA</div>")
+
+            comp_txt = ""
+            if comp != 0 or passivo > 0:
+                comp_txt = f"<div class='detalhe' style='color:#ef4444;margin-top:4px;'>Comprometido: €{comp:,.2f}"
+                if passivo > 0:
+                    comp_txt += f" | Cartão: €{passivo:,.2f}"
+                comp_txt += "</div>"
 
             with cols_saldo[i % 3]:
-                st.markdown(f"""
-                <div class="saldo-card {cls_r}">
-                    <h3>🏦 {f}</h3>
-                    <div class="{cls_vr}">{sinal_r}€ {saldo_r:,.2f}</div>
-                    <div class="detalhe">Saldo Real (PAGO){ini_txt}</div>
-                    <div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;">
-                        <div class="{cls_vl}" style="font-size:1.4rem;">{sinal_l}€ {saldo_l:,.2f}</div>
-                        <div class="detalhe">Saldo Livre (Real − Compromissos)</div>
-                        {f"<div class='detalhe' style='color:#ef4444;margin-top:4px;'>Comprometido: €{comp:,.2f}" +
-                         (f" | Cartão: €{passivo:,.2f}" if passivo > 0 else "") + "</div>"
-                         if comp != 0 or passivo > 0 else ""}
-                    </div>
-                    {risco_txt}
-                </div>""", unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="saldo-card {cls_r}">'
+                    f'<h3>🏦 {f}</h3>'
+                    f'<div class="{cls_vr}">{sinal_r}€ {saldo_r:,.2f}</div>'
+                    f'<div class="detalhe">Saldo Real (PAGO){ini_txt}</div>'
+                    '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;">'
+                    f'<div class="{cls_vl}" style="font-size:1.4rem;">{sinal_l}€ {saldo_l:,.2f}</div>'
+                    '<div class="detalhe">Saldo Livre (Real − Compromissos)</div>'
+                    f'{comp_txt}'
+                    '</div>'
+                    f'{risco_txt}'
+                    '</div>',
+                    unsafe_allow_html=True)
 
         st.divider()
 
@@ -1043,13 +1053,22 @@ with tab3:
             card_cls = "saldo-card-insolvencia" if is_insol else ""
             cls_tl   = "valor-carmim" if is_insol else "valor-positivo" if total_livre >= 0 else "valor-negativo"
             s_tl     = "+" if total_livre > 0 else ""
-            insol_msg = "<div class='detalhe' style='color:#9b1c1c;font-weight:700;margin-top:6px;'>🚨 RISCO DE INSOLVÊNCIA</div>" if is_insol else ""
-            st.markdown(f"""<div class="saldo-card {card_cls}" style="{'background:#fef2f2;' if is_insol else 'background:#1e293b;'}border-left-color:{'#9b1c1c' if is_insol else '#10b981'};">
-                <h3 style="color:{'#9b1c1c' if is_insol else '#94a3b8'};">📊 DISPONIBILIDADE REAL</h3>
-                <div class="{cls_tl}" style="font-size:2rem;">{s_tl}€ {total_livre:,.2f}</div>
-                <div class="detalhe" style="color:{'#9b1c1c' if is_insol else '#64748b'};">Saldo Real − todos os compromissos</div>
-                {insol_msg}
-            </div>""", unsafe_allow_html=True)
+            # Pré-calcula strings — evita f-strings aninhadas no HTML
+            insol_msg  = ("<div class='detalhe' style='color:#9b1c1c;"
+                           "font-weight:700;margin-top:6px;'>"
+                           "🚨 RISCO DE INSOLVÊNCIA</div>") if is_insol else ""
+            bg_color   = "background:#fef2f2;" if is_insol else "background:#1e293b;"
+            brd_color  = "#9b1c1c" if is_insol else "#10b981"
+            h3_color   = "#9b1c1c" if is_insol else "#94a3b8"
+            det_color  = "#9b1c1c" if is_insol else "#64748b"
+            st.markdown(
+                f'<div class="saldo-card {card_cls}" style="{bg_color}border-left-color:{brd_color};">' 
+                f'<h3 style="color:{h3_color};">📊 DISPONIBILIDADE REAL</h3>'
+                f'<div class="{cls_tl}" style="font-size:2rem;">{s_tl}€ {total_livre:,.2f}</div>'
+                f'<div class="detalhe" style="color:{det_color};">Saldo Real − todos os compromissos</div>'
+                f'{insol_msg}'
+                '</div>',
+                unsafe_allow_html=True)
 
         # ── Saldos iniciais ──────────────────────────────────────────
         st.divider()
