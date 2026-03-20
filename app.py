@@ -4,7 +4,7 @@ import pandas as pd
 import hashlib
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 # ─────────────────────────────────────────────
 #  AUDITORIA — log para terminal
@@ -49,11 +49,17 @@ st.markdown("""
     .saldo-card .valor-positivo { font-size: 2rem; font-weight: 800; color: #16a34a; }
     .saldo-card .valor-negativo { font-size: 2rem; font-weight: 800; color: #dc2626; }
     .saldo-card .valor-neutro   { font-size: 2rem; font-weight: 800; color: #f59e0b; }
+    .saldo-card .valor-carmim   { font-size: 2rem; font-weight: 800; color: #9b1c1c; }
     .saldo-card .detalhe { font-size: 0.8rem; color: #94a3b8; margin-top: 4px; }
-    .saldo-card-positivo { border-left-color: #16a34a; }
-    .saldo-card-negativo { border-left-color: #dc2626; }
-    .saldo-card-cartao   { border-left-color: #8b5cf6; background: #faf5ff; }
-    .saldo-card-meta     { border-left-color: #f59e0b; background: #fffbeb; }
+    .saldo-card-positivo  { border-left-color: #16a34a; }
+    .saldo-card-negativo  { border-left-color: #dc2626; }
+    .saldo-card-cartao    { border-left-color: #8b5cf6; background: #faf5ff; }
+    .saldo-card-meta      { border-left-color: #f59e0b; background: #fffbeb; }
+    .saldo-card-insolvencia {
+        border-left-color: #9b1c1c;
+        background: #fef2f2;
+        border: 2px solid #fca5a5;
+    }
 
     .secao-titulo { font-size: 1.1rem; font-weight: 700; color: #1e293b; padding: 8px 0 4px 0; }
     .secao-sub    { font-size: 0.85rem; color: #64748b; margin-bottom: 16px; }
@@ -63,6 +69,22 @@ st.markdown("""
         border-radius: 10px; padding: 14px 18px; margin-bottom: 8px;
         color: #9a3412; font-size: 0.9rem;
     }
+    .aviso-insolvencia {
+        background: #fef2f2; border: 2px solid #f87171;
+        border-radius: 12px; padding: 16px 20px; margin: 12px 0;
+        color: #7f1d1d; font-size: 0.95rem; font-weight: 600;
+    }
+    .aviso-pendente {
+        background: #fffbeb; border: 1px solid #fcd34d;
+        border-radius: 10px; padding: 14px 18px; margin: 8px 0;
+        color: #78350f; font-size: 0.9rem;
+    }
+
+    /* Status de liquidação */
+    .badge-pago     { background:#dcfce7; color:#166534; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
+    .badge-pendente { background:#fef9c3; color:#854d0e; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
+    .badge-previsto { background:#e0f2fe; color:#0c4a6e; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
+
     .fatura-aberta  { background: #fff7ed; border: 1px solid #fdba74; border-radius: 12px; padding: 18px 22px; margin-bottom: 12px; }
     .fatura-fechada { background: #f0fdf4; border: 1px solid #86efac; border-radius: 12px; padding: 18px 22px; margin-bottom: 12px; }
 
@@ -77,6 +99,10 @@ st.markdown("""
         background: white; border-radius: 12px; padding: 14px 18px;
         margin-bottom: 8px; box-shadow: 0 1px 6px rgba(0,0,0,0.07);
         display: flex; justify-content: space-between; align-items: center;
+    }
+    .liquidar-row {
+        background: #fffbeb; border-radius: 8px; padding: 10px 14px;
+        margin-bottom: 6px; font-size: 0.88rem;
     }
 
     footer { visibility: hidden; }
@@ -154,25 +180,33 @@ def hash_password(pw):
 
 # ─────────────────────────────────────────────
 #  INICIALIZAÇÃO / MIGRAÇÃO DO BANCO
-#  ⚠️ Não altere esta função — lógica de migração
-#     automática de colunas já validada.
 # ─────────────────────────────────────────────
 def init_db():
+    """
+    Idempotente. Colunas novas adicionadas via ALTER TABLE.
+    Novas colunas em transacoes:
+      status_liquidacao → PAGO | PENDENTE | PREVISTO
+      data_liquidacao   → data em que foi efectivamente liquidado
+    Registos antigos migrados para PAGO por defeito.
+    """
     TRANSACOES_COLUNAS = [
-        ("id",              "INTEGER PRIMARY KEY AUTOINCREMENT"),
-        ("data",            "TEXT"),
-        ("categoria_pai",   "TEXT"),
-        ("categoria_filho", "TEXT"),
-        ("beneficiario",    "TEXT"),
-        ("fonte",           "TEXT"),
-        ("valor_eur",       "REAL"),
-        ("tipo",            "TEXT"),
-        ("nota",            "TEXT"),
-        ("usuario",         "TEXT"),
-        ("forma_pagamento", "TEXT DEFAULT 'Dinheiro/Débito'"),
-        ("cartao_id",       "INTEGER"),
-        ("fatura_ref",      "TEXT"),
-        ("status_cartao",   "TEXT DEFAULT 'pendente'"),
+        ("id",               "INTEGER PRIMARY KEY AUTOINCREMENT"),
+        ("data",             "TEXT"),
+        ("categoria_pai",    "TEXT"),
+        ("categoria_filho",  "TEXT"),
+        ("beneficiario",     "TEXT"),
+        ("fonte",            "TEXT"),
+        ("valor_eur",        "REAL"),
+        ("tipo",             "TEXT"),
+        ("nota",             "TEXT"),
+        ("usuario",          "TEXT"),
+        ("forma_pagamento",  "TEXT DEFAULT 'Dinheiro/Débito'"),
+        ("cartao_id",        "INTEGER"),
+        ("fatura_ref",       "TEXT"),
+        ("status_cartao",    "TEXT DEFAULT 'pendente'"),
+        # ── módulo liquidez ──
+        ("status_liquidacao","TEXT DEFAULT 'PAGO'"),
+        ("data_liquidacao",  "TEXT"),
     ]
 
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -227,11 +261,7 @@ def init_db():
             conta_pagamento TEXT NOT NULL
         )''')
 
-        # ── NOVA TABELA: orcamentos ─────────────────────────────────────────
-        # UNIQUE inclui tipo_meta: mesma categoria pode ter meta de Despesa
-        # E de Receita ao mesmo tempo — sem conflito de chave UNIQUE.
-        # categoria_filho e beneficiario usam '' em vez de NULL para que
-        # a constraint UNIQUE funcione correctamente no SQLite.
+        # orçamentos
         c.execute(
             "CREATE TABLE IF NOT EXISTS orcamentos ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -244,16 +274,13 @@ def init_db():
             "UNIQUE(mes_ano, categoria_pai, categoria_filho, beneficiario, tipo_meta)"
             ")"
         )
-        # Migração segura: bancos antigos sem tipo_meta recebem a coluna agora
         c.execute("PRAGMA table_info(orcamentos)")
         _orc_cols = {row[1] for row in c.fetchall()}
         if 'tipo_meta' not in _orc_cols:
-            c.execute(
-                "ALTER TABLE orcamentos "
-                "ADD COLUMN tipo_meta TEXT NOT NULL DEFAULT 'Despesa'"
-            )
+            c.execute("ALTER TABLE orcamentos "
+                      "ADD COLUMN tipo_meta TEXT NOT NULL DEFAULT 'Despesa'")
 
-        # transacoes + migração de colunas
+        # transacoes + migração automática de colunas
         c.execute('''CREATE TABLE IF NOT EXISTS transacoes
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       data TEXT, categoria_pai TEXT, categoria_filho TEXT,
@@ -269,6 +296,12 @@ def init_db():
                 c.execute(
                     f"ALTER TABLE transacoes ADD COLUMN {col_nome} {col_def}"
                 )
+
+        # Migração: registos antigos sem status_liquidacao → PAGO
+        c.execute(
+            "UPDATE transacoes SET status_liquidacao='PAGO' "
+            "WHERE status_liquidacao IS NULL"
+        )
 
         c.execute("INSERT OR IGNORE INTO usuarios "
                   "(username, password, nome_exibicao) VALUES (?,?,?)",
@@ -313,33 +346,6 @@ def calcular_limite_usado(cartao_id):
         (cartao_id,))
     return (r[0][0] or 0.0) if r else 0.0
 
-def calcular_saldo_conta(fonte_nome):
-    ini_r = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (fonte_nome,))
-    ini   = ini_r[0][0] if ini_r else 0.0
-    rec_r = db_query(
-        "SELECT SUM(valor_eur) FROM transacoes "
-        "WHERE fonte=? AND tipo='Receita' "
-        "AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)",
-        (fonte_nome,))
-    rec = (rec_r[0][0] or 0.0) if rec_r else 0.0
-    des_r = db_query(
-        "SELECT SUM(valor_eur) FROM transacoes "
-        "WHERE fonte=? AND tipo='Despesa' "
-        "AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)",
-        (fonte_nome,))
-    des = (des_r[0][0] or 0.0) if des_r else 0.0
-    return ini + rec - des
-
-def calcular_patrimonio_liquido(fonte_nome):
-    saldo = calcular_saldo_conta(fonte_nome)
-    passivo_r = db_query(
-        "SELECT SUM(t.valor_eur) FROM transacoes t "
-        "JOIN cartoes c ON t.cartao_id = c.id "
-        "WHERE c.conta_pagamento=? AND t.status_cartao='pendente'",
-        (fonte_nome,))
-    passivo = (passivo_r[0][0] or 0.0) if passivo_r else 0.0
-    return saldo - passivo
-
 def pagar_fatura(cartao_id, fatura_ref, usuario):
     total = calcular_total_fatura(cartao_id, fatura_ref)
     if total <= 0:
@@ -355,15 +361,150 @@ def pagar_fatura(cartao_id, fatura_ref, usuario):
          (cartao_id, fatura_ref)),
         ("INSERT INTO transacoes "
          "(data, categoria_pai, categoria_filho, beneficiario, fonte, "
-         "valor_eur, tipo, nota, usuario, forma_pagamento, status_cartao) "
-         "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+         "valor_eur, tipo, nota, usuario, forma_pagamento, status_cartao, "
+         "status_liquidacao, data_liquidacao) "
+         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
          (hoje, "Cartão de Crédito", "Pagamento de Fatura",
           f"Fatura {nome_cartao} — {fatura_ref}",
           conta_pag, total, "Despesa",
           f"Pagamento da fatura {nome_cartao} referência {fatura_ref}",
-          usuario, "Dinheiro/Débito", "pago")),
+          usuario, "Dinheiro/Débito", "pago", "PAGO", hoje)),
     ])
     return total
+
+
+# ─────────────────────────────────────────────
+#  FUNÇÕES DE NEGÓCIO — LIQUIDEZ / FLUXO DE CAIXA
+# ─────────────────────────────────────────────
+def determinar_status_liquidacao(data_str, status_manual=None):
+    """
+    Auto-determina status_liquidacao pela data:
+      data > hoje  → PREVISTO
+      data <= hoje → PAGO  (salvo override via status_manual)
+    Permite override para PENDENTE no acto do lançamento.
+    """
+    if status_manual:
+        return status_manual
+    try:
+        d = datetime.strptime(data_str, "%d/%m/%Y").date()
+    except Exception:
+        d = date.today()
+    return "PREVISTO" if d > date.today() else "PAGO"
+
+
+def calcular_saldo_real(fonte_nome):
+    """
+    Saldo efectivo: soma apenas transações com status_liquidacao='PAGO'.
+    Dinheiro que já entrou ou saiu da conta de facto.
+    """
+    ini_r = db_query(
+        "SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (fonte_nome,))
+    ini = ini_r[0][0] if ini_r else 0.0
+
+    rec = db_query(
+        "SELECT COALESCE(SUM(valor_eur),0) FROM transacoes "
+        "WHERE fonte=? AND tipo='Receita' AND status_liquidacao='PAGO' "
+        "AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)",
+        (fonte_nome,))[0][0]
+
+    des = db_query(
+        "SELECT COALESCE(SUM(valor_eur),0) FROM transacoes "
+        "WHERE fonte=? AND tipo='Despesa' AND status_liquidacao='PAGO' "
+        "AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)",
+        (fonte_nome,))[0][0]
+
+    return ini + rec - des
+
+
+def calcular_comprometido(fonte_nome):
+    """
+    Total comprometido futuro:
+      (+) Despesas PENDENTES + PREVISTAS
+      (-) Receitas PENDENTES + PREVISTAS (entradas esperadas)
+      (+) Faturas de cartão de crédito pendentes
+    """
+    desp = db_query(
+        "SELECT COALESCE(SUM(valor_eur),0) FROM transacoes "
+        "WHERE fonte=? AND tipo='Despesa' "
+        "AND status_liquidacao IN ('PENDENTE','PREVISTO') "
+        "AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)",
+        (fonte_nome,))[0][0]
+
+    rec = db_query(
+        "SELECT COALESCE(SUM(valor_eur),0) FROM transacoes "
+        "WHERE fonte=? AND tipo='Receita' "
+        "AND status_liquidacao IN ('PENDENTE','PREVISTO') "
+        "AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)",
+        (fonte_nome,))[0][0]
+
+    fat = db_query(
+        "SELECT COALESCE(SUM(t.valor_eur),0) FROM transacoes t "
+        "JOIN cartoes c ON t.cartao_id=c.id "
+        "WHERE c.conta_pagamento=? AND t.status_cartao='pendente'",
+        (fonte_nome,))[0][0]
+
+    return desp - rec + fat
+
+
+def calcular_saldo_livre(fonte_nome):
+    """
+    Disponibilidade Real = Saldo Real − Comprometido.
+    Valor negativo sinaliza risco de insolvência.
+    """
+    return calcular_saldo_real(fonte_nome) - calcular_comprometido(fonte_nome)
+
+
+def calcular_saldo_conta(fonte_nome):
+    """Alias retrocompatível para calcular_saldo_real."""
+    return calcular_saldo_real(fonte_nome)
+
+
+def calcular_patrimonio_liquido(fonte_nome):
+    """Saldo real menos faturas de cartão pendentes."""
+    saldo = calcular_saldo_real(fonte_nome)
+    passivo = db_query(
+        "SELECT COALESCE(SUM(t.valor_eur),0) FROM transacoes t "
+        "JOIN cartoes c ON t.cartao_id=c.id "
+        "WHERE c.conta_pagamento=? AND t.status_cartao='pendente'",
+        (fonte_nome,))[0][0]
+    return saldo - passivo
+
+
+def liquidar_transacao(trans_id, usuario):
+    """
+    Efectiva um pagamento: PENDENTE ou PREVISTO → PAGO.
+    Regista data_liquidacao = hoje.
+    """
+    hoje = datetime.now().strftime("%d/%m/%Y")
+    db_execute(
+        "UPDATE transacoes SET status_liquidacao='PAGO', data_liquidacao=? "
+        "WHERE id=?",
+        (hoje, trans_id)
+    )
+    log_audit("LIQUIDACAO", f"id={trans_id} → PAGO em {hoje}", usuario)
+    return hoje
+
+
+def get_pendentes_vencidos():
+    """Transações PENDENTES de débito — vencimento passou mas não liquidadas."""
+    return db_query(
+        "SELECT id, data, fonte, valor_eur, tipo, nota, beneficiario "
+        "FROM transacoes "
+        "WHERE status_liquidacao='PENDENTE' "
+        "AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL) "
+        "ORDER BY data"
+    )
+
+
+def get_total_pendentes():
+    """Total monetário de todas as transações PENDENTES."""
+    r = db_query(
+        "SELECT COALESCE(SUM(valor_eur),0) FROM transacoes "
+        "WHERE status_liquidacao='PENDENTE' "
+        "AND tipo='Despesa' "
+        "AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)"
+    )
+    return r[0][0] if r else 0.0
 
 
 # ─────────────────────────────────────────────
@@ -372,9 +513,8 @@ def pagar_fatura(cartao_id, fatura_ref, usuario):
 def get_realizado_mes(mes_ano, tipo="Despesa",
                       categoria_pai=None, categoria_filho=None):
     """
-    Soma transacoes do mês por tipo ('Despesa' ou 'Receita').
-    Despesas incluem crédito pendente (regime de competência).
-    mes_ano = 'YYYY-MM'
+    Soma transacoes do mês por tipo (regime de competência).
+    Inclui PAGO + PENDENTE + PREVISTO para reflectir o comprometimento real.
     """
     ano, mes = mes_ano.split("-")
     params  = [tipo, mes, ano]
@@ -394,7 +534,6 @@ def get_realizado_mes(mes_ano, tipo="Despesa",
 
 
 def get_top_beneficiarios(mes_ano, tipo="Despesa", n=3):
-    """Top N beneficiários por tipo (Despesa ou Receita) no mês."""
     ano, mes = mes_ano.split("-")
     return db_query(
         """SELECT beneficiario, COALESCE(SUM(valor_eur),0) as total
@@ -410,14 +549,6 @@ def get_top_beneficiarios(mes_ano, tipo="Despesa", n=3):
 
 
 def get_saude_orcamento(mes_ano):
-    """
-    Saúde de cada meta com semáforo diferenciado por tipo_meta.
-
-    Despesa (gastar menos é bom):
-      verde < 80% | amarelo 80-100% | vermelho > 100%
-    Receita (receber mais é bom — lógica INVERTIDA):
-      verde >= 100% | amarelo 80-99% | vermelho < 80%
-    """
     metas = db_query(
         "SELECT categoria_pai, categoria_filho, beneficiario, "
         "valor_previsto, tipo_meta "
@@ -428,33 +559,20 @@ def get_saude_orcamento(mes_ano):
     resultado = []
     for cat_pai, cat_filho, benef, previsto, tipo_meta in metas:
         realizado = get_realizado_mes(
-            mes_ano,
-            tipo=tipo_meta,
+            mes_ano, tipo=tipo_meta,
             categoria_pai=cat_pai,
             categoria_filho=cat_filho if cat_filho else None
         )
         pct = (realizado / previsto * 100) if previsto > 0 else 0.0
-
         if tipo_meta == "Receita":
-            # Invertido: atingir/superar a meta é verde
-            if pct >= 100:    status = "verde"
-            elif pct >= 80:   status = "amarelo"
-            else:             status = "vermelho"
+            status = "verde" if pct >= 100 else "amarelo" if pct >= 80 else "vermelho"
         else:
-            # Despesa: ficar abaixo do limite é verde
-            if pct < 80:      status = "verde"
-            elif pct <= 100:  status = "amarelo"
-            else:             status = "vermelho"
-
+            status = "verde" if pct < 80 else "amarelo" if pct <= 100 else "vermelho"
         resultado.append({
-            "cat_pai":      cat_pai,
-            "cat_filho":    cat_filho,
-            "beneficiario": benef,
-            "previsto":     previsto,
-            "realizado":    realizado,
-            "pct":          pct,
-            "status":       status,
-            "tipo_meta":    tipo_meta,
+            "cat_pai": cat_pai, "cat_filho": cat_filho,
+            "beneficiario": benef, "previsto": previsto,
+            "realizado": realizado, "pct": pct,
+            "status": status, "tipo_meta": tipo_meta,
         })
     return resultado
 
@@ -491,12 +609,18 @@ with st.sidebar:
     st.markdown(f"### 👋 Olá, {st.session_state.display_name}!")
     st.caption(f"🕐 {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     st.divider()
+
+    # Alerta global de pendentes na sidebar
+    n_pend = len(get_pendentes_vencidos())
+    if n_pend > 0:
+        st.warning(f"⚠️ {n_pend} conta(s) vencida(s) a liquidar!")
+
     st.markdown("**Navegação rápida**")
     st.markdown("➕ **Lançar** → Registrar despesa ou receita")
-    st.markdown("📋 **Lançamentos** → Ver e apagar registros")
-    st.markdown("💰 **Saldos** → Ver dinheiro disponível")
+    st.markdown("📋 **Lançamentos** → Ver e liquidar")
+    st.markdown("💰 **Saldos** → Real vs Livre")
     st.markdown("💳 **Cartões** → Faturas e pagamentos")
-    st.markdown("🎯 **Metas** → Planejamento de orçamento")
+    st.markdown("🎯 **Metas** → Planejamento")
     st.markdown("📊 **Dashboard** → Saúde financeira")
     st.markdown("⚙️ **Gestão** → Categorias e contas")
     st.divider()
@@ -527,7 +651,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 # ══════════════════════════════════════════════
 with tab1:
     st.markdown("## ➕ Registrar uma Movimentação")
-    st.caption("Registre aqui qualquer entrada ou saída de dinheiro da sua família.")
+    st.caption("Registre entradas, saídas e compromissos futuros.")
     st.divider()
 
     cat_df       = db_df("SELECT id, nome, pai_id FROM categorias")
@@ -543,7 +667,7 @@ with tab1:
         st.markdown("""
         <div class="aviso-bloqueio">
         ⚠️ <strong>Nenhuma categoria cadastrada.</strong>
-        Vá até a aba <strong>⚙️ Gestão → Seção 1</strong> e adicione ao menos uma
+        Vá até <strong>⚙️ Gestão → Seção 1</strong> e adicione ao menos uma
         Categoria Principal antes de lançar uma transação.
         </div>
         """, unsafe_allow_html=True)
@@ -583,6 +707,36 @@ with tab1:
                                  help=f"BRL → EUR (taxa: {taxa_cambio:.4f})")
         with col3:
             data_lancamento = st.date_input("**Data**", value=datetime.now())
+
+        # ── Status de liquidação ────────────────────────────────────
+        data_str_preview = data_lancamento.strftime("%d/%m/%Y")
+        status_auto = determinar_status_liquidacao(data_str_preview)
+
+        st.markdown("---")
+        col_liq1, col_liq2 = st.columns([2, 2])
+        with col_liq1:
+            if status_auto == "PREVISTO":
+                st.markdown(
+                    f'<span class="badge-previsto">🔵 PREVISTO — data futura, sem impacto no saldo real</span>',
+                    unsafe_allow_html=True)
+                status_liq_final = "PREVISTO"
+            else:
+                opcoes_status = ["PAGO — já efectuado", "PENDENTE — venceu mas ainda não pago"]
+                status_choice = st.radio(
+                    "**Status de liquidação**", opcoes_status,
+                    horizontal=True,
+                    help="PAGO afecta o Saldo Real imediatamente. PENDENTE fica como alerta.")
+                status_liq_final = "PAGO" if "PAGO" in status_choice else "PENDENTE"
+
+        with col_liq2:
+            if status_auto == "PREVISTO":
+                st.caption("💡 Datas futuras são automaticamente marcadas como PREVISTO. "
+                           "O saldo real só será afectado ao liquidar.")
+            elif status_liq_final == "PENDENTE":
+                st.markdown(
+                    '<div class="aviso-pendente">⚠️ Este lançamento ficará como pendente. '
+                    'Use o botão ✅ na aba Lançamentos para liquidar quando pagar.</div>',
+                    unsafe_allow_html=True)
 
         st.markdown("---")
         col4, col5 = st.columns(2)
@@ -633,7 +787,9 @@ with tab1:
                 st.error("O valor não pode ser zero.")
             else:
                 v_eur    = val * taxa_cambio if moeda == "BRL" else val
-                data_str = data_lancamento.strftime("%d/%m/%Y")
+                data_str = data_str_preview
+                data_liq = data_str if status_liq_final == "PAGO" else None
+
                 if forma_pag == "Cartão de Crédito" and cartao_sel_id:
                     dia_fech = db_query(
                         "SELECT dia_fechamento FROM cartoes WHERE id=?",
@@ -643,12 +799,14 @@ with tab1:
                         """INSERT INTO transacoes
                            (data,categoria_pai,categoria_filho,beneficiario,
                             fonte,valor_eur,tipo,nota,usuario,
-                            forma_pagamento,cartao_id,fatura_ref,status_cartao)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            forma_pagamento,cartao_id,fatura_ref,status_cartao,
+                            status_liquidacao)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (data_str, sel_pai, sel_filho, beneficiario,
                          cartao_sel_nome, v_eur, tipo_val, nota,
                          st.session_state.display_name,
-                         "Cartão de Crédito", cartao_sel_id, fatura_ref, "pendente"))
+                         "Cartão de Crédito", cartao_sel_id,
+                         fatura_ref, "pendente", "PAGO"))
                     st.session_state.ver += 1
                     st.success(f"✅ €{v_eur:.2f} no cartão **{cartao_sel_nome}** — fatura {fatura_ref}.")
                     st.rerun()
@@ -656,12 +814,18 @@ with tab1:
                     db_execute(
                         """INSERT INTO transacoes
                            (data,categoria_pai,categoria_filho,beneficiario,
-                            fonte,valor_eur,tipo,nota,usuario,forma_pagamento)
-                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                            fonte,valor_eur,tipo,nota,usuario,forma_pagamento,
+                            status_liquidacao,data_liquidacao)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (data_str, sel_pai, sel_filho, beneficiario,
                          fonte, v_eur, tipo_val, nota,
-                         st.session_state.display_name, "Dinheiro/Débito"))
+                         st.session_state.display_name, "Dinheiro/Débito",
+                         status_liq_final, data_liq))
                     st.session_state.ver += 1
+                    if status_liq_final == "PREVISTO":
+                        st.info(f"🔵 Lançamento PREVISTO registado: €{v_eur:.2f} em {data_str}")
+                    elif status_liq_final == "PENDENTE":
+                        st.warning(f"⏳ Lançamento PENDENTE registado: €{v_eur:.2f} — lembre de liquidar!")
                     st.rerun()
 
 
@@ -670,30 +834,44 @@ with tab1:
 # ══════════════════════════════════════════════
 with tab2:
     st.markdown("## 📋 Histórico de Lançamentos")
-    st.caption("Visualize, filtre, exporte ou remova registros.")
+    st.caption("Visualize, filtre, exporte, liquide ou remova registros.")
     st.divider()
+
+    # ── Alerta de pendentes vencidos ──────────
+    pend_list = get_pendentes_vencidos()
+    if pend_list:
+        total_pend_v = sum(r[3] for r in pend_list if r[4] == "Despesa")
+        st.markdown(
+            f'<div class="aviso-pendente">⚠️ <strong>Atenção: Contas Vencidas</strong> — '
+            f'{len(pend_list)} transação(ões) PENDENTE(S) não liquidada(s). '
+            f'Total em aberto: <strong>€{total_pend_v:,.2f}</strong>. '
+            f'Clique em ✅ abaixo para liquidar.</div>',
+            unsafe_allow_html=True)
 
     fontes_row2  = db_query("SELECT nome FROM fontes")
     cartoes_row2 = db_query("SELECT nome FROM cartoes")
     todas_fontes = (["Todas"] + [r[0] for r in fontes_row2]
                     + [r[0] for r in cartoes_row2])
 
-    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
     with col_f1:
-        filtro_tipo  = st.selectbox("Tipo", ["Todos","Despesa","Receita"])
+        filtro_tipo   = st.selectbox("Tipo",   ["Todos","Despesa","Receita"])
     with col_f2:
-        filtro_fonte = st.selectbox("Conta/Cartão", todas_fontes)
+        filtro_fonte  = st.selectbox("Conta",  todas_fontes)
     with col_f3:
-        filtro_forma = st.selectbox("Forma", ["Todas","Dinheiro/Débito","Cartão de Crédito"])
+        filtro_forma  = st.selectbox("Forma",  ["Todas","Dinheiro/Débito","Cartão de Crédito"])
     with col_f4:
-        filtro_busca = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
+        filtro_status = st.selectbox("Status", ["Todos","PAGO","PENDENTE","PREVISTO"])
+    with col_f5:
+        filtro_busca  = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
 
     df_hist = db_df("SELECT * FROM transacoes ORDER BY id DESC")
 
     if not df_hist.empty:
-        if filtro_tipo  != "Todos":  df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
-        if filtro_fonte != "Todas":  df_hist = df_hist[df_hist['fonte'] == filtro_fonte]
-        if filtro_forma != "Todas":  df_hist = df_hist[df_hist['forma_pagamento'] == filtro_forma]
+        if filtro_tipo   != "Todos":    df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
+        if filtro_fonte  != "Todas":    df_hist = df_hist[df_hist['fonte'] == filtro_fonte]
+        if filtro_forma  != "Todas":    df_hist = df_hist[df_hist['forma_pagamento'] == filtro_forma]
+        if filtro_status != "Todos":    df_hist = df_hist[df_hist['status_liquidacao'] == filtro_status]
         if filtro_busca:
             mask = (df_hist['nota'].str.contains(filtro_busca, case=False, na=False) |
                     df_hist['categoria_pai'].str.contains(filtro_busca, case=False, na=False) |
@@ -702,6 +880,7 @@ with tab2:
 
     st.caption(f"📌 {len(df_hist)} registro(s)")
 
+    # ── Exportação ─────────────────────────────
     if not df_hist.empty:
         col_exp1, col_exp2, _ = st.columns([1, 1, 4])
         csv_bytes = df_hist.to_csv(index=False).encode('utf-8-sig')
@@ -718,6 +897,38 @@ with tab2:
 
     st.markdown("---")
 
+    # ── Botões de liquidação para PENDENTES/PREVISTOS ────
+    df_liquidaveis = df_hist[
+        df_hist['status_liquidacao'].isin(['PENDENTE','PREVISTO'])
+    ] if not df_hist.empty else pd.DataFrame()
+
+    if not df_liquidaveis.empty:
+        st.markdown("**✅ Liquidar transações pendentes / previstas:**")
+        for _, row in df_liquidaveis.iterrows():
+            tid    = int(row['id'])
+            sliq   = row['status_liquidacao']
+            badge  = f'<span class="badge-pendente">PENDENTE</span>' if sliq == 'PENDENTE' \
+                     else f'<span class="badge-previsto">PREVISTO</span>'
+            col_a, col_b = st.columns([5, 1])
+            with col_a:
+                st.markdown(
+                    f'<div class="liquidar-row">'
+                    f'{badge} &nbsp; {row["data"]} &nbsp;|&nbsp; '
+                    f'{row["categoria_pai"]}/{row["categoria_filho"] or "—"} &nbsp;|&nbsp; '
+                    f'{row["beneficiario"] or "—"} &nbsp;|&nbsp; '
+                    f'<strong>€{float(row["valor_eur"]):,.2f}</strong> ({row["tipo"]})'
+                    f'</div>',
+                    unsafe_allow_html=True)
+            with col_b:
+                if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}",
+                             use_container_width=True, type="primary"):
+                    liquidar_transacao(tid, st.session_state.display_name)
+                    st.session_state.ver += 1
+                    st.toast(f"✅ Transação #{tid} liquidada! Saldo real actualizado.", icon="✅")
+                    st.rerun()
+        st.markdown("---")
+
+    # ── Tabela completa ──────────────────────────
     if not df_hist.empty:
         df_edit = df_hist.copy()
         df_edit.insert(0, "Remover", False)
@@ -725,13 +936,19 @@ with tab2:
             'id':'ID','data':'Data','categoria_pai':'Categoria',
             'categoria_filho':'Detalhamento','beneficiario':'Beneficiário',
             'fonte':'Conta/Cartão','valor_eur':'Valor (€)','tipo':'Tipo',
-            'nota':'Observação','usuario':'Registrado por',
-            'forma_pagamento':'Forma Pag.','fatura_ref':'Fatura','status_cartao':'Status'})
+            'nota':'Observação','usuario':'Por',
+            'forma_pagamento':'Forma','fatura_ref':'Fatura',
+            'status_cartao':'St.Cartão',
+            'status_liquidacao':'Liquidação','data_liquidacao':'Dt.Liq.'})
         editor = st.data_editor(
             df_display, key=f"ed_{st.session_state.ver}",
             use_container_width=True,
-            column_config={"Remover": st.column_config.CheckboxColumn("🗑️"),
-                           "Valor (€)": st.column_config.NumberColumn(format="€ %.2f")})
+            column_config={
+                "Remover":    st.column_config.CheckboxColumn("🗑️"),
+                "Valor (€)":  st.column_config.NumberColumn(format="€ %.2f"),
+                "Liquidação": st.column_config.SelectboxColumn(
+                    options=["PAGO","PENDENTE","PREVISTO"]),
+            })
         if st.button("🗑️ Confirmar Remoção", type="secondary", key="rm_trans"):
             ids_rm = editor[editor["Remover"] == True]["ID"].tolist()
             if not ids_rm:
@@ -751,7 +968,9 @@ with tab2:
 # ══════════════════════════════════════════════
 with tab3:
     st.markdown("## 💰 Saldos por Conta")
-    st.caption("Saldo em Conta = débito/dinheiro. Patrimônio = Saldo − faturas pendentes.")
+    st.caption(
+        "**Saldo Real** = dinheiro já efectivado (PAGO). "
+        "**Saldo Livre** = Saldo Real − compromissos futuros (PENDENTE + PREVISTO + cartão).")
     st.divider()
 
     fontes_saldo = [r[0] for r in db_query("SELECT nome FROM fontes")]
@@ -759,66 +978,80 @@ with tab3:
     if not fontes_saldo:
         st.info("💡 Vá até ⚙️ Gestão para cadastrar suas contas bancárias.")
     else:
-        total_saldo = 0.0
-        total_pl    = 0.0
+        total_real  = 0.0
+        total_livre = 0.0
         cols_saldo  = st.columns(min(len(fontes_saldo), 3))
 
         for i, f in enumerate(fontes_saldo):
-            saldo   = calcular_saldo_conta(f)
-            pl      = calcular_patrimonio_liquido(f)
-            total_saldo += saldo
-            total_pl    += pl
+            saldo_r = calcular_saldo_real(f)
+            saldo_l = calcular_saldo_livre(f)
+            comp    = calcular_comprometido(f)
+            total_real  += saldo_r
+            total_livre += saldo_l
 
-            passivo_r = db_query(
-                "SELECT SUM(t.valor_eur) FROM transacoes t "
+            # Passivo cartão
+            passivo = db_query(
+                "SELECT COALESCE(SUM(t.valor_eur),0) FROM transacoes t "
                 "JOIN cartoes c ON t.cartao_id=c.id "
-                "WHERE c.conta_pagamento=? AND t.status_cartao='pendente'", (f,))
-            passivo = (passivo_r[0][0] or 0.0) if passivo_r else 0.0
-
-            classe_s  = "saldo-card-positivo" if saldo >= 0 else "saldo-card-negativo"
-            classe_vs = "valor-positivo"       if saldo >= 0 else "valor-negativo"
-            sinal_s   = "+" if saldo > 0 else ""
-            classe_pl = "valor-positivo"       if pl >= 0    else "valor-negativo"
-            sinal_pl  = "+" if pl > 0 else ""
+                "WHERE c.conta_pagamento=? AND t.status_cartao='pendente'", (f,))[0][0]
 
             ini_r   = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (f,))
             ini     = ini_r[0][0] if ini_r else 0.0
             ini_txt = f"&nbsp;|&nbsp; Inicial: €{ini:,.2f}" if ini != 0 else ""
 
-            rec_v = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Receita' AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)", (f,))[0][0] or 0.0
-            des_v = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Despesa' AND (forma_pagamento='Dinheiro/Débito' OR forma_pagamento IS NULL)", (f,))[0][0] or 0.0
+            cls_r  = "saldo-card-positivo" if saldo_r >= 0 else "saldo-card-negativo"
+            cls_vr = "valor-positivo"       if saldo_r >= 0 else "valor-negativo"
+            sinal_r = "+" if saldo_r > 0 else ""
+
+            cls_vl  = "valor-positivo" if saldo_l >= 0 else "valor-carmim"
+            sinal_l = "+" if saldo_l > 0 else ""
+
+            risco_txt = ""
+            if saldo_l < 0:
+                risco_txt = "<div style='margin-top:6px;font-size:0.8rem;color:#9b1c1c;font-weight:700;'>🚨 RISCO DE INSOLVÊNCIA</div>"
 
             with cols_saldo[i % 3]:
                 st.markdown(f"""
-                <div class="saldo-card {classe_s}">
+                <div class="saldo-card {cls_r}">
                     <h3>🏦 {f}</h3>
-                    <div class="{classe_vs}">{sinal_s}€ {saldo:,.2f}</div>
-                    <div class="detalhe">
-                        Entradas: €{rec_v:,.2f} &nbsp;|&nbsp; Saídas: €{des_v:,.2f}{ini_txt}
+                    <div class="{cls_vr}">{sinal_r}€ {saldo_r:,.2f}</div>
+                    <div class="detalhe">Saldo Real (PAGO){ini_txt}</div>
+                    <div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;">
+                        <div class="{cls_vl}" style="font-size:1.4rem;">{sinal_l}€ {saldo_l:,.2f}</div>
+                        <div class="detalhe">Saldo Livre (Real − Compromissos)</div>
+                        {f"<div class='detalhe' style='color:#ef4444;margin-top:4px;'>Comprometido: €{comp:,.2f}" +
+                         (f" | Cartão: €{passivo:,.2f}" if passivo > 0 else "") + "</div>"
+                         if comp != 0 or passivo > 0 else ""}
                     </div>
-                    {"<div class='detalhe' style='color:#ef4444;margin-top:6px;'>⚠️ Crédito pendente: −€" + f"{passivo:,.2f}</div>" if passivo > 0 else ""}
-                    {"<div style='margin-top:8px;font-size:0.85rem;'>PL: <strong class='" + classe_pl + "'>" + sinal_pl + "€ " + f"{pl:,.2f}</strong></div>" if passivo > 0 else ""}
+                    {risco_txt}
                 </div>""", unsafe_allow_html=True)
 
         st.divider()
+
+        # Cards de totais
         col_tot1, col_tot2 = st.columns(2)
         with col_tot1:
-            cls_ts = "valor-positivo" if total_saldo >= 0 else "valor-negativo"
-            s_ts   = "+" if total_saldo > 0 else ""
+            cls_tr = "valor-positivo" if total_real >= 0 else "valor-negativo"
+            s_tr   = "+" if total_real > 0 else ""
             st.markdown(f"""<div class="saldo-card" style="background:#1e293b;border-left-color:#3b82f6;">
-                <h3 style="color:#94a3b8;">🏦 SALDO TOTAL EM CONTA</h3>
-                <div class="{cls_ts}" style="font-size:2rem;">{s_ts}€ {total_saldo:,.2f}</div>
-                <div class="detalhe" style="color:#64748b;">Dinheiro real disponível</div>
+                <h3 style="color:#94a3b8;">🏦 SALDO REAL TOTAL</h3>
+                <div class="{cls_tr}" style="font-size:2rem;">{s_tr}€ {total_real:,.2f}</div>
+                <div class="detalhe" style="color:#64748b;">Dinheiro efectivamente disponível (PAGO)</div>
             </div>""", unsafe_allow_html=True)
         with col_tot2:
-            cls_pl = "valor-positivo" if total_pl >= 0 else "valor-negativo"
-            s_pl   = "+" if total_pl > 0 else ""
-            st.markdown(f"""<div class="saldo-card" style="background:#1e293b;border-left-color:#8b5cf6;">
-                <h3 style="color:#94a3b8;">📊 PATRIMÔNIO LÍQUIDO</h3>
-                <div class="{cls_pl}" style="font-size:2rem;">{s_pl}€ {total_pl:,.2f}</div>
-                <div class="detalhe" style="color:#64748b;">Saldo − faturas crédito pendentes</div>
+            is_insol = total_livre < 0
+            card_cls = "saldo-card-insolvencia" if is_insol else ""
+            cls_tl   = "valor-carmim" if is_insol else "valor-positivo" if total_livre >= 0 else "valor-negativo"
+            s_tl     = "+" if total_livre > 0 else ""
+            insol_msg = "<div class='detalhe' style='color:#9b1c1c;font-weight:700;margin-top:6px;'>🚨 RISCO DE INSOLVÊNCIA</div>" if is_insol else ""
+            st.markdown(f"""<div class="saldo-card {card_cls}" style="{'background:#fef2f2;' if is_insol else 'background:#1e293b;'}border-left-color:{'#9b1c1c' if is_insol else '#10b981'};">
+                <h3 style="color:{'#9b1c1c' if is_insol else '#94a3b8'};">📊 DISPONIBILIDADE REAL</h3>
+                <div class="{cls_tl}" style="font-size:2rem;">{s_tl}€ {total_livre:,.2f}</div>
+                <div class="detalhe" style="color:{'#9b1c1c' if is_insol else '#64748b'};">Saldo Real − todos os compromissos</div>
+                {insol_msg}
             </div>""", unsafe_allow_html=True)
 
+        # ── Saldos iniciais ──────────────────────────────────────────
         st.divider()
         st.markdown("#### 🔧 Ajustar Saldo Inicial por Conta")
         for f in fontes_saldo:
@@ -870,7 +1103,7 @@ with tab4:
                         db_execute(
                             "INSERT INTO cartoes (nome,limite,dia_fechamento,dia_vencimento,conta_pagamento) VALUES (?,?,?,?,?)",
                             (n_cartao.strip(), limite_c, int(dia_fech), int(dia_venc), conta_pag_sel))
-                        st.success(f"Cartão **{n_cartao}** cadastrado! Limite: €{limite_c:,.2f}")
+                        st.success(f"Cartão **{n_cartao}** cadastrado!")
                         st.session_state.ver += 1
                         st.rerun()
                     except Exception:
@@ -916,11 +1149,11 @@ with tab4:
                 st.caption("  Nenhuma compra registada neste cartão ainda.")
             else:
                 for _, fat in faturas_df.iterrows():
-                    fat_ref       = fat['fatura_ref']
-                    fat_total     = float(fat['total'])
-                    fat_compras   = int(fat['n_compras'])
-                    fat_pendente  = bool(fat['tem_pendente'])
-                    fat_pend_tot  = calcular_total_fatura(cid, fat_ref)
+                    fat_ref      = fat['fatura_ref']
+                    fat_total    = float(fat['total'])
+                    fat_compras  = int(fat['n_compras'])
+                    fat_pendente = bool(fat['tem_pendente'])
+                    fat_pend_tot = calcular_total_fatura(cid, fat_ref)
                     css_fat = "fatura-aberta" if fat_pendente else "fatura-fechada"
                     badge   = "🟠 ABERTA"    if fat_pendente else "✅ PAGA"
                     st.markdown(f"""
@@ -946,7 +1179,7 @@ with tab4:
                                 column_config={"Valor (€)": st.column_config.NumberColumn(format="€ %.2f")})
 
                     if fat_pendente:
-                        saldo_c = calcular_saldo_conta(conta_pag)
+                        saldo_c = calcular_saldo_real(conta_pag)
                         col_pb1, col_pb2 = st.columns([2, 3])
                         with col_pb1:
                             if st.button(f"💸 Pagar Fatura {fat_ref} — €{fat_pend_tot:,.2f}",
@@ -961,7 +1194,7 @@ with tab4:
                                     st.error(f"❌ {e}")
                         with col_pb2:
                             if saldo_c < fat_pend_tot:
-                                st.warning(f"⚠️ Saldo em {conta_pag}: €{saldo_c:,.2f} (insuficiente)")
+                                st.warning(f"⚠️ Saldo real em {conta_pag}: €{saldo_c:,.2f} (insuficiente)")
 
             trans_count = db_query("SELECT COUNT(*) FROM transacoes WHERE cartao_id=?", (cid,))[0][0]
             if trans_count == 0:
@@ -971,11 +1204,9 @@ with tab4:
                     st.session_state.ver += 1
                     st.rerun()
             else:
-                st.caption(f"🔒 {nome_c} tem {trans_count} transação(ões) vinculada(s) — remova-as na aba 📋 primeiro.")
+                st.caption(f"🔒 {nome_c} tem {trans_count} transação(ões) — remova-as na aba 📋 primeiro.")
             st.markdown("---")
 
-
-# ══════════════════════════════════════════════
 
 # ══════════════════════════════════════════════
 #  TAB 5 — METAS (PLANEJAMENTO DE ORÇAMENTO)
@@ -984,11 +1215,10 @@ with tab5:
     st.markdown("## 🎯 Planejamento de Metas")
     st.caption(
         "Defina metas de Despesa (teto de gastos) e de Receita (piso esperado) "
-        "por categoria e mês. As metas alimentam o Dashboard de Saúde Financeira."
+        "por categoria e mês."
     )
     st.divider()
 
-    # ── Seleção do mês ────────────────────────
     hoje = datetime.now()
     col_m1, col_m2, col_m3 = st.columns([1, 1, 3])
     with col_m1:
@@ -999,19 +1229,15 @@ with tab5:
                                    value=hoje.month, step=1, key="meta_mes")
     mes_ano_sel = f"{int(ano_sel):04d}-{int(mes_sel):02d}"
     st.caption(f"📅 Editando metas de: **{mes_ano_sel}**")
-
     st.divider()
 
-    # ── Formulário de nova meta ───────────────
-    st.markdown('''<div class="secao-titulo">➕ Adicionar / Actualizar Meta</div>''',
-                unsafe_allow_html=True)
-    st.markdown('''<div class="secao-sub">Se já existe meta para esta combinação, o valor será actualizado.</div>''',
-                unsafe_allow_html=True)
+    st.markdown('<div class="secao-titulo">➕ Adicionar / Actualizar Meta</div>', unsafe_allow_html=True)
+    st.markdown('<div class="secao-sub">Se já existe meta para esta combinação, o valor será actualizado.</div>', unsafe_allow_html=True)
 
-    cat_df_m   = db_df("SELECT id, nome, pai_id FROM categorias")
-    pai_opts_m = cat_df_m[cat_df_m['pai_id'].isna()]['nome'].tolist()
+    cat_df_m    = db_df("SELECT id, nome, pai_id FROM categorias")
+    pai_opts_m  = cat_df_m[cat_df_m['pai_id'].isna()]['nome'].tolist()
     benef_row_m = db_query("SELECT nome FROM beneficiarios ORDER BY nome")
-    benef_m    = ["(Todos)"] + [r[0] for r in benef_row_m]
+    benef_m     = ["(Todos)"] + [r[0] for r in benef_row_m]
 
     if not pai_opts_m:
         st.warning("⚠️ Cadastre categorias em ⚙️ Gestão antes de definir metas.")
@@ -1019,31 +1245,18 @@ with tab5:
         with st.form("f_meta", clear_on_submit=True):
             col_m_a, col_m_b, col_m_c = st.columns(3)
             with col_m_a:
-                # Tipo de meta — determina a lógica do semáforo
                 meta_tipo = st.radio(
-                    "**Tipo de Meta**",
-                    ["💸 Despesa", "💵 Receita"],
-                    horizontal=True,
-                    help=(
-                        "Despesa: define o teto máximo de gastos (verde = abaixo do limite). "
-                        "Receita: define o piso mínimo esperado (verde = acima da meta)."
-                    )
-                )
+                    "**Tipo de Meta**", ["💸 Despesa", "💵 Receita"], horizontal=True,
+                    help="Despesa: teto máximo. Receita: piso mínimo esperado.")
                 meta_tipo_val = "Despesa" if "Despesa" in meta_tipo else "Receita"
-
                 meta_pai = st.selectbox("Categoria Principal", pai_opts_m)
                 pid_m = int(cat_df_m[cat_df_m['nome'] == meta_pai]['id'].iloc[0])
                 filhos_m = cat_df_m[cat_df_m['pai_id'] == pid_m]['nome'].tolist()
                 meta_filho = st.selectbox("Detalhamento", ["(Todos)"] + filhos_m)
-
             with col_m_b:
                 meta_benef = st.selectbox("Beneficiário", benef_m)
                 meta_valor = st.number_input(
-                    "Valor previsto (€)",
-                    min_value=0.01, step=10.0, format="%.2f", value=100.0,
-                    help="Para Despesa: limite máximo. Para Receita: mínimo esperado."
-                )
-
+                    "Valor previsto (€)", min_value=0.01, step=10.0, format="%.2f", value=100.0)
             with col_m_c:
                 st.markdown("<br><br><br><br>", unsafe_allow_html=True)
                 submitted_meta = st.form_submit_button(
@@ -1062,36 +1275,27 @@ with tab5:
                         "UPDATE orcamentos SET valor_previsto=? "
                         "WHERE mes_ano=? AND categoria_pai=? "
                         "AND categoria_filho=? AND beneficiario=? AND tipo_meta=?",
-                        (meta_valor, mes_ano_sel, meta_pai,
-                         filho_db, benef_db, meta_tipo_val))
+                        (meta_valor, mes_ano_sel, meta_pai, filho_db, benef_db, meta_tipo_val))
                     log_audit("META_UPDATE",
                               f"mes={mes_ano_sel} tipo={meta_tipo_val} "
-                              f"cat={meta_pai}/{filho_db} benef={benef_db} valor={meta_valor}",
+                              f"cat={meta_pai}/{filho_db} valor={meta_valor}",
                               st.session_state.display_name)
-                    st.success(
-                        f"Meta actualizada: [{meta_tipo_val}] "
-                        f"{meta_pai}/{meta_filho or 'Todos'} → €{meta_valor:.2f}")
+                    st.success(f"Meta actualizada: [{meta_tipo_val}] {meta_pai}/{meta_filho or 'Todos'} → €{meta_valor:.2f}")
                 else:
                     db_execute(
                         "INSERT INTO orcamentos "
-                        "(mes_ano,categoria_pai,categoria_filho,"
-                        "beneficiario,valor_previsto,tipo_meta) "
+                        "(mes_ano,categoria_pai,categoria_filho,beneficiario,valor_previsto,tipo_meta) "
                         "VALUES (?,?,?,?,?,?)",
-                        (mes_ano_sel, meta_pai, filho_db,
-                         benef_db, meta_valor, meta_tipo_val))
+                        (mes_ano_sel, meta_pai, filho_db, benef_db, meta_valor, meta_tipo_val))
                     log_audit("META_INSERT",
                               f"mes={mes_ano_sel} tipo={meta_tipo_val} "
-                              f"cat={meta_pai}/{filho_db} benef={benef_db} valor={meta_valor}",
+                              f"cat={meta_pai}/{filho_db} valor={meta_valor}",
                               st.session_state.display_name)
-                    st.success(
-                        f"Meta criada: [{meta_tipo_val}] "
-                        f"{meta_pai}/{meta_filho or 'Todos'} → €{meta_valor:.2f}")
+                    st.success(f"Meta criada: [{meta_tipo_val}] {meta_pai}/{meta_filho or 'Todos'} → €{meta_valor:.2f}")
                 st.session_state.ver += 1
                 st.rerun()
 
     st.divider()
-
-    # ── Tabela de metas do mês (separada por tipo) ────────────────
     st.markdown(f"**Metas definidas para {mes_ano_sel}:**")
 
     metas_df = db_df(
@@ -1104,83 +1308,67 @@ with tab5:
     if metas_df.empty:
         st.info(f"Nenhuma meta definida para {mes_ano_sel}. Use o formulário acima.")
     else:
-        # Calcula o realizado para cada linha respeitando o tipo_meta
         metas_df['realizado'] = metas_df.apply(
             lambda r: get_realizado_mes(
-                mes_ano_sel,
-                tipo=r['tipo_meta'],
+                mes_ano_sel, tipo=r['tipo_meta'],
                 categoria_pai=r['categoria_pai'],
                 categoria_filho=r['categoria_filho'] if r['categoria_filho'] else None
             ), axis=1)
         metas_df['% uso'] = metas_df.apply(
             lambda r: round(r['realizado'] / r['valor_previsto'] * 100, 1)
             if r['valor_previsto'] > 0 else 0.0, axis=1)
-
         metas_df = metas_df.rename(columns={
-            'tipo_meta':      'Tipo',
-            'categoria_pai':  'Categoria',
-            'categoria_filho':'Detalhamento',
-            'beneficiario':   'Beneficiário',
-            'valor_previsto': 'Previsto (€)',
-            'realizado':      'Realizado (€)'})
-
+            'tipo_meta': 'Tipo', 'categoria_pai': 'Categoria',
+            'categoria_filho': 'Detalhamento', 'beneficiario': 'Beneficiário',
+            'valor_previsto': 'Previsto (€)', 'realizado': 'Realizado (€)'})
         metas_df.insert(0, "Remover", False)
         ed_metas = st.data_editor(
-            metas_df,
-            key=f"ed_metas_{st.session_state.ver}",
+            metas_df, key=f"ed_metas_{st.session_state.ver}",
             use_container_width=True,
             column_config={
                 "Remover":       st.column_config.CheckboxColumn("🗑️"),
                 "Previsto (€)":  st.column_config.NumberColumn(format="€ %.2f"),
                 "Realizado (€)": st.column_config.NumberColumn(format="€ %.2f"),
                 "% uso":         st.column_config.NumberColumn(format="%.1f %%"),
-            }
-        )
-
+            })
         if st.button("🗑️ Remover Metas Selecionadas", key="rm_metas"):
             ids_rm_m = ed_metas[ed_metas["Remover"] == True]["id"].tolist()
             if not ids_rm_m:
                 st.warning("Selecione pelo menos uma meta.")
             else:
                 ph = ",".join(["?"] * len(ids_rm_m))
-                db_execute(f"DELETE FROM orcamentos WHERE id IN ({ph})",
-                           tuple(ids_rm_m))
-                log_audit("META_DELETE", f"ids={ids_rm_m}",
-                          st.session_state.display_name)
+                db_execute(f"DELETE FROM orcamentos WHERE id IN ({ph})", tuple(ids_rm_m))
+                log_audit("META_DELETE", f"ids={ids_rm_m}", st.session_state.display_name)
                 st.success(f"{len(ids_rm_m)} meta(s) removida(s).")
                 st.session_state.ver += 1
                 st.rerun()
 
-        # ── Totais por tipo ───────────────────────────────────────
         st.divider()
         col_tot_d, col_tot_r = st.columns(2)
-
         df_desp = metas_df[metas_df['Tipo'] == 'Despesa']
         df_rec  = metas_df[metas_df['Tipo'] == 'Receita']
-
         with col_tot_d:
             st.markdown("**💸 Despesas**")
             prev_d = df_desp['Previsto (€)'].sum() if not df_desp.empty else 0.0
             real_d = df_desp['Realizado (€)'].sum() if not df_desp.empty else 0.0
             delta_d = prev_d - real_d
-            col_d1, col_d2, col_d3 = st.columns(3)
-            col_d1.metric("Planejado",  f"€ {prev_d:,.2f}")
-            col_d2.metric("Realizado",  f"€ {real_d:,.2f}")
-            col_d3.metric("Margem",     f"€ {delta_d:,.2f}",
-                          delta=f"€ {delta_d:,.2f}",
-                          delta_color="normal" if delta_d >= 0 else "inverse")
-
+            c1,c2,c3 = st.columns(3)
+            c1.metric("Planejado",  f"€ {prev_d:,.2f}")
+            c2.metric("Realizado",  f"€ {real_d:,.2f}")
+            c3.metric("Margem",     f"€ {delta_d:,.2f}",
+                      delta=f"€ {delta_d:,.2f}",
+                      delta_color="normal" if delta_d >= 0 else "inverse")
         with col_tot_r:
             st.markdown("**💵 Receitas**")
             prev_r = df_rec['Previsto (€)'].sum() if not df_rec.empty else 0.0
             real_r = df_rec['Realizado (€)'].sum() if not df_rec.empty else 0.0
-            delta_r = real_r - prev_r   # Receita: realizado > previsto é positivo
-            col_r1, col_r2, col_r3 = st.columns(3)
-            col_r1.metric("Meta",      f"€ {prev_r:,.2f}")
-            col_r2.metric("Realizado", f"€ {real_r:,.2f}")
-            col_r3.metric("Superávit", f"€ {delta_r:,.2f}",
-                          delta=f"€ {delta_r:,.2f}",
-                          delta_color="normal" if delta_r >= 0 else "inverse")
+            delta_r = real_r - prev_r
+            c1,c2,c3 = st.columns(3)
+            c1.metric("Meta",      f"€ {prev_r:,.2f}")
+            c2.metric("Realizado", f"€ {real_r:,.2f}")
+            c3.metric("Superávit", f"€ {delta_r:,.2f}",
+                      delta=f"€ {delta_r:,.2f}",
+                      delta_color="normal" if delta_r >= 0 else "inverse")
 
 
 # ══════════════════════════════════════════════
@@ -1188,11 +1376,11 @@ with tab5:
 # ══════════════════════════════════════════════
 with tab6:
     st.markdown("## 📊 Dashboard de Saúde Financeira")
-    st.caption("Painel em tempo real — compare o planejado com o realizado e identifique desvios.")
+    st.caption("Painel em tempo real — liquidez, orçamento e saúde financeira.")
     st.divider()
 
     hoje_d = datetime.now()
-    col_d1, col_d2, col_d3 = st.columns([1, 1, 4])
+    col_d1, col_d2, _ = st.columns([1, 1, 4])
     with col_d1:
         dash_ano = st.number_input("Ano", min_value=2020, max_value=2100,
                                     value=hoje_d.year, step=1, key="dash_ano")
@@ -1202,28 +1390,91 @@ with tab6:
     dash_mes_ano = f"{int(dash_ano):04d}-{int(dash_mes):02d}"
     ano_d, mes_d = dash_mes_ano.split("-")
 
-    # ── Indicadores Globais ────────────────────
-    st.markdown(f"### 🌍 Visão Geral — {dash_mes_ano}")
+    # ── BLOCO 1: Liquidez ──────────────────────
+    st.markdown(f"### 💧 Liquidez — {dash_mes_ano}")
 
-    # Totais de despesa
+    fontes_dash = [r[0] for r in db_query("SELECT nome FROM fontes")]
+    total_real_dash  = sum(calcular_saldo_real(f)  for f in fontes_dash)
+    total_livre_dash = sum(calcular_saldo_livre(f) for f in fontes_dash)
+    total_comp_dash  = sum(calcular_comprometido(f) for f in fontes_dash)
+    total_pend_dash  = get_total_pendentes()
+    risco_global     = total_livre_dash < 0
+
+    # Alerta de insolvência
+    if risco_global:
+        st.markdown(
+            f'<div class="aviso-insolvencia">🚨 <strong>ALERTA: RISCO DE INSOLVÊNCIA</strong> — '
+            f'A Disponibilidade Real é de <strong>€{total_livre_dash:,.2f}</strong>. '
+            f'Os compromissos futuros superam o saldo disponível.</div>',
+            unsafe_allow_html=True)
+
+    # Alerta de pendentes
+    if total_pend_dash > 0:
+        pend_count = len(get_pendentes_vencidos())
+        st.markdown(
+            f'<div class="aviso-pendente">⏳ <strong>Atenção: Contas Vencidas</strong> — '
+            f'{pend_count} transação(ões) PENDENTE(S) | '
+            f'Total: <strong>€{total_pend_dash:,.2f}</strong>. '
+            f'Aceda à aba 📋 Lançamentos para liquidar.</div>',
+            unsafe_allow_html=True)
+
+    col_lq1, col_lq2, col_lq3, col_lq4 = st.columns(4)
+    with col_lq1:
+        cls_r2 = "valor-positivo" if total_real_dash >= 0 else "valor-negativo"
+        s_r2   = "+" if total_real_dash > 0 else ""
+        st.markdown(f"""<div class="saldo-card">
+            <h3>🏦 Saldo Real</h3>
+            <div class="{cls_r2}">€ {total_real_dash:,.2f}</div>
+            <div class="detalhe">Dinheiro já efectivado (PAGO)</div>
+        </div>""", unsafe_allow_html=True)
+    with col_lq2:
+        cls_comp = "valor-neutro" if total_comp_dash > 0 else "valor-positivo"
+        st.markdown(f"""<div class="saldo-card">
+            <h3>⏳ Comprometido</h3>
+            <div class="{cls_comp}">€ {total_comp_dash:,.2f}</div>
+            <div class="detalhe">PENDENTE + PREVISTO + Cartão</div>
+        </div>""", unsafe_allow_html=True)
+    with col_lq3:
+        if risco_global:
+            st.markdown(f"""<div class="saldo-card saldo-card-insolvencia">
+                <h3>⚠️ Disponibilidade Real</h3>
+                <div class="valor-carmim">€ {total_livre_dash:,.2f}</div>
+                <div class="detalhe" style="color:#9b1c1c;font-weight:600;">🚨 Risco de Insolvência</div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            cls_l2 = "valor-positivo" if total_livre_dash >= 0 else "valor-negativo"
+            s_l2   = "+" if total_livre_dash > 0 else ""
+            st.markdown(f"""<div class="saldo-card saldo-card-positivo">
+                <h3>✅ Disponibilidade Real</h3>
+                <div class="{cls_l2}">{s_l2}€ {total_livre_dash:,.2f}</div>
+                <div class="detalhe">Saldo Real − todos os compromissos</div>
+            </div>""", unsafe_allow_html=True)
+    with col_lq4:
+        cls_pend = "valor-negativo" if total_pend_dash > 0 else "valor-positivo"
+        st.markdown(f"""<div class="saldo-card">
+            <h3>🔴 Contas Vencidas</h3>
+            <div class="{cls_pend}">€ {total_pend_dash:,.2f}</div>
+            <div class="detalhe">PENDENTES não liquidadas</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── BLOCO 2: Orçamento ────────────────────
+    st.markdown(f"### 🌍 Orçamento — {dash_mes_ano}")
+
     prev_des_d = db_query(
         "SELECT COALESCE(SUM(valor_previsto),0) FROM orcamentos "
-        "WHERE mes_ano=? AND tipo_meta='Despesa'",
-        (dash_mes_ano,))[0][0]
+        "WHERE mes_ano=? AND tipo_meta='Despesa'", (dash_mes_ano,))[0][0]
     real_des_d = get_realizado_mes(dash_mes_ano, tipo="Despesa")
-
-    # Totais de receita
     prev_rec_d = db_query(
         "SELECT COALESCE(SUM(valor_previsto),0) FROM orcamentos "
-        "WHERE mes_ano=? AND tipo_meta='Receita'",
-        (dash_mes_ano,))[0][0]
+        "WHERE mes_ano=? AND tipo_meta='Receita'", (dash_mes_ano,))[0][0]
     real_rec_d = get_realizado_mes(dash_mes_ano, tipo="Receita")
-
     saldo_mes_d = real_rec_d - real_des_d
     pct_des_d   = (real_des_d / prev_des_d * 100) if prev_des_d > 0 else 0
     pct_rec_d   = (real_rec_d / prev_rec_d * 100) if prev_rec_d > 0 else 0
 
-    col_g1, col_g2, col_g3, col_g4 = st.columns(4)
+    col_g1, col_g2, col_g3 = st.columns(3)
     with col_g1:
         cls_d = "valor-negativo" if real_des_d > prev_des_d and prev_des_d > 0 else "valor-neutro"
         st.markdown(f"""<div class="saldo-card">
@@ -1232,7 +1483,8 @@ with tab6:
             <div class="detalhe">Meta: €{prev_des_d:,.2f} | {pct_des_d:.0f}% utilizado</div>
         </div>""", unsafe_allow_html=True)
     with col_g2:
-        cls_r = "valor-positivo" if real_rec_d >= prev_rec_d and prev_rec_d > 0 else                 "valor-neutro"   if real_rec_d >= prev_rec_d * 0.8 else "valor-negativo"
+        cls_r = "valor-positivo" if real_rec_d >= prev_rec_d and prev_rec_d > 0 else \
+                "valor-neutro"   if real_rec_d >= prev_rec_d*0.8 else "valor-negativo"
         st.markdown(f"""<div class="saldo-card">
             <h3>💵 Receitas</h3>
             <div class="{cls_r}">€ {real_rec_d:,.2f}</div>
@@ -1240,98 +1492,71 @@ with tab6:
         </div>""", unsafe_allow_html=True)
     with col_g3:
         cls_sl = "valor-positivo" if saldo_mes_d >= 0 else "valor-negativo"
-        sinal_sl = "+" if saldo_mes_d > 0 else ""
+        s_sl   = "+" if saldo_mes_d > 0 else ""
         st.markdown(f"""<div class="saldo-card">
             <h3>⚖️ Saldo do Mês</h3>
-            <div class="{cls_sl}">{sinal_sl}€ {saldo_mes_d:,.2f}</div>
+            <div class="{cls_sl}">{s_sl}€ {saldo_mes_d:,.2f}</div>
             <div class="detalhe">Receitas − Despesas</div>
         </div>""", unsafe_allow_html=True)
-    with col_g4:
-        pl_all = sum(calcular_patrimonio_liquido(f)
-                     for f in [r[0] for r in db_query("SELECT nome FROM fontes")])
-        cls_pl = "valor-positivo" if pl_all >= 0 else "valor-negativo"
-        sinal_pl = "+" if pl_all > 0 else ""
-        st.markdown(f"""<div class="saldo-card">
-            <h3>📊 Patrimônio Líquido</h3>
-            <div class="{cls_pl}">{sinal_pl}€ {pl_all:,.2f}</div>
-            <div class="detalhe">Contas − crédito pendente</div>
-        </div>""", unsafe_allow_html=True)
 
-    # Barras de progresso globais
     if prev_des_d > 0:
-        prog_des = min(pct_des_d / 100, 1.0)
+        prog_des = min(pct_des_d/100, 1.0)
         ic_des   = "🟢" if pct_des_d < 80 else "🟡" if pct_des_d <= 100 else "🔴"
-        st.progress(prog_des,
-            text=f"💸 Despesas: {ic_des} {pct_des_d:.1f}% do orçamento utilizado")
+        st.progress(prog_des, text=f"💸 Despesas: {ic_des} {pct_des_d:.1f}% do orçamento")
     if prev_rec_d > 0:
-        prog_rec = min(pct_rec_d / 100, 1.0)
+        prog_rec = min(pct_rec_d/100, 1.0)
         ic_rec   = "🟢" if pct_rec_d >= 100 else "🟡" if pct_rec_d >= 80 else "🔴"
-        st.progress(prog_rec,
-            text=f"💵 Receitas: {ic_rec} {pct_rec_d:.1f}% da meta atingida")
+        st.progress(prog_rec, text=f"💵 Receitas: {ic_rec} {pct_rec_d:.1f}% da meta atingida")
 
     st.divider()
 
     # ── Semáforo por Categoria ─────────────────
     st.markdown("### 🚦 Saúde por Categoria")
-
     saude = get_saude_orcamento(dash_mes_ano)
 
     if not saude:
         st.info(f"Nenhuma meta definida para {dash_mes_ano}. Crie metas na aba 🎯 Metas.")
     else:
-        # Separa por tipo para exibir em grupos
         saude_des = [s for s in saude if s['tipo_meta'] == 'Despesa']
         saude_rec = [s for s in saude if s['tipo_meta'] == 'Receita']
-
-        for grupo_label, grupo_items in [
-            ("💸 Metas de Despesa", saude_des),
-            ("💵 Metas de Receita", saude_rec)
-        ]:
+        for grupo_label, grupo_items in [("💸 Metas de Despesa", saude_des),
+                                          ("💵 Metas de Receita", saude_rec)]:
             if not grupo_items:
                 continue
             st.markdown(f"**{grupo_label}**")
             col_s1, col_s2 = st.columns(2)
             for idx, item in enumerate(grupo_items):
-                cat_pai   = item["cat_pai"]
-                cat_filho = item["cat_filho"] or "Todos"
-                previsto  = item["previsto"]
-                realizado = item["realizado"]
-                pct       = item["pct"]
-                status    = item["status"]
-                tipo_m    = item["tipo_meta"]
-
-                css_class = f"gauge-{status}"
-                icone     = "🟢" if status == "verde" else "🟡" if status == "amarelo" else "🔴"
-                prog_val  = min(pct / 100, 1.0)
-                label_cat = cat_pai + (f" / {cat_filho}" if cat_filho != "Todos" else "")
-
-                diferenca = previsto - realizado if tipo_m == "Despesa" else realizado - previsto
-                if tipo_m == "Despesa":
+                css_class = f"gauge-{item['status']}"
+                icone     = "🟢" if item['status']=="verde" else "🟡" if item['status']=="amarelo" else "🔴"
+                prog_val  = min(item['pct']/100, 1.0)
+                label_cat = item['cat_pai'] + (f" / {item['cat_filho']}" if item['cat_filho'] else "")
+                if item['tipo_meta'] == "Despesa":
+                    diferenca = item['previsto'] - item['realizado']
                     msg_dif = (f"Margem: €{abs(diferenca):,.2f}" if diferenca >= 0
                                else f"⚠️ Estouro: €{abs(diferenca):,.2f}")
                 else:
+                    diferenca = item['realizado'] - item['previsto']
                     msg_dif = (f"Superávit: €{abs(diferenca):,.2f}" if diferenca >= 0
                                else f"⚠️ Déficit: €{abs(diferenca):,.2f}")
-
                 with (col_s1 if idx % 2 == 0 else col_s2):
                     st.markdown(f"""
                     <div class="{css_class}">
                         <div class="gauge-titulo">{icone} {label_cat}</div>
                         <div class="gauge-sub">
-                            Realizado: <strong>€{realizado:,.2f}</strong>
+                            Realizado: <strong>€{item['realizado']:,.2f}</strong>
                             &nbsp;/&nbsp;
-                            {"Limite" if tipo_m == "Despesa" else "Meta"}: <strong>€{previsto:,.2f}</strong>
+                            {"Limite" if item['tipo_meta']=="Despesa" else "Meta"}: <strong>€{item['previsto']:,.2f}</strong>
                             &nbsp;—&nbsp; {msg_dif}
                         </div>
                     </div>""", unsafe_allow_html=True)
-                    st.progress(prog_val, text=f"{pct:.1f}% {'utilizado' if tipo_m == 'Despesa' else 'atingido'}")
+                    st.progress(prog_val,
+                        text=f"{item['pct']:.1f}% {'utilizado' if item['tipo_meta']=='Despesa' else 'atingido'}")
 
     st.divider()
 
-    # ── Top 3 Beneficiários (Despesa e Receita) ──
+    # ── Top 3 Beneficiários ──────────────────────
     st.markdown("### 🔎 Análise de Causa Raiz")
     col_top_d, col_top_r = st.columns(2)
-
     with col_top_d:
         st.markdown("**💸 Top 3 — Quem mais gastou**")
         top3_des = get_top_beneficiarios(dash_mes_ano, tipo="Despesa", n=3)
@@ -1339,16 +1564,14 @@ with tab6:
             st.info("Nenhuma despesa registada.")
         else:
             max_d = max(t[1] for t in top3_des) or 1
-            medalhas = ["🥇","🥈","🥉"]
-            for i,(nome,total) in enumerate(top3_des):
-                st.markdown(f"""
-                <div class="top-benef-card">
-                    <div><span style="font-size:1.2rem;">{medalhas[i]}</span>
+            for i, (nome, total) in enumerate(top3_des):
+                medalha = ["🥇","🥈","🥉"][i]
+                st.markdown(f"""<div class="top-benef-card">
+                    <div><span style="font-size:1.2rem;">{medalha}</span>
                     <strong style="margin-left:8px;">{nome}</strong></div>
                     <div style="font-weight:700;">€ {total:,.2f}</div>
                 </div>""", unsafe_allow_html=True)
                 st.progress(total/max_d)
-
     with col_top_r:
         st.markdown("**💵 Top 3 — Quem mais trouxe receita**")
         top3_rec = get_top_beneficiarios(dash_mes_ano, tipo="Receita", n=3)
@@ -1356,11 +1579,10 @@ with tab6:
             st.info("Nenhuma receita registada.")
         else:
             max_r = max(t[1] for t in top3_rec) or 1
-            medalhas = ["🥇","🥈","🥉"]
-            for i,(nome,total) in enumerate(top3_rec):
-                st.markdown(f"""
-                <div class="top-benef-card">
-                    <div><span style="font-size:1.2rem;">{medalhas[i]}</span>
+            for i, (nome, total) in enumerate(top3_rec):
+                medalha = ["🥇","🥈","🥉"][i]
+                st.markdown(f"""<div class="top-benef-card">
+                    <div><span style="font-size:1.2rem;">{medalha}</span>
                     <strong style="margin-left:8px;">{nome}</strong></div>
                     <div style="font-weight:700;color:#16a34a;">€ {total:,.2f}</div>
                 </div>""", unsafe_allow_html=True)
@@ -1368,23 +1590,20 @@ with tab6:
 
     st.divider()
 
-    # ── Relatório Previsto vs Realizado ──────────
+    # ── Relatório ──────────────────────────────
     st.markdown("### 📋 Relatório Previsto vs. Realizado")
-
     if saude:
         df_report = pd.DataFrame([{
             "Tipo":          s["tipo_meta"],
-            "Categoria":     (s["cat_pai"] + (" / " + s["cat_filho"] if s["cat_filho"] else "")),
+            "Categoria":     s["cat_pai"] + (" / " + s["cat_filho"] if s["cat_filho"] else ""),
             "Beneficiário":  s["beneficiario"] or "Todos",
             "Previsto (€)":  s["previsto"],
             "Realizado (€)": s["realizado"],
-            "Δ (€)":         (s["previsto"] - s["realizado"]
-                               if s["tipo_meta"] == "Despesa"
-                               else s["realizado"] - s["previsto"]),
+            "Δ (€)":         (s["previsto"]-s["realizado"] if s["tipo_meta"]=="Despesa"
+                               else s["realizado"]-s["previsto"]),
             "% Atingido":    round(s["pct"], 1),
             "Status":        s["status"].upper(),
         } for s in saude])
-
         st.dataframe(df_report, use_container_width=True, hide_index=True,
             column_config={
                 "Previsto (€)":  st.column_config.NumberColumn(format="€ %.2f"),
@@ -1392,13 +1611,14 @@ with tab6:
                 "Δ (€)":         st.column_config.NumberColumn(format="€ %.2f"),
                 "% Atingido":    st.column_config.NumberColumn(format="%.1f %%"),
             })
-
         csv_rep = df_report.to_csv(index=False).encode('utf-8-sig')
         st.download_button("⬇️ Exportar Relatório CSV", csv_rep,
             f"relatorio_{dash_mes_ano}.csv", "text/csv")
     else:
         st.info("Defina metas na aba 🎯 Metas para ver o relatório comparativo.")
 
+
+# ══════════════════════════════════════════════
 #  TAB 7 — GESTÃO
 # ══════════════════════════════════════════════
 with tab7:
