@@ -778,6 +778,7 @@ with tab1:
         submit_button = st.form_submit_button("Salvar Transação")
 
     # --- 4. Processamento ---
+        # --- 4. Processamento ---
     if submit_button:
         if not beneficiario:
             st.error("Por favor, selecione um beneficiário.")
@@ -786,26 +787,36 @@ with tab1:
                 # 1. Recuperar o ID do Cartão ou Fonte selecionado
                 id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
                 
-                # 2. Definir o cartao_id
-                valor_cartao_id = id_fonte if st.session_state.forma_pag == "Cartão de Crédito" else None
-                
-                # 3. Definir status
-                status_liq = "PENDENTE" if st.session_state.forma_pag == "Cartão de Crédito" else "PAGO"
+                # 2. Lógica de Fatura (SE FOR CARTÃO)
+                fatura_ref = None
+                valor_cartao_id = None
+                status_liq = "PAGO"
 
-                # 4. Inserção no banco
+                if st.session_state.forma_pag == "Cartão de Crédito":
+                    valor_cartao_id = id_fonte
+                    status_liq = "PENDENTE"
+                    
+                    # Busca dia de fechamento do cartão
+                    fechamento_row = db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (valor_cartao_id,))
+                    dia_fechamento = int(fechamento_row[0][0])
+                    
+                    # Calcula a fatura (transforma a data_input em string dd/mm/yyyy para a função)
+                    data_str = data_input.strftime("%d/%m/%Y")
+                    fatura_ref = calcular_fatura_ref(data_str, dia_fechamento)
+
+                # 3. Inserção no banco (incluindo fatura_ref)
                 db_execute('''INSERT INTO transacoes 
-                    (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao) 
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                    (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, 
+                     forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                     (data_input.strftime("%d/%m/%Y"), cat_pai, beneficiario, fonte_selecionada, 
                      valor_input, st.session_state.tipo_mov, nota, 
                      st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, 
-                     valor_cartao_id, status_liq))
+                     valor_cartao_id, status_liq, fatura_ref, "pendente" if valor_cartao_id else None))
                 
                 st.success(f"Transação de €{valor_input:.2f} registrada com sucesso!")
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
-
-
 
 # ══════════════════════════════════════════════
 #  TAB 2 — TODOS OS LANÇAMENTOS
