@@ -71,6 +71,39 @@ init_session()
 # ─────────────────────────────────────────────
 DB_PATH = 'finance.db'
 
+from dateutil.relativedelta import relativedelta
+from datetime import datetime
+
+def calcular_parcelas(data_compra_str, dia_fechamento, dia_vencimento, valor_total, total_parcelas):
+    """
+    Retorna uma lista de tuplas: (data_vencimento_formatada, valor_parcela, numero_parcela)
+    """
+    parcelas = []
+    
+    # Converter string de data para objeto datetime
+    d = datetime.strptime(data_compra_str, "%Y-%m-%d")
+    
+    # Cálculo base do valor
+    valor_parcela = round(valor_total / total_parcelas, 2)
+    valor_ultima = round(valor_total - (valor_parcela * (total_parcelas - 1)), 2)
+    
+    # Lógica de virada de mês da fatura:
+    # Se a compra foi feita após o dia de fechamento, a 1ª parcela cai na fatura do mês seguinte.
+    # Caso contrário, cai na fatura do mês atual.
+    mes_offset = 0 if d.day <= dia_fechamento else 1
+    
+    for i in range(total_parcelas):
+        num = i + 1
+        # Calcula a data de vencimento daquela parcela específica
+        data_venc = d + relativedelta(months=mes_offset + i, day=dia_vencimento)
+        
+        # Atribui o valor (ajustando a última parcela para fechar o total exato)
+        valor = valor_ultima if num == total_parcelas else valor_parcela
+        
+        parcelas.append((data_venc.strftime("%Y-%m-%d"), valor, num))
+        
+    return parcelas
+
 def db_query(sql, params=()):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     try: return conn.execute(sql, params).fetchall()
@@ -126,6 +159,10 @@ def init_db():
         # ── módulo liquidez ──
         ("status_liquidacao","TEXT DEFAULT 'PAGO'"),
         ("data_liquidacao",  "TEXT"),
+        # ── MÓDULO PARCELAMENTO (NOVO) ──
+        ("parcela_id",       "TEXT"),
+        ("parcela_numero",   "INTEGER DEFAULT 1"),
+        ("total_parcelas",   "INTEGER DEFAULT 1"),    
     ]
 
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -146,7 +183,17 @@ def init_db():
                      (chave TEXT PRIMARY KEY, valor TEXT)''')
         c.execute("INSERT OR IGNORE INTO configuracoes (chave, valor) "
                   "VALUES ('taxa_brl_eur', '0.16')")
-
+        c.execute('''CREATE TABLE IF NOT EXISTS recorrentes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            valor_eur REAL NOT NULL,
+            categoria_pai TEXT NOT NULL,
+            categoria_filho TEXT,
+            dia_vencimento INTEGER NOT NULL,
+            fonte TEXT NOT NULL,
+            forma_pagamento TEXT NOT NULL
+        )''')
+    
         # categorias hierárquicas
         c.execute("SELECT name FROM sqlite_master "
                   "WHERE type='table' AND name='categorias'")
@@ -232,6 +279,7 @@ def init_db():
 
 # 1. Inicializa o banco
 init_db()
+processar_recorrencias_do_mes()
 
 # 2. Definição da função de segurança (VERSÃO SEGURA)
 def verificar_bloqueio_delecao(tabela, id_item):
@@ -769,6 +817,9 @@ with tab1:
         col_in1, col_in2 = st.columns(2)
         data_input = col_in1.date_input("Data", value=date.today())
         valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
+        num_parcelas = 1
+        if is_cartao:
+            num_parcelas = col_in1.number_input("Parcelas", min_value=1, max_value=24, value=1)
         
         # Categoria
         cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
@@ -784,44 +835,57 @@ with tab1:
         
         submit_button = st.form_submit_button("Salvar Transação")
 
-    # --- 4. Processamento ---
         # --- 4. Processamento ---
     if submit_button:
         if not beneficiario:
             st.error("Por favor, selecione um beneficiário.")
         else:
             try:
-                # 1. Recuperar o ID do Cartão ou Fonte selecionado
                 id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
-                
-                # 2. Lógica de Fatura (SE FOR CARTÃO)
-                fatura_ref = None
-                valor_cartao_id = None
-                status_liq = "PAGO"
 
-                if st.session_state.forma_pag == "Cartão de Crédito":
-                    valor_cartao_id = id_fonte
-                    status_liq = "PENDENTE"
+                # Lógica para Múltiplas Parcelas (Cartão)
+                if is_cartao and num_parcelas > 1:
+                    # Busca configurações necessárias para o cálculo
+                    cartao_info = db_query("SELECT dia_fechamento, dia_vencimento FROM cartoes WHERE id=?", (id_fonte,))[0]
+                    dia_fechamento, dia_vencimento = cartao_info
                     
-                    # Busca dia de fechamento do cartão
-                    fechamento_row = db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (valor_cartao_id,))
-                    dia_fechamento = int(fechamento_row[0][0])
+                    # Gera a lista de parcelas (ajuste esta chamada conforme a sua função real)
+                    lista_parcelas = calcular_parcelas(data_input.strftime("%Y-%m-%d"), dia_fechamento, dia_vencimento, valor_input, num_parcelas)
                     
-                    # Calcula a fatura (transforma a data_input em string dd/mm/yyyy para a função)
-                    data_str = data_input.strftime("%d/%m/%Y")
-                    fatura_ref = calcular_fatura_ref(data_str, dia_fechamento)
+                    # Itera e insere cada parcela
+                    for data_venc, val, num in lista_parcelas:
+                        db_execute('''INSERT INTO transacoes 
+                            (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, 
+                             forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                            (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, 
+                             val, st.session_state.tipo_mov, f"{nota} (Parc {num}/{num_parcelas})", 
+                             st.session_state.get('display_name', 'Admin'), "Cartão de Crédito", 
+                             id_fonte, "PENDENTE", data_venc, "pendente"))
+                    
+                    st.success(f"Compra de €{valor_input:.2f} parcelada em {num_parcelas}x com sucesso!")
 
-                # 3. Inserção no banco (incluindo fatura_ref)
-                db_execute('''INSERT INTO transacoes 
-                    (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, 
-                     forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                    (data_input.strftime("%d/%m/%Y"), cat_pai, beneficiario, fonte_selecionada, 
-                     valor_input, st.session_state.tipo_mov, nota, 
-                     st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, 
-                     valor_cartao_id, status_liq, fatura_ref, "pendente" if valor_cartao_id else None))
-                
-                st.success(f"Transação de €{valor_input:.2f} registrada com sucesso!")
+                # Lógica para Transação Única (Padrão)
+                else:
+                    fatura_ref = None
+                    status_liq = "PAGO" if not is_cartao else "PENDENTE"
+                    
+                    if is_cartao:
+                        fechamento_row = db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (id_fonte,))
+                        dia_fechamento = int(fechamento_row[0][0])
+                        fatura_ref = calcular_fatura_ref(data_input.strftime("%d/%m/%Y"), dia_fechamento)
+
+                    db_execute('''INSERT INTO transacoes 
+                        (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, 
+                         forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, 
+                         valor_input, st.session_state.tipo_mov, nota, 
+                         st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, 
+                         id_fonte if is_cartao else None, status_liq, fatura_ref, "pendente" if is_cartao else None))
+                    
+                    st.success(f"Transação de €{valor_input:.2f} registrada com sucesso!")
+
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
@@ -862,6 +926,10 @@ with tab2:
         filtro_busca  = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
 
     df_hist = db_df("SELECT * FROM transacoes ORDER BY id DESC")
+
+    # Formatação visual para parcelas
+    if not df_hist.empty:
+        df_hist['nota'] = df_hist['nota'].apply(lambda x: f"💳 {x}" if "(Parc" in str(x) else x)
 
     if not df_hist.empty:
         if filtro_tipo   != "Todos":    df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
