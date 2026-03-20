@@ -1198,9 +1198,13 @@ with tab4:
             pct_uso    = (usado / limite_c * 100) if limite_c > 0 else 0
             cor_disp   = "#16a34a" if disp > limite_c*0.3 else "#f59e0b" if disp > 0 else "#dc2626"
 
+            # --- CORREÇÃO AQUI ---
+            # 1. Título com a função de quadro
+            criar_quadro_legivel(f"💳 {nome_c}")
+            
+            # 2. Corpo do cartão (borda superior removida e margem negativa)
             st.markdown(f"""
-            <div class="saldo-card saldo-card-cartao">
-                <h3>💳 {nome_c}</h3>
+            <div class="saldo-card saldo-card-cartao" style="border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; margin-top: -15px;">
                 <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:8px;">
                     <span>Limite: <strong>€{limite_c:,.2f}</strong></span>
                     <span>Usado: <strong style="color:#ef4444;">€{usado:,.2f}</strong></span>
@@ -1209,6 +1213,7 @@ with tab4:
                 </div>
                 <div class="detalhe">Fechamento: dia {dia_fech_c} | Vencimento: dia {dia_venc_c} | Conta: {conta_pag}</div>
             </div>""", unsafe_allow_html=True)
+            # ---------------------
 
             faturas_df = db_df(
                 "SELECT fatura_ref, SUM(valor_eur) as total, COUNT(*) as n_compras, "
@@ -1277,6 +1282,7 @@ with tab4:
             else:
                 st.caption(f"🔒 {nome_c} tem {trans_count} transação(ões) — remova-as na aba 📋 primeiro.")
             st.markdown("---")
+
 
 
 # ══════════════════════════════════════════════
