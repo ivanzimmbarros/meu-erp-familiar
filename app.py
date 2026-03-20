@@ -782,20 +782,25 @@ with tab1:
         if not beneficiario:
             st.error("Por favor, selecione um beneficiário.")
         else:
-            try:
-                # Recuperar ID correto da fonte/cartão selecionado
-                # Encontra o ID onde o nome bate com a escolha
+             # 1. Recuperar o ID do Cartão ou Fonte selecionado
                 id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
                 
-                # Inserção no banco
+                # 2. Definir o cartao_id (se for cartão, guarda o id, se não, fica None)
+                valor_cartao_id = id_fonte if st.session_state.forma_pag == "Cartão de Crédito" else None
+                
+                # 3. Definir status: Cartão = PENDENTE, Dinheiro = PAGO
+                status_liq = "PENDENTE" if st.session_state.forma_pag == "Cartão de Crédito" else "PAGO"
+
+                # 4. Inserção no banco com as novas colunas
                 db_execute('''INSERT INTO transacoes 
-                    (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento) 
-                    VALUES (?,?,?,?,?,?,?,?,?)''',
+                    (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao) 
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
                     (data_input.strftime("%d/%m/%Y"), cat_pai, beneficiario, fonte_selecionada, 
                      valor_input, st.session_state.tipo_mov, nota, 
-                     st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag))
+                     st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, 
+                     valor_cartao_id, status_liq))
                 
-                st.success(f"Transação de €{valor_input:.2f} registrada com sucesso!")
+                st.success(f"Transação de €{valor_input:.2f} registrada como '{status_liq}' com sucesso!")
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
