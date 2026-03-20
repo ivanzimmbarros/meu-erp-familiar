@@ -781,24 +781,14 @@ with tab1:
     if 'tipo_mov' not in st.session_state: st.session_state.tipo_mov = "💸 Despesa"
     if 'forma_pag' not in st.session_state: st.session_state.forma_pag = "Dinheiro/Débito"
 
-    # --- 2. Controles de Escolha (Reativos) ---
-    # Estes ficam fora do form para que a página re-renderize ao clicar
+        # 2. Controles de Escolha (Reativos)
     col_tp1, col_tp2 = st.columns(2)
-    st.session_state.tipo_mov = col_tp1.radio(
-        "Tipo de movimentação", 
-        ["💸 Despesa", "💵 Receita"], 
-        index=0 if st.session_state.tipo_mov == "💸 Despesa" else 1,
-        horizontal=True
-    )
-    st.session_state.forma_pag = col_tp2.radio(
-        "Forma de pagamento", 
-        ["Dinheiro/Débito", "Cartão de Crédito"], 
-        index=0 if st.session_state.forma_pag == "Dinheiro/Débito" else 1,
-        horizontal=True
-    )
+    st.session_state.tipo_mov = col_tp1.radio("Tipo de movimentação", ["💸 Despesa", "💵 Receita"], horizontal=True)
+    st.session_state.forma_pag = col_tp2.radio("Forma de pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
 
-    # Lógica de seleção de Fonte
-    is_cartao = (st.session_state.forma_pag == "Cartão de Crédito" and "Despesa" in st.session_state.tipo_mov)
+    # Lógica de controle: Parcelamento permitido se for Despesa (independente da fonte)
+    eh_despesa = "Despesa" in st.session_state.tipo_mov
+    is_cartao = (st.session_state.forma_pag == "Cartão de Crédito" and eh_despesa)
     
     if is_cartao:
         label_fonte = "💳 Selecione o Cartão"
@@ -809,32 +799,27 @@ with tab1:
 
     # --- 3. Formulário ---
     with st.form("form_transacao", clear_on_submit=True):
-        
-        # Dropdown dinâmico (a lista muda conforme a lógica acima)
         fonte_selecionada = st.selectbox(label_fonte, [op[1] for op in dados_fonte])
-        
         col_in1, col_in2 = st.columns(2)
         data_input = col_in1.date_input("Data", value=date.today())
         valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
+        
+        # Agora o input de parcelas aparece sempre que for despesa
         num_parcelas = 1
-        if is_cartao:
+        if eh_despesa:
             num_parcelas = col_in1.number_input("Parcelas", min_value=1, max_value=24, value=1)
         
-        # Categoria
+        # ... (restante do código: Categoria, Beneficiário, Nota)
         cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
         pai_opts = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
         cat_pai = st.selectbox("Categoria Principal", pai_opts)
-        
-        # Beneficiário
         benef_db = db_query("SELECT nome FROM beneficiarios ORDER BY nome")
         lista_benef = [""] + [b[0] for b in benef_db]
         beneficiario = st.selectbox("Beneficiário", lista_benef)
-        
         nota = st.text_input("Observação (opcional)")
-        
         submit_button = st.form_submit_button("Salvar Transação")
 
-        # --- 4. Processamento ---
+    # --- 4. Processamento ---
     if submit_button:
         if not beneficiario:
             st.error("Por favor, selecione um beneficiário.")
@@ -842,51 +827,45 @@ with tab1:
             try:
                 id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
 
-                # Lógica para Múltiplas Parcelas (Cartão)
-                if is_cartao and num_parcelas > 1:
-                    # Busca configurações necessárias para o cálculo
-                    cartao_info = db_query("SELECT dia_fechamento, dia_vencimento FROM cartoes WHERE id=?", (id_fonte,))[0]
-                    dia_fechamento, dia_vencimento = cartao_info
-                    
-                    # Gera a lista de parcelas (ajuste esta chamada conforme a sua função real)
-                    lista_parcelas = calcular_parcelas(data_input.strftime("%Y-%m-%d"), dia_fechamento, dia_vencimento, valor_input, num_parcelas)
-                    
-                    # Itera e insere cada parcela
+                # Lógica de parcelamento (agora para Cartão OU Débito)
+                if eh_despesa and num_parcelas > 1:
+                    if is_cartao:
+                        cartao_info = db_query("SELECT dia_fechamento, dia_vencimento FROM cartoes WHERE id=?", (id_fonte,))[0]
+                        lista_parcelas = calcular_parcelas(data_input.strftime("%Y-%m-%d"), cartao_info[0], cartao_info[1], valor_input, num_parcelas)
+                    else:
+                        # Para Débito, parcelas mensais simples a partir da data informada
+                        lista_parcelas = []
+                        v_p = round(valor_input / num_parcelas, 2)
+                        for i in range(num_parcelas):
+                            data_v = data_input + relativedelta(months=i)
+                            lista_parcelas.append((data_v.strftime("%Y-%m-%d"), v_p, i + 1))
+
                     for data_venc, val, num in lista_parcelas:
                         db_execute('''INSERT INTO transacoes 
-                            (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, 
-                             forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
+                            (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                            (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, 
-                             val, st.session_state.tipo_mov, f"{nota} (Parc {num}/{num_parcelas})", 
-                             st.session_state.get('display_name', 'Admin'), "Cartão de Crédito", 
-                             id_fonte, "PENDENTE", data_venc, "pendente"))
+                            (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, 
+                             f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), 
+                             st.session_state.forma_pag, id_fonte if is_cartao else None, "PENDENTE", data_venc, "pendente" if is_cartao else None))
                     
-                    st.success(f"Compra de €{valor_input:.2f} parcelada em {num_parcelas}x com sucesso!")
+                    st.success(f"Despesa parcelada em {num_parcelas}x com sucesso!")
 
-                # Lógica para Transação Única (Padrão)
                 else:
+                    # Transação única
                     fatura_ref = None
-                    status_liq = "PAGO" if not is_cartao else "PENDENTE"
-                    
                     if is_cartao:
-                        fechamento_row = db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (id_fonte,))
-                        dia_fechamento = int(fechamento_row[0][0])
-                        fatura_ref = calcular_fatura_ref(data_input.strftime("%d/%m/%Y"), dia_fechamento)
+                        fechamento = int(db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (id_fonte,))[0][0])
+                        fatura_ref = calcular_fatura_ref(data_input.strftime("%d/%m/%Y"), fechamento)
 
-                    db_execute('''INSERT INTO transacoes 
-                        (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, 
-                         forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                        (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, 
-                         valor_input, st.session_state.tipo_mov, nota, 
-                         st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, 
-                         id_fonte if is_cartao else None, status_liq, fatura_ref, "pendente" if is_cartao else None))
+                    db_execute('''INSERT INTO transacoes (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, valor_input, st.session_state.tipo_mov, nota, 
+                         st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, id_fonte if is_cartao else None, 
+                         "PAGO" if not is_cartao else "PENDENTE", fatura_ref, "pendente" if is_cartao else None))
                     
-                    st.success(f"Transação de €{valor_input:.2f} registrada com sucesso!")
-
+                    st.success("Transação registrada com sucesso!")
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
+
 
 # ══════════════════════════════════════════════
 #  TAB 2 — TODOS OS LANÇAMENTOS
