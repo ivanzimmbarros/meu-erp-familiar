@@ -942,32 +942,46 @@ with tab2:
     # ── Botões de liquidação para PENDENTES/PREVISTOS ────
     df_liquidaveis = df_hist[
         df_hist['status_liquidacao'].isin(['PENDENTE','PREVISTO'])
-    ] if not df_hist.empty else pd.DataFrame()
+    ].copy() if not df_hist.empty else pd.DataFrame()
 
     if not df_liquidaveis.empty:
         st.markdown("**✅ Liquidar transações pendentes / previstas:**")
-        for _, row in df_liquidaveis.iterrows():
-            tid    = int(row['id'])
-            sliq   = row['status_liquidacao']
-            badge  = f'<span class="badge-pendente">PENDENTE</span>' if sliq == 'PENDENTE' \
-                     else f'<span class="badge-previsto">PREVISTO</span>'
-            col_a, col_b = st.columns([5, 1])
-            with col_a:
-                st.markdown(
-                    f'<div class="liquidar-row">'
-                    f'{badge} &nbsp; {row["data"]} &nbsp;|&nbsp; '
-                    f'{row["categoria_pai"]}/{row["categoria_filho"] or "—"} &nbsp;|&nbsp; '
-                    f'{row["beneficiario"] or "—"} &nbsp;|&nbsp; '
-                    f'<strong>€{float(row["valor_eur"]):,.2f}</strong> ({row["tipo"]})'
-                    f'</div>',
-                    unsafe_allow_html=True)
-            with col_b:
-                if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}",
-                             use_container_width=True, type="primary"):
-                    liquidar_transacao(tid, st.session_state.display_name)
-                    st.session_state.ver += 1
-                    st.toast(f"✅ Transação #{tid} liquidada! Saldo real actualizado.", icon="✅")
-                    st.rerun()
+        
+        # Converte coluna 'data' para datetime para facilitar o agrupamento
+        df_liquidaveis['data_dt'] = pd.to_datetime(df_liquidaveis['data'])
+        df_liquidaveis = df_liquidaveis.sort_values('data_dt')
+        
+        # Cria a coluna de referência de mês/ano
+        df_liquidaveis['mes_ano'] = df_liquidaveis['data_dt'].dt.to_period('M')
+        
+        # Agrupa pelo período
+        for periodo, grupo in df_liquidaveis.groupby('mes_ano'):
+            nome_expansor = periodo.strftime('%B/%Y').capitalize()
+            
+            with st.expander(f"📅 {nome_expansor} ({len(grupo)} itens)"):
+                for _, row in grupo.iterrows():
+                    tid    = int(row['id'])
+                    sliq   = row['status_liquidacao']
+                    badge  = f'<span class="badge-pendente">PENDENTE</span>' if sliq == 'PENDENTE' \
+                             else f'<span class="badge-previsto">PREVISTO</span>'
+                    
+                    col_a, col_b = st.columns([5, 1])
+                    with col_a:
+                        st.markdown(
+                            f'<div class="liquidar-row">'
+                            f'{badge} &nbsp; {row["data"]} &nbsp;|&nbsp; '
+                            f'{row["categoria_pai"]}/{row["categoria_filho"] or "—"} &nbsp;|&nbsp; '
+                            f'{row["beneficiario"] or "—"} &nbsp;|&nbsp; '
+                            f'<strong>€{float(row["valor_eur"]):,.2f}</strong> ({row["tipo"]})'
+                            f'</div>',
+                            unsafe_allow_html=True)
+                    with col_b:
+                        if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}",
+                                     use_container_width=True, type="primary"):
+                            liquidar_transacao(tid, st.session_state.display_name)
+                            st.session_state.ver += 1
+                            st.toast(f"✅ Transação #{tid} liquidada!", icon="✅")
+                            st.rerun()
         st.markdown("---")
 
     # ── Tabela completa ──────────────────────────
