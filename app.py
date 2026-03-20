@@ -105,6 +105,16 @@ st.markdown("""
         margin-bottom: 6px; font-size: 0.88rem;
     }
 
+    /* Ajuste de saldo */
+    .ajuste-card {
+        background: #f0fdf4; border-left: 5px solid #16a34a;
+        border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;
+    }
+    .ajuste-card-neg {
+        background: #fff7ed; border-left: 5px solid #f59e0b;
+        border-radius: 10px; padding: 14px 18px; margin-bottom: 10px;
+    }
+
     footer { visibility: hidden; }
     #MainMenu { visibility: hidden; }
 </style>
@@ -485,6 +495,130 @@ def liquidar_transacao(trans_id, usuario):
     return hoje
 
 
+def ajustar_saldo(fonte_nome, valor_banco, usuario):
+    """
+    Bate o saldo do sistema com o saldo real informado pelo utilizador.
+    Cria uma transação de ajuste (Receita ou Despesa) com status PAGO.
+    Retorna dict com detalhes do ajuste, ou None se já bate.
+    Regista no log de auditoria.
+    """
+    saldo_calc = calcular_saldo_real(fonte_nome)
+    diff = round(valor_banco - saldo_calc, 4)
+    if abs(diff) < 0.005:
+        return None  # saldo já coincide — nada a fazer
+
+    hoje = datetime.now().strftime("%d/%m/%Y")
+    tipo_aj = "Receita" if diff > 0 else "Despesa"
+    nota_aj = (
+        f"Ajuste de saldo — banco: €{valor_banco:.2f} | "
+        f"sistema: €{saldo_calc:.2f} | diff: €{diff:+.2f}"
+    )
+    try:
+        db_execute(
+            "INSERT INTO transacoes "
+            "(data,categoria_pai,categoria_filho,beneficiario,fonte,"
+            "valor_eur,tipo,nota,usuario,forma_pagamento,"
+            "status_liquidacao,data_liquidacao) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (hoje, "Ajuste de Saldo", "", "Ajuste Automático", fonte_nome,
+             abs(diff), tipo_aj, nota_aj, usuario,
+             "Dinheiro/Débito", "PAGO", hoje)
+        )
+        log_audit(
+            "AJUSTE_SALDO",
+            f"conta={fonte_nome} banco={valor_banco:.2f} "
+            f"sistema={saldo_calc:.2f} diff={diff:+.2f}",
+            usuario
+        )
+    except Exception as e:
+        raise RuntimeError(f"Erro ao registar ajuste: {e}") from e
+
+    return {"tipo": tipo_aj, "diferenca": diff, "valor_banco": valor_banco,
+            "saldo_anterior": saldo_calc, "data": hoje}
+
+
+def gerar_relatorio_excel(mes_ano):
+    """
+    Gera relatório Excel com 3 abas:
+      - Transações do Mês
+      - Resumo por Categoria
+      - Metas vs Realizado
+    Nome do ficheiro sugerido: ERP_Familiar_Backup_MM_AAAA.xlsx
+    """
+    ano, mes = mes_ano.split("-")
+
+    # Aba 1 — Transações do mês
+    df_trans = db_df(
+        """SELECT data as "Data", categoria_pai as "Categoria",
+                  categoria_filho as "Detalhamento",
+                  beneficiario as "Beneficiário",
+                  fonte as "Conta/Cartão",
+                  valor_eur as "Valor (€)",
+                  tipo as "Tipo", nota as "Observação",
+                  status_liquidacao as "Liquidação",
+                  data_liquidacao as "Dt. Liquidação",
+                  usuario as "Registado por"
+           FROM transacoes
+           WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+           ORDER BY data, id""",
+        (mes, ano)
+    )
+
+    # Aba 2 — Resumo por Categoria
+    df_cat = db_df(
+        """SELECT tipo as "Tipo",
+                  categoria_pai as "Categoria",
+                  categoria_filho as "Detalhamento",
+                  COUNT(*) as "Qtd. Lançamentos",
+                  COALESCE(SUM(valor_eur),0) as "Total (€)"
+           FROM transacoes
+           WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+           GROUP BY tipo, categoria_pai, categoria_filho
+           ORDER BY tipo, "Total (€)" DESC""",
+        (mes, ano)
+    )
+
+    # Aba 3 — Metas vs Realizado
+    metas = db_query(
+        "SELECT tipo_meta, categoria_pai, categoria_filho, "
+        "beneficiario, valor_previsto "
+        "FROM orcamentos WHERE mes_ano=? "
+        "ORDER BY tipo_meta, categoria_pai",
+        (mes_ano,)
+    )
+    rows_meta = []
+    for tipo_m, cat_p, cat_f, benef, prev in metas:
+        real = db_query(
+            "SELECT COALESCE(SUM(valor_eur),0) FROM transacoes "
+            "WHERE tipo=? AND categoria_pai=? "
+            "AND substr(data,4,2)=? AND substr(data,7,4)=?",
+            (tipo_m, cat_p, mes, ano)
+        )[0][0]
+        pct = round(real / prev * 100, 1) if prev > 0 else 0.0
+        diff_v = (prev - real) if tipo_m == "Despesa" else (real - prev)
+        rows_meta.append({
+            "Tipo": tipo_m,
+            "Categoria": cat_p,
+            "Detalhamento": cat_f or "Todos",
+            "Beneficiário": benef or "Todos",
+            "Previsto (€)": round(prev, 2),
+            "Realizado (€)": round(real, 2),
+            "Diferença (€)": round(diff_v, 2),
+            "% Atingido": pct,
+        })
+    df_metas = pd.DataFrame(rows_meta) if rows_meta else pd.DataFrame(
+        columns=["Tipo","Categoria","Detalhamento","Beneficiário",
+                 "Previsto (€)","Realizado (€)","Diferença (€)","% Atingido"])
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+        df_trans.to_excel(writer, index=False, sheet_name='Transações do Mês')
+        df_cat.to_excel(writer, index=False, sheet_name='Resumo por Categoria')
+        df_metas.to_excel(writer, index=False, sheet_name='Metas vs Realizado')
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def get_pendentes_vencidos():
     """Transações PENDENTES de débito — vencimento passou mas não liquidadas."""
     return db_query(
@@ -808,7 +942,7 @@ with tab1:
                          "Cartão de Crédito", cartao_sel_id,
                          fatura_ref, "pendente", "PAGO"))
                     st.session_state.ver += 1
-                    st.success(f"✅ €{v_eur:.2f} no cartão **{cartao_sel_nome}** — fatura {fatura_ref}.")
+                    st.toast(f"✅ €{v_eur:.2f} registado no cartão {cartao_sel_nome} — fatura {fatura_ref}.", icon="✅")
                     st.rerun()
                 else:
                     db_execute(
@@ -823,9 +957,11 @@ with tab1:
                          status_liq_final, data_liq))
                     st.session_state.ver += 1
                     if status_liq_final == "PREVISTO":
-                        st.info(f"🔵 Lançamento PREVISTO registado: €{v_eur:.2f} em {data_str}")
+                        st.toast(f"🔵 Lançamento PREVISTO registado: €{v_eur:.2f} para {data_str}.", icon="🔵")
                     elif status_liq_final == "PENDENTE":
-                        st.warning(f"⏳ Lançamento PENDENTE registado: €{v_eur:.2f} — lembre de liquidar!")
+                        st.toast(f"⏳ Lançamento PENDENTE registado: €{v_eur:.2f}. Lembre-se de liquidar!", icon="⏳")
+                    else:
+                        st.toast(f"✅ Lançamento de €{v_eur:.2f} registado com sucesso!", icon="✅")
                     st.rerun()
 
 
@@ -955,10 +1091,13 @@ with tab2:
                 st.warning("Marque pelo menos um registro.")
             else:
                 ph = ",".join(["?"] * len(ids_rm))
-                db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
-                st.session_state.ver += 1
-                st.success(f"{len(ids_rm)} removido(s).")
-                st.rerun()
+                try:
+                    db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
+                    st.session_state.ver += 1
+                    st.toast(f"🗑️ {len(ids_rm)} lançamento(s) removido(s) com sucesso.", icon="🗑️")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Não foi possível remover: {e}")
     else:
         st.info("Nenhum lançamento encontrado com os filtros aplicados.")
 
@@ -1070,9 +1209,58 @@ with tab3:
                 '</div>',
                 unsafe_allow_html=True)
 
+        # ── Bater Saldo (Ajuste) ─────────────────────────────────────
+        st.divider()
+        st.markdown("#### ⚖️ Bater Saldo com o Banco")
+        st.caption(
+            "Informe o saldo real que o banco mostra agora. "
+            "O sistema cria um ajuste automático para eliminar diferenças de centavos.")
+        for f in fontes_saldo:
+            saldo_r_aj = calcular_saldo_real(f)
+            col_aj1, col_aj2, col_aj3 = st.columns([2, 1.5, 1])
+            with col_aj1:
+                st.markdown(f"**🏦 {f}** — Saldo Real actual: "
+                            f"<strong style='color:{'#16a34a' if saldo_r_aj>=0 else '#dc2626'};'>"
+                            f"€{saldo_r_aj:,.2f}</strong>", unsafe_allow_html=True)
+                valor_banco = st.number_input(
+                    "Quanto tenho nesta conta agora? (€)",
+                    value=round(float(saldo_r_aj), 2),
+                    step=0.01, format="%.2f",
+                    key=f"ajuste_banco_{f}",
+                    label_visibility="collapsed"
+                )
+            with col_aj2:
+                diff_preview = round(valor_banco - saldo_r_aj, 2)
+                if abs(diff_preview) < 0.005:
+                    st.caption("✅ Saldo já coincide")
+                elif diff_preview > 0:
+                    st.caption(f"➕ Diferença: +€{diff_preview:,.2f}")
+                else:
+                    st.caption(f"➖ Diferença: €{diff_preview:,.2f}")
+            with col_aj3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("⚖️ Ajustar", key=f"btn_ajuste_{f}",
+                             use_container_width=True):
+                    try:
+                        resultado_aj = ajustar_saldo(
+                            f, valor_banco, st.session_state.display_name)
+                        if resultado_aj is None:
+                            st.toast("✅ Saldo já está correcto, nenhum ajuste necessário.", icon="✅")
+                        else:
+                            sinal = "+" if resultado_aj["diferenca"] > 0 else ""
+                            st.toast(
+                                f"⚖️ Saldo de '{f}' ajustado! "
+                                f"Diferença: {sinal}€{resultado_aj['diferenca']:,.2f}",
+                                icon="⚖️")
+                        st.session_state.ver += 1
+                        st.rerun()
+                    except RuntimeError as e:
+                        st.error(f"❌ {e}")
+
         # ── Saldos iniciais ──────────────────────────────────────────
         st.divider()
-        st.markdown("#### 🔧 Ajustar Saldo Inicial por Conta")
+        st.markdown("#### 🔧 Definir Saldo Inicial por Conta")
+        st.caption("Use se as contas já tinham dinheiro antes de começar a usar o sistema.")
         for f in fontes_saldo:
             ini_row2  = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (f,))
             ini_atual = ini_row2[0][0] if ini_row2 else 0.0
@@ -1085,7 +1273,7 @@ with tab3:
                 if st.button("Salvar", key=f"salvar_ini_{f}"):
                     db_execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)",
                                (f, novo_ini))
-                    st.success(f"'{f}' atualizado!")
+                    st.toast(f"✅ Saldo inicial de '{f}' actualizado para €{novo_ini:,.2f}!", icon="✅")
                     st.rerun()
 
 
@@ -1636,6 +1824,39 @@ with tab6:
     else:
         st.info("Defina metas na aba 🎯 Metas para ver o relatório comparativo.")
 
+    st.divider()
+
+    # ── Exportação de Backup por Mês ──────────────────────
+    st.markdown("### 📥 Exportar Dados do Mês")
+    st.caption("Gera um ficheiro Excel com transações, resumo por categoria e metas vs realizado.")
+
+    col_exp_a, col_exp_b, col_exp_c = st.columns([1, 1, 3])
+    with col_exp_a:
+        exp_ano = st.number_input("Ano", min_value=2020, max_value=2100,
+                                   value=hoje_d.year, step=1, key="exp_ano")
+    with col_exp_b:
+        exp_mes = st.number_input("Mês", min_value=1, max_value=12,
+                                   value=hoje_d.month, step=1, key="exp_mes")
+
+    exp_mes_ano = f"{int(exp_ano):04d}-{int(exp_mes):02d}"
+    nome_arquivo = f"ERP_Familiar_Backup_{int(exp_mes):02d}_{int(exp_ano)}.xlsx"
+
+    try:
+        xlsx_data = gerar_relatorio_excel(exp_mes_ano)
+        st.download_button(
+            label=f"📥 Exportar {nome_arquivo}",
+            data=xlsx_data,
+            file_name=nome_arquivo,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=False,
+            type="primary",
+        )
+        st.caption(
+            f"O arquivo contém: **Transações de {int(exp_mes):02d}/{int(exp_ano)}**, "
+            f"**Resumo por Categoria** e **Metas vs Realizado**.")
+    except Exception as e:
+        st.error(f"❌ Erro ao gerar relatório: {e}")
+
 
 # ══════════════════════════════════════════════
 #  TAB 7 — GESTÃO
@@ -1683,10 +1904,10 @@ with tab7:
             if n_pai.strip():
                 try:
                     db_execute("INSERT INTO categorias (nome) VALUES (?)", (n_pai.strip(),))
-                    st.success(f"Categoria '{n_pai}' adicionada!")
+                    st.toast(f"✅ Categoria '{n_pai}' adicionada com sucesso!", icon="✅")
                     st.rerun()
                 except Exception:
-                    st.error("Já existe uma categoria com esse nome.")
+                    st.error("❌ Já existe uma categoria com esse nome.")
             else:
                 st.warning("Digite um nome.")
     with col_cat2:
@@ -1701,10 +1922,10 @@ with tab7:
                         pid2 = int(cat_df2[cat_df2['nome'] == pai_sel_gest]['id'].iloc[0])
                         db_execute("INSERT INTO categorias (nome,pai_id) VALUES (?,?)",
                                    (n_sub.strip(), pid2))
-                        st.success(f"'{n_sub}' adicionado em '{pai_sel_gest}'!")
+                        st.toast(f"✅ '{n_sub}' adicionado em '{pai_sel_gest}'!", icon="✅")
                         st.rerun()
                     except Exception:
-                        st.error("Já existe um detalhamento com esse nome.")
+                        st.error("❌ Já existe um detalhamento com esse nome.")
                 else:
                     st.warning("Digite um nome.")
         else:
@@ -1735,9 +1956,12 @@ with tab7:
                     st.error(f"⛔ Remova os detalhamentos de **{', '.join(erros)}** primeiro.")
                 else:
                     ph = ",".join(["?"] * len(ids_cat))
-                    db_execute(f"DELETE FROM categorias WHERE id IN ({ph})", tuple(ids_cat))
-                    st.success(f"{len(ids_cat)} categoria(s) removida(s).")
-                    st.rerun()
+                    try:
+                        db_execute(f"DELETE FROM categorias WHERE id IN ({ph})", tuple(ids_cat))
+                        st.toast(f"🗑️ {len(ids_cat)} categoria(s) removida(s).", icon="🗑️")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Não foi possível remover: {e}")
     else:
         st.info("Nenhuma categoria cadastrada ainda.")
 
@@ -1755,10 +1979,10 @@ with tab7:
             if n_fonte.strip():
                 try:
                     db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_fonte.strip(),))
-                    st.success(f"Conta '{n_fonte}' adicionada!")
+                    st.toast(f"✅ Conta '{n_fonte}' adicionada com sucesso!", icon="✅")
                     st.rerun()
                 except Exception:
-                    st.error("Já existe uma conta com esse nome.")
+                    st.error("❌ Já existe uma conta com esse nome.")
             else:
                 st.warning("Digite um nome.")
     fontes_df = db_df("SELECT id, nome FROM fontes")
@@ -1779,9 +2003,12 @@ with tab7:
                 ops = [(f"DELETE FROM fontes WHERE id IN ({ph})", tuple(ids_f))]
                 for nm in nomes_f:
                     ops.append(("DELETE FROM saldos_iniciais WHERE fonte=?", (nm,)))
-                db_execute_many(ops)
-                st.success(f"{len(ids_f)} conta(s) removida(s).")
-                st.rerun()
+                try:
+                    db_execute_many(ops)
+                    st.toast(f"🗑️ {len(ids_f)} conta(s) removida(s).", icon="🗑️")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao remover conta(s): {e}")
     else:
         st.info("Nenhuma conta cadastrada ainda.")
 
@@ -1799,10 +2026,10 @@ with tab7:
             if n_benef.strip():
                 try:
                     db_execute("INSERT INTO beneficiarios (nome) VALUES (?)", (n_benef.strip(),))
-                    st.success(f"'{n_benef}' adicionado!")
+                    st.toast(f"✅ Beneficiário '{n_benef}' adicionado!", icon="✅")
                     st.rerun()
                 except Exception:
-                    st.error("Já existe um beneficiário com esse nome.")
+                    st.error("❌ Já existe um beneficiário com esse nome.")
             else:
                 st.warning("Digite um nome.")
     benef_df = db_df("SELECT id, nome FROM beneficiarios")
@@ -1819,9 +2046,12 @@ with tab7:
                 st.warning("Selecione pelo menos um.")
             else:
                 ph = ",".join(["?"] * len(ids_b))
-                db_execute(f"DELETE FROM beneficiarios WHERE id IN ({ph})", tuple(ids_b))
-                st.success(f"{len(ids_b)} removido(s).")
-                st.rerun()
+                try:
+                    db_execute(f"DELETE FROM beneficiarios WHERE id IN ({ph})", tuple(ids_b))
+                    st.toast(f"🗑️ {len(ids_b)} beneficiário(s) removido(s).", icon="🗑️")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao remover: {e}")
     else:
         st.info("Nenhum beneficiário cadastrado ainda.")
 
@@ -1846,10 +2076,10 @@ with tab7:
                     db_execute(
                         "INSERT INTO usuarios (username,password,nome_exibicao) VALUES (?,?,?)",
                         (n_user.strip(), hash_password(n_pass), n_nome.strip()))
-                    st.success(f"Utilizador '{n_nome}' adicionado!")
+                    st.toast(f"✅ Utilizador '{n_nome}' adicionado com sucesso!", icon="✅")
                     st.rerun()
                 except Exception:
-                    st.error("Já existe um utilizador com esse nome de login.")
+                    st.error("❌ Já existe um utilizador com esse nome de login.")
         else:
             st.warning("Preencha todos os campos.")
     users_df = db_df("SELECT id, username, nome_exibicao FROM usuarios")
