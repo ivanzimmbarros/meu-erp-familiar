@@ -37,25 +37,46 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main { background-color: #f8fafc; }
-    h1, h2, h3 { font-family: 'Georgia', serif; }
-    .saldo-card { border-radius: 16px; padding: 24px 28px; margin-bottom: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); background: white; border-left: 6px solid #e2e8f0; }
-    .valor-positivo { font-size: 2rem; font-weight: 800; color: #16a34a; }
-    .valor-negativo { font-size: 2rem; font-weight: 800; color: #dc2626; }
-    .valor-carmim   { font-size: 2rem; font-weight: 800; color: #9b1c1c; }
-    .detalhe { font-size: 0.8rem; color: #94a3b8; margin-top: 4px; }
-    .saldo-card-positivo  { border-left-color: #16a34a; }
-    .saldo-card-negativo  { border-left-color: #dc2626; }
-    .saldo-card-cartao    { border-left-color: #8b5cf6; background: #faf5ff; }
-    .saldo-card-insolvencia { border-left-color: #9b1c1c; background: #fef2f2; border: 2px solid #fca5a5; }
-    .badge-pendente { background:#fef9c3; color:#854d0e; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
-    .badge-previsto { background:#e0f2fe; color:#0c4a6e; padding:2px 10px; border-radius:999px; font-size:0.75rem; font-weight:700; }
-    .fatura-aberta  { background: #fff7ed; border: 1px solid #fdba74; border-radius: 12px; padding: 18px 22px; margin-bottom: 12px; }
-    .fatura-fechada { background: #f0fdf4; border: 1px solid #86efac; border-radius: 12px; padding: 18px 22px; margin-bottom: 12px; }
-    .liquidar-row { background: #fffbeb; border-radius: 8px; padding: 10px 14px; margin-bottom: 6px; font-size: 0.88rem; }
-    footer { visibility: hidden; } #MainMenu { visibility: hidden; }
+    /* Estilo para as linhas de liquidação */
+    .liquidar-row {
+        background-color: #f8f9fa;
+        padding: 12px;
+        border-radius: 8px;
+        border-left: 5px solid #6c757d;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        font-size: 0.95em;
+    }
+    
+    /* Badges de Status */
+    .badge-pendente {
+        background-color: #fff3cd;
+        color: #856404;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: bold;
+        font-size: 0.8em;
+        border: 1px solid #ffeeba;
+    }
+    
+    .badge-previsto {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: bold;
+        font-size: 0.8em;
+        border: 1px solid #bee5eb;
+    }
+
+    /* Ajuste para o botão dentro do expander */
+    div[data-testid="stButton"] button {
+        height: 38px;
+    }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ─────────────────────────────────────────────
 #  ESTADO DA SESSÃO
