@@ -999,11 +999,12 @@ with tab2:
                             unsafe_allow_html=True)
                     with col_b:
                         if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}",
-                                     use_container_width=True, type="primary"):
+                                use_container_width=True, type="primary"):
                             liquidar_transacao(tid, st.session_state.display_name)
                             st.session_state.ver += 1
                             st.toast(f"✅ Transação #{tid} liquidada!", icon="✅")
                             st.rerun()
+
         st.markdown("---")
 
     # ── Tabela completa ──────────────────────────
