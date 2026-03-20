@@ -37,45 +37,31 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* Estilo para as linhas de liquidação */
     .liquidar-row {
-        background-color: #f8f9fa;
-        padding: 12px;
+        background-color: #f9f9f9;
+        padding: 10px;
         border-radius: 8px;
-        border-left: 5px solid #6c757d;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        font-size: 0.95em;
+        border: 1px solid #ddd;
+        margin-bottom: 5px;
+        color: #000000 !important; /* FORÇA A COR DA FONTE */
     }
-    
-    /* Badges de Status */
     .badge-pendente {
-        background-color: #fff3cd;
-        color: #856404;
-        padding: 2px 8px;
+        background-color: #ffcccb;
+        color: #d9534f !important;
+        padding: 2px 6px;
         border-radius: 4px;
         font-weight: bold;
-        font-size: 0.8em;
-        border: 1px solid #ffeeba;
     }
-    
     .badge-previsto {
-        background-color: #d1ecf1;
-        color: #0c5460;
-        padding: 2px 8px;
+        background-color: #fff3cd;
+        color: #856404 !important;
+        padding: 2px 6px;
         border-radius: 4px;
         font-weight: bold;
-        font-size: 0.8em;
-        border: 1px solid #bee5eb;
-    }
-
-    /* Ajuste para o botão dentro do expander */
-    div[data-testid="stButton"] button {
-        height: 38px;
     }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # ─────────────────────────────────────────────
