@@ -974,17 +974,28 @@ with tab2:
     if not df_liquidaveis.empty:
         st.markdown("**✅ Liquidar transações pendentes / previstas:**")
         
-        # Converte coluna 'data' para datetime para facilitar o agrupamento
-        # Tenta converter forçando o formato dia/mês/ano
-        df_liquidaveis['data_dt'] = pd.to_datetime(df_liquidaveis['data'], format='%d/%m/%Y', errors='coerce')
+        # 1. FORÇA a conversão para datetime ignorando erros (para evitar que o app trave)
+        # O formato no seu banco parece ser AAAA-MM-DD (pelo SQL de inserção)
+        df_liquidaveis['data_dt'] = pd.to_datetime(df_liquidaveis['data'], errors='coerce')
+        
+        # 2. Remove linhas onde a data não pôde ser convertida
+        df_liquidaveis = df_liquidaveis.dropna(subset=['data_dt'])
+        
+        # 3. Ordena cronologicamente
         df_liquidaveis = df_liquidaveis.sort_values('data_dt')
         
-        # Cria a coluna de referência de mês/ano
+        # 4. Cria a coluna de referência de mês/ano usando o dt
         df_liquidaveis['mes_ano'] = df_liquidaveis['data_dt'].dt.to_period('M')
         
-        # Agrupa pelo período
-        for periodo, grupo in df_liquidaveis.groupby('mes_ano'):
-            nome_expansor = periodo.strftime('%B/%Y').capitalize()
+        # 5. Agrupa e garante que a iteração ocorra
+        grupos = df_liquidaveis.groupby('mes_ano', sort=False)
+        
+        for periodo, grupo in grupos:
+            # O .strftime('%B/%Y') pode falhar se 'periodo' não for um Period
+            try:
+                nome_expansor = periodo.strftime('%B/%Y').capitalize()
+            except:
+                nome_expansor = str(periodo)
             
             with st.expander(f"📅 {nome_expansor} ({len(grupo)} itens)"):
                 for _, row in grupo.iterrows():
@@ -999,7 +1010,7 @@ with tab2:
                         st.markdown(
                             f'<div class="liquidar-row">'
                             f'{badge} &nbsp; {row["data"]} &nbsp;|&nbsp; '
-                            f'{desc_formatada} &nbsp;|&nbsp; '  # <--- AQUI A MÁGICA
+                            f'{desc_formatada} &nbsp;|&nbsp; '
                             f'<strong>€{float(row["valor_eur"]):,.2f}</strong>'
                             f'</div>',
                             unsafe_allow_html=True)
@@ -1012,6 +1023,7 @@ with tab2:
                             st.rerun()
 
         st.markdown("---")
+
 
     # ── Tabela completa ──────────────────────────
     if not df_hist.empty:
