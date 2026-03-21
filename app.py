@@ -939,33 +939,33 @@ with tab2:
         WHERE forma_pagamento != 'Cartão de Crédito'
     """)
     
-    # 2. Buscar resumos de faturas (agrupando por fatura_ref)
-    # Aqui transformamos cada fatura em uma "linha" na lista de lançamentos
+    # 2. Buscar resumos de faturas (agrupando por fatura_ref e pegando o nome do cartão)
     df_faturas = db_df("""
         SELECT 
             'Fatura Cartão' as tipo_linha,
-            MIN(id) as id, -- Pega um ID qualquer da fatura para referência
-            fatura_ref as data,
+            MIN(t.id) as id,
+            t.fatura_ref as data,
             'Cartão de Crédito' as categoria_pai,
-            'Pagamento Fatura' as categoria_filho,
+            c.nome as categoria_filho, -- AQUI: Exibe o nome do cartão
             'Diversos' as beneficiario,
-            fonte,
-            SUM(valor_eur) as valor_eur,
+            t.fonte,
+            SUM(t.valor_eur) as valor_eur,
             'Despesa' as tipo,
-            'Fatura Ref: ' || fatura_ref as nota,
-            usuario,
-            forma_pagamento,
-            cartao_id,
-            fatura_ref,
+            'Fatura ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota,
+            t.usuario,
+            t.forma_pagamento,
+            t.cartao_id,
+            t.fatura_ref,
             'pendente' as status_cartao,
             'PENDENTE' as status_liquidacao,
             NULL as data_liquidacao,
             NULL as parcela_id,
             0 as parcela_numero,
             0 as total_parcelas
-        FROM transacoes 
-        WHERE forma_pagamento = 'Cartão de Crédito' 
-        GROUP BY fatura_ref, fonte
+        FROM transacoes t
+        JOIN cartoes c ON t.cartao_id = c.id
+        WHERE t.forma_pagamento = 'Cartão de Crédito' 
+        GROUP BY t.fatura_ref, t.fonte, c.nome
     """)
     
     # 3. Concatenar tudo
