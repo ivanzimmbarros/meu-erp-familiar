@@ -965,7 +965,19 @@ with tab2:
     st.caption("Visualize, filtre, exporte, liquide ou remova registros.")
     st.divider()
 
-    # 1. Obter dados brutos
+    # 1. Definir opções de filtro
+    fontes_row2  = db_query("SELECT nome FROM fontes")
+    cartoes_row2 = db_query("SELECT nome FROM cartoes")
+    todas_fontes = (["Todas"] + [r[0] for r in fontes_row2] + [r[0] for r in cartoes_row2])
+
+    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+    with col_f1: filtro_tipo   = st.selectbox("Tipo", ["Todos","Despesa","Receita"])
+    with col_f2: filtro_fonte  = st.selectbox("Conta", todas_fontes)
+    with col_f3: filtro_forma  = st.selectbox("Forma", ["Todas","Dinheiro/Débito","Cartão de Crédito"])
+    with col_f4: filtro_status = st.selectbox("Status", ["Todos","PAGO","PENDENTE","PREVISTO"])
+    with col_f5: filtro_busca  = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
+
+    # 2. Buscar dados
     df_comuns = db_df("SELECT 'Transação' as tipo_linha, * FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'")
     df_faturas = db_df("""
         SELECT 'Fatura Cartão' as tipo_linha, MIN(t.id) as id, t.fatura_ref as data, 
@@ -979,11 +991,8 @@ with tab2:
     """)
     df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
     
-    # 2. Ordenação segura (usando coluna auxiliar datetime)
+    # 3. Processamento de filtros
     df_hist['data_dt'] = pd.to_datetime(df_hist['data'], errors='coerce')
-    df_hist = df_hist.sort_values(by='data_dt', ascending=False)
-
-    # 3. Filtros
     if filtro_tipo != "Todos": df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
     if filtro_fonte != "Todas": df_hist = df_hist[df_hist['fonte'] == filtro_fonte]
     if filtro_forma != "Todas": df_hist = df_hist[df_hist['forma_pagamento'] == filtro_forma]
@@ -993,202 +1002,46 @@ with tab2:
                 df_hist['categoria_pai'].str.contains(filtro_busca, case=False, na=False))
         df_hist = df_hist[mask]
     
-    # ── Alerta de pendentes vencidos ──────────
+    df_hist = df_hist.sort_values(by='data_dt', ascending=False)
+    st.caption(f"📌 {len(df_hist)} registro(s)")
+
+    # ── Alerta de pendentes (Mantido) ──────────
     pend_list = get_pendentes_vencidos()
     if pend_list:
         total_pend_v = sum(r[3] for r in pend_list if r[4] == "Despesa")
-        st.markdown(
-            f'<div class="aviso-pendente">⚠️ <strong>Atenção: Contas Vencidas</strong> — '
-            f'{len(pend_list)} transação(ões) PENDENTE(S) não liquidada(s). '
-            f'Total em aberto: <strong>€{total_pend_v:,.2f}</strong>. '
-            f'Clique em ✅ abaixo para liquidar.</div>',
-            unsafe_allow_html=True)
-
-    fontes_row2  = db_query("SELECT nome FROM fontes")
-    cartoes_row2 = db_query("SELECT nome FROM cartoes")
-    todas_fontes = (["Todas"] + [r[0] for r in fontes_row2]
-                    + [r[0] for r in cartoes_row2])
-
-    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
-    with col_f1:
-        filtro_tipo   = st.selectbox("Tipo",   ["Todos","Despesa","Receita"])
-    with col_f2:
-        filtro_fonte  = st.selectbox("Conta",  todas_fontes)
-    with col_f3:
-        filtro_forma  = st.selectbox("Forma",  ["Todas","Dinheiro/Débito","Cartão de Crédito"])
-    with col_f4:
-        filtro_status = st.selectbox("Status", ["Todos","PAGO","PENDENTE","PREVISTO"])
-    with col_f5:
-        filtro_busca  = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
-
-    # 1. Buscar transações comuns (Dinheiro/Débito)
-    df_comuns = db_df("""
-        SELECT 'Transação' as tipo_linha, * 
-        FROM transacoes 
-        WHERE forma_pagamento != 'Cartão de Crédito'
-    """)
-    
-    # 2. Buscar resumos de faturas (agrupando por fatura_ref e pegando o nome do cartão)
-    df_faturas = db_df("""
-        SELECT 
-            'Fatura Cartão' as tipo_linha,
-            MIN(t.id) as id,
-            t.fatura_ref as data,
-            'Cartão de Crédito' as categoria_pai,
-            c.nome as categoria_filho,
-            'Diversos' as beneficiario,
-            t.fonte,
-            SUM(t.valor_eur) as valor_eur,
-            'Despesa' as tipo,
-            'Fatura do ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota,
-            t.usuario,
-            t.forma_pagamento,
-            t.cartao_id,
-            t.fatura_ref,
-            'pendente' as status_cartao,
-            'PENDENTE' as status_liquidacao,
-            NULL as data_liquidacao,
-            NULL as parcela_id,
-            0 as parcela_numero,
-            0 as total_parcelas
-        FROM transacoes t
-        JOIN cartoes c ON t.cartao_id = c.id
-        WHERE t.forma_pagamento = 'Cartão de Crédito' 
-        GROUP BY t.fatura_ref, t.fonte, c.nome
-    """)
-    
-    # 3. Concatenar tudo
-    df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
-    df_hist = df_hist.sort_values(by='data', ascending=False)
-    df_hist = formatar_data_para_exibicao(df_hist, 'data')
-
-    # Formatação visual para parcelas
-    if not df_hist.empty:
-        df_hist['nota'] = df_hist['nota'].apply(lambda x: f"💳 {x}" if "(Parc" in str(x) else x)
-
-    if not df_hist.empty:
-        if filtro_tipo   != "Todos":    df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
-        if filtro_fonte  != "Todas":    df_hist = df_hist[df_hist['fonte'] == filtro_fonte]
-        if filtro_forma  != "Todas":    df_hist = df_hist[df_hist['forma_pagamento'] == filtro_forma]
-        if filtro_status != "Todos":    df_hist = df_hist[df_hist['status_liquidacao'] == filtro_status]
-        if filtro_busca:
-            mask = (df_hist['nota'].str.contains(filtro_busca, case=False, na=False) |
-                    df_hist['categoria_pai'].str.contains(filtro_busca, case=False, na=False) |
-                    df_hist['categoria_filho'].str.contains(filtro_busca, case=False, na=False))
-            df_hist = df_hist[mask]
-
-    st.caption(f"📌 {len(df_hist)} registro(s)")
+        st.markdown(f'<div class="aviso-pendente">⚠️ <strong>Atenção: Contas Vencidas</strong> — Total em aberto: <strong>€{total_pend_v:,.2f}</strong>.</div>', unsafe_allow_html=True)
 
     # ── Exportação ─────────────────────────────
     if not df_hist.empty:
         col_exp1, col_exp2, _ = st.columns([1, 1, 4])
         csv_bytes = df_hist.to_csv(index=False).encode('utf-8-sig')
-        col_exp1.download_button("⬇️ CSV", csv_bytes,
-            f"lancamentos_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            "text/csv", use_container_width=True)
-        excel_buf = io.BytesIO()
-        with pd.ExcelWriter(excel_buf, engine='openpyxl') as w:
-            df_hist.to_excel(w, index=False, sheet_name='Lançamentos')
-        col_exp2.download_button("⬇️ Excel", excel_buf.getvalue(),
-            f"lancamentos_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True)
+        col_exp1.download_button("⬇️ CSV", csv_bytes, f"lancamentos.csv", "text/csv", use_container_width=True)
 
-    st.markdown("---")
-
-    # ── Botões de liquidação para PENDENTES/PREVISTOS ────
-    df_liquidaveis = df_hist[
-        df_hist['status_liquidacao'].isin(['PENDENTE','PREVISTO'])
-    ].copy() if not df_hist.empty else pd.DataFrame()
-
+    # ── Botões de liquidação ──────────────────
+    df_liquidaveis = df_hist[df_hist['status_liquidacao'].isin(['PENDENTE','PREVISTO'])].copy()
     if not df_liquidaveis.empty:
-        st.markdown("**✅ Liquidar transações pendentes / previstas:**")
-        
-        # 1. FORÇA a conversão para datetime ignorando erros (para evitar que o app trave)
-        # O formato no seu banco parece ser AAAA-MM-DD (pelo SQL de inserção)
-        df_liquidaveis['data_dt'] = pd.to_datetime(df_liquidaveis['data'], errors='coerce')
-        
-        # 2. Remove linhas onde a data não pôde ser convertida
-        df_liquidaveis = df_liquidaveis.dropna(subset=['data_dt'])
-        
-        # 3. Ordena cronologicamente
-        df_liquidaveis = df_liquidaveis.sort_values('data_dt')
-        
-        # 4. Cria a coluna de referência de mês/ano usando o dt
-        df_liquidaveis['mes_ano'] = df_liquidaveis['data_dt'].dt.to_period('M')
-        
-        # 5. Agrupa e garante que a iteração ocorra
-        grupos = df_liquidaveis.groupby('mes_ano', sort=False)
-        
-        for periodo, grupo in grupos:
-            # O .strftime('%B/%Y') pode falhar se 'periodo' não for um Period
-            try:
-                nome_expansor = periodo.strftime('%B/%Y').capitalize()
-            except:
-                nome_expansor = str(periodo)
-            
-            with st.expander(f"📅 {nome_expansor} ({len(grupo)} itens)"):
-                for _, row in grupo.iterrows():
-                    tid    = int(row['id'])
-                    sliq   = row['status_liquidacao']
-                    # Define se é fatura ou transação comum
-                    is_fatura = row.get('tipo_linha') == 'Fatura Cartão'
-                    
-                    badge  = f'<span class="badge-pendente">PENDENTE</span>' if sliq == 'PENDENTE' \
-                             else f'<span class="badge-previsto">PREVISTO</span>'
-                    
-                    desc_formatada = formatar_descricao(row)
-                    
-                    # Coluna A mostra a descrição
-                    col_a, col_b = st.columns([5, 1])
-                    with col_a:
-                        st.markdown(
-                            f'<div class="liquidar-row">'
-                            f'{badge} &nbsp; {row["data"]} &nbsp;|&nbsp; '
-                            f'{desc_formatada} &nbsp;|&nbsp; '
-                            f'<strong>€{float(row["valor_eur"]):,.2f}</strong>'
-                            f'</div>',
-                            unsafe_allow_html=True)
-                    
-                    # Coluna B decide qual botão mostrar
-                    with col_b:
-                        if is_fatura:
-                            # BOTÃO PARA CARTÃO (Navegação)
-                            st.button("🔍 Ver", key=f"ver_fat_{tid}", 
-                                      help="Vá para a aba Cartões para ver o detalhe",
-                                      on_click=lambda: st.warning("Por favor, acesse a aba 💳 Cartões para visualizar os detalhes desta fatura."))
-                        else:
-                            # BOTÃO PARA TRANSAÇÃO COMUM (Liquidação)
-                            if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}",
-                                    use_container_width=True, type="primary"):
-                                liquidar_transacao(tid, st.session_state.display_name)
-                                st.session_state.ver += 1
-                                st.toast(f"✅ Transação #{tid} liquidada!", icon="✅")
-                                st.rerun()
+        with st.expander("✅ Liquidar transações pendentes"):
+            for _, row in df_liquidaveis.iterrows():
+                tid = int(row['id'])
+                if st.button(f"Liquidar #{tid} - {row['nota']}", key=f"liq_{tid}"):
+                    liquidar_transacao(tid, st.session_state.display_name)
+                    st.rerun()
 
-
-        st.markdown("---")
-
-
-    # ── Tabela para o Data Editor ──────────────────────────
+    # ── Tabela completa (Data Editor ÚNICO) ──────────────────────────
     if not df_hist.empty:
-        # Criamos uma cópia apenas para exibição
         df_display = df_hist.copy()
         df_display['Data'] = df_display['data_dt'].dt.strftime('%d/%m/%Y')
         df_display.insert(0, "Remover", False)
         
-        # Renomeamos para o usuário
         df_display = df_display.rename(columns={
             'id':'ID', 'categoria_pai':'Categoria', 'categoria_filho':'Detalhamento',
-            'beneficiario':'Beneficiário', 'fonte':'Conta/Cartão', 'valor_eur':'Valor (€)',
-            'tipo':'Tipo', 'nota':'Observação', 'status_liquidacao':'Liquidação'
+            'valor_eur':'Valor (€)', 'status_liquidacao':'Liquidação', 'nota':'Observação'
         })
 
-        # Selecionamos apenas as colunas importantes para não poluir o editor
-        colunas_editor = ["Remover", "Data", "Categoria", "Detalhamento", "Beneficiário", "Valor (€)", "Liquidação", "Observação"]
+        colunas_visiveis = ["Remover", "Data", "Categoria", "Detalhamento", "Valor (€)", "Liquidação", "Observação"]
         
         editor = st.data_editor(
-            df_display[colunas_editor], 
+            df_display[colunas_visiveis], 
             key=f"ed_{st.session_state.ver}",
             use_container_width=True,
             column_config={
@@ -1198,12 +1051,9 @@ with tab2:
             }
         )
         
-        if st.button("🗑️ Confirmar Remoção", type="secondary", key="rm_trans"):
-            # Usamos o ID original que veio do df_hist
+        if st.button("🗑️ Confirmar Remoção", type="secondary"):
             ids_rm = df_display[editor["Remover"] == True]["ID"].tolist()
-            if not ids_rm:
-                st.warning("Marque pelo menos um registro.")
-            else:
+            if ids_rm:
                 ph = ",".join(["?"] * len(ids_rm))
                 db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
                 st.session_state.ver += 1
