@@ -1009,19 +1009,29 @@ with tab2:
     df_liquidaveis = df_hist[df_hist['status_liquidacao'].isin(['PENDENTE','PREVISTO'])].copy()
     if not df_liquidaveis.empty:
         st.markdown("**✅ Liquidar transações pendentes / previstas:**")
+        
+        # Garante que a data está como datetime para o agrupamento
+        df_liquidaveis['data_dt'] = pd.to_datetime(df_liquidaveis['data'], errors='coerce')
         df_liquidaveis['mes_ano'] = df_liquidaveis['data_dt'].dt.to_period('M')
+        
         for periodo, grupo in df_liquidaveis.groupby('mes_ano', sort=False):
             with st.expander(f"📅 {periodo.strftime('%B/%Y').capitalize()} ({len(grupo)} itens)"):
                 for _, row in grupo.iterrows():
                     tid = int(row['id'])
                     is_fatura = row.get('tipo_linha') == 'Fatura Cartão'
+                    
+                    # --- CORREÇÃO AQUI: Formatar a data para exibição ---
+                    data_exibicao = row['data_dt'].strftime('%d/%m/%Y') if pd.notnull(row['data_dt']) else row['data']
+                    
                     col_a, col_b = st.columns([5, 1])
                     with col_a:
                         badge = f'<span class="badge-pendente">{"PENDENTE" if row["status_liquidacao"]=="PENDENTE" else "PREVISTO"}</span>'
-                        st.markdown(f'<div class="liquidar-row">{badge} {row["data"]} | {formatar_descricao(row)} | <strong>€{float(row["valor_eur"]):,.2f}</strong></div>', unsafe_allow_html=True)
+                        # Usamos a data formatada aqui:
+                        st.markdown(f'<div class="liquidar-row">{badge} {data_exibicao} | {formatar_descricao(row)} | <strong>€{float(row["valor_eur"]):,.2f}</strong></div>', unsafe_allow_html=True)
                     with col_b:
                         if is_fatura:
-                            st.button("🔍 Ver", key=f"ver_fat_{tid}", on_click=lambda: st.warning("Acesse a aba 💳 Cartões para detalhes."))
+                            # Botão para redirecionar à aba de cartões
+                            st.button("🔍 Ver", key=f"ver_fat_{tid}", on_click=lambda: st.warning("Acesse a aba 💳 Cartões para visualizar os detalhes desta fatura."))
                         else:
                             if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}"):
                                 liquidar_transacao(tid, st.session_state.display_name)
