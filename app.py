@@ -835,7 +835,14 @@ with tab1:
         nota = st.text_input("Observação (opcional)")
         submit_button = st.form_submit_button("Salvar Transação")
 
-   # --- 4. Processamento (CORRIGIDO) ---
+       # --- 4. Processamento ---
+    if submit_button:
+        if not beneficiario:
+            st.error("Por favor, selecione um beneficiário.")
+        else:
+            try:
+                id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
+
                 # Lógica de parcelamento (agora para Cartão OU Débito)
                 if eh_despesa and num_parcelas > 1:
                     if is_cartao:
@@ -849,17 +856,14 @@ with tab1:
                             data_v = data_input + relativedelta(months=i)
                             lista_parcelas.append((data_v.strftime("%Y-%m-%d"), v_p, i + 1))
 
-                    # O LOOP DEVE ABRANGER TODA A LÓGICA ABAIXO
                     for i, (data_venc, val, num) in enumerate(lista_parcelas):
-                        
-                        # 1. Determina status conforme a regra definida
+                        # LÓGICA DE CORREÇÃO DO STATUS:
                         if is_cartao:
                             status_liq = "PENDENTE"
                         else:
-                            # Se for Débito, i=0 é PAGO, o restante PENDENTE
+                            # Se for débito/banco, a primeira parcela (i == 0) é PAGO, as outras PENDENTE
                             status_liq = "PAGO" if i == 0 else "PENDENTE"
 
-                        # 2. Executa a inserção para CADA parcela dentro do loop
                         db_execute('''INSERT INTO transacoes 
                             (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
@@ -871,7 +875,6 @@ with tab1:
                              "pendente" if is_cartao else None))
                     
                     st.success(f"Despesa parcelada em {num_parcelas}x com sucesso!")
-
 
                 else:
                     # Transação única
@@ -888,6 +891,7 @@ with tab1:
                     st.success("Transação registrada com sucesso!")
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
+
 
 
 # ══════════════════════════════════════════════
