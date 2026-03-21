@@ -821,7 +821,7 @@ with tab1:
         valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
         
         # Agora o input de parcelas aparece sempre que for despesa
-         if eh_despesa:
+        if eh_despesa:
             num_parcelas = col_in1.number_input("Parcelas", min_value=1, max_value=24, value=1)
         else:
             num_parcelas = 1
