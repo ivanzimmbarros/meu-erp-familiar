@@ -797,7 +797,7 @@ with tab1:
     if 'tipo_mov' not in st.session_state: st.session_state.tipo_mov = "💸 Despesa"
     if 'forma_pag' not in st.session_state: st.session_state.forma_pag = "Dinheiro/Débito"
 
-        # 2. Controles de Escolha (Reativos)
+    # 2. Controles de Escolha (Reativos)
     col_tp1, col_tp2 = st.columns(2)
     st.session_state.tipo_mov = col_tp1.radio("Tipo de movimentação", ["💸 Despesa", "💵 Receita"], horizontal=True)
     st.session_state.forma_pag = col_tp2.radio("Forma de pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
@@ -822,7 +822,7 @@ with tab1:
         
         # Agora o input de parcelas aparece sempre que for despesa
         num_parcelas = 1
-        if eh_despesa:
+        if eh_despesa and num_parcelas > 1:
             num_parcelas = col_in1.number_input("Parcelas", min_value=1, max_value=24, value=1)
         
         # ... (restante do código: Categoria, Beneficiário, Nota)
@@ -861,17 +861,18 @@ with tab1:
                         if is_cartao:
                             status_liq = "PENDENTE"
                         else:
-                            # Se for débito/banco, a primeira parcela (i == 0) é PAGO, as outras PENDENTE
                             status_liq = "PAGO" if i == 0 else "PENDENTE"
 
                         db_execute('''INSERT INTO transacoes 
-                            (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
+                            (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, 
+                             usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
                             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                            (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, 
+                            (data_venc, # <--- AQUI: Use data_venc (data calculada) em vez de data_input
+                             cat_pai, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, 
                              f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), 
                              st.session_state.forma_pag, id_fonte if is_cartao else None, 
                              status_liq, 
-                             data_venc, 
+                             data_venc, # Fatura ref continua sendo a data de vencimento
                              "pendente" if is_cartao else None))
                     
                     st.success(f"Despesa parcelada em {num_parcelas}x com sucesso!")
