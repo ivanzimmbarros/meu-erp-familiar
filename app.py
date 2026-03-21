@@ -1350,13 +1350,25 @@ with tab4:
                             "valor_eur,nota,status_cartao FROM transacoes "
                             "WHERE cartao_id=? AND fatura_ref=? ORDER BY data",
                             params=(cid, fat_ref))
+                        
                         if not compras_fat.empty:
+                            # Conversão da data para datetime para o column_config reconhecer
+                            compras_fat['data'] = pd.to_datetime(compras_fat['data'])
+                            
                             compras_fat = compras_fat.rename(columns={
                                 'data':'Data','categoria_pai':'Categoria',
                                 'categoria_filho':'Detalhamento','beneficiario':'Beneficiário',
                                 'valor_eur':'Valor (€)','nota':'Observação','status_cartao':'Status'})
-                            st.dataframe(compras_fat, use_container_width=True, hide_index=True,
-                                column_config={"Valor (€)": st.column_config.NumberColumn(format="€ %.2f")})
+                            
+                            st.dataframe(
+                                compras_fat, 
+                                use_container_width=True, 
+                                hide_index=True,
+                                column_config={
+                                    "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                                    "Valor (€)": st.column_config.NumberColumn(format="€ %.2f")
+                                }
+                            )
 
                     if fat_pendente:
                         saldo_c = calcular_saldo_real(conta_pag)
