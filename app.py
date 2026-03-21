@@ -1352,9 +1352,13 @@ with tab4:
                             params=(cid, fat_ref))
                         
                         if not compras_fat.empty:
-                            # Conversão da data para datetime para o column_config reconhecer
-                            compras_fat['data'] = pd.to_datetime(compras_fat['data'])
+                            # Tenta converter para datetime e formata como string DD/MM/AAAA
+                            # O 'errors="coerce"' evita que o código quebre se houver um dado inválido
+                            compras_fat['data'] = pd.to_datetime(compras_fat['data'], errors='coerce').dt.strftime('%d/%m/%Y')
                             
+                            # Se a conversão falhou (virou NaT), mantemos o original para não sumir o dado
+                            compras_fat['data'] = compras_fat['data'].fillna(compras_fat['data'])
+
                             compras_fat = compras_fat.rename(columns={
                                 'data':'Data','categoria_pai':'Categoria',
                                 'categoria_filho':'Detalhamento','beneficiario':'Beneficiário',
@@ -1365,10 +1369,10 @@ with tab4:
                                 use_container_width=True, 
                                 hide_index=True,
                                 column_config={
-                                    "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
                                     "Valor (€)": st.column_config.NumberColumn(format="€ %.2f")
                                 }
                             )
+
 
                     if fat_pendente:
                         saldo_c = calcular_saldo_real(conta_pag)
