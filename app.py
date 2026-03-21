@@ -1151,13 +1151,14 @@ with tab3:
             
         with col_tot2:
             is_insol = total_livre < 0
-            cls_tl   = "valor-carmim" if is_insol else "valor-positivo"
-            s_tl     = "+" if total_livre > 0 else ""
+            # CORREÇÃO: Definindo cor do texto do valor para garantir contraste contra o fundo
+            val_color = "#ffffff" if not is_insol else "#9b1c1c"
+            s_tl      = "+" if total_livre > 0 else ""
             insol_msg = "<div style='color:#9b1c1c; font-weight:700; margin-top:6px;'>🚨 RISCO DE INSOLVÊNCIA</div>" if is_insol else ""
             
             st.markdown(f"""<div class="saldo-card" style="background:{'#fef2f2' if is_insol else '#1e293b'}; padding: 20px; border-radius: 10px; border-left: 5px solid {'#9b1c1c' if is_insol else '#10b981'};">
                 <h3 style="color:{'#9b1c1c' if is_insol else '#94a3b8'}; margin-top:0;">📊 DISPONIBILIDADE REAL</h3>
-                <div class="{cls_tl}" style="font-size:2rem; font-weight:bold;">{s_tl}€ {total_livre:,.2f}</div>
+                <div style="font-size:2rem; font-weight:bold; color:{val_color};">{s_tl}€ {total_livre:,.2f}</div>
                 <div class="detalhe" style="color:{'#9b1c1c' if is_insol else '#64748b'}; margin-top:5px;">Saldo Real − todos os compromissos</div>
                 {insol_msg}
             </div>""", unsafe_allow_html=True)
@@ -1165,7 +1166,6 @@ with tab3:
         # ── Bater Saldo (Ajuste) ─────────────────────────────────────
         st.divider()
         st.markdown("#### ⚖️ Bater Saldo com o Banco")
-        # ... (restante do código de ajuste de saldo e saldos iniciais permanece igual)
         for f in fontes_saldo:
             saldo_r_aj = calcular_saldo_real(f)
             col_aj1, col_aj2, col_aj3 = st.columns([2, 1.5, 1])
