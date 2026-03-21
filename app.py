@@ -28,6 +28,10 @@ def formatar_descricao(row):
         return f"💳 <strong>{cat}</strong> | {nota}"
     return f"📝 <strong>{cat}</strong> | {row['beneficiario'] or 'Sem beneficiário'}"
 
+def formatar_data_para_exibicao(df, coluna='data'):
+    if coluna in df.columns:
+        df[coluna] = pd.to_datetime(df[coluna]).dt.strftime('%d/%m/%Y')
+    return df
 
 # ─────────────────────────────────────────────
 #  AUDITORIA — log para terminal
@@ -961,6 +965,34 @@ with tab2:
     st.caption("Visualize, filtre, exporte, liquide ou remova registros.")
     st.divider()
 
+    # 1. Obter dados brutos
+    df_comuns = db_df("SELECT 'Transação' as tipo_linha, * FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'")
+    df_faturas = db_df("""
+        SELECT 'Fatura Cartão' as tipo_linha, MIN(t.id) as id, t.fatura_ref as data, 
+               'Cartão de Crédito' as categoria_pai, c.nome as categoria_filho, 
+               'Diversos' as beneficiario, t.fonte, SUM(t.valor_eur) as valor_eur, 
+               'Despesa' as tipo, 'Fatura do ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
+               t.usuario, t.forma_pagamento, t.cartao_id, t.fatura_ref, 
+               'pendente' as status_cartao, 'PENDENTE' as status_liquidacao
+        FROM transacoes t JOIN cartoes c ON t.cartao_id = c.id
+        WHERE t.forma_pagamento = 'Cartão de Crédito' GROUP BY t.fatura_ref, t.fonte, c.nome
+    """)
+    df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
+    
+    # 2. Ordenação segura (usando coluna auxiliar datetime)
+    df_hist['data_dt'] = pd.to_datetime(df_hist['data'], errors='coerce')
+    df_hist = df_hist.sort_values(by='data_dt', ascending=False)
+
+    # 3. Filtros
+    if filtro_tipo != "Todos": df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
+    if filtro_fonte != "Todas": df_hist = df_hist[df_hist['fonte'] == filtro_fonte]
+    if filtro_forma != "Todas": df_hist = df_hist[df_hist['forma_pagamento'] == filtro_forma]
+    if filtro_status != "Todos": df_hist = df_hist[df_hist['status_liquidacao'] == filtro_status]
+    if filtro_busca:
+        mask = (df_hist['nota'].str.contains(filtro_busca, case=False, na=False) |
+                df_hist['categoria_pai'].str.contains(filtro_busca, case=False, na=False))
+        df_hist = df_hist[mask]
+    
     # ── Alerta de pendentes vencidos ──────────
     pend_list = get_pendentes_vencidos()
     if pend_list:
@@ -1028,7 +1060,7 @@ with tab2:
     # 3. Concatenar tudo
     df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
     df_hist = df_hist.sort_values(by='data', ascending=False)
-
+    df_hist = formatar_data_para_exibicao(df_hist, 'data')
 
     # Formatação visual para parcelas
     if not df_hist.empty:
@@ -1138,42 +1170,47 @@ with tab2:
         st.markdown("---")
 
 
-    # ── Tabela completa ──────────────────────────
+    # ── Tabela para o Data Editor ──────────────────────────
     if not df_hist.empty:
-        df_edit = df_hist.copy()
-        df_edit.insert(0, "Remover", False)
-        df_display = df_edit.rename(columns={
-            'id':'ID','data':'Data','categoria_pai':'Categoria',
-            'categoria_filho':'Detalhamento','beneficiario':'Beneficiário',
-            'fonte':'Conta/Cartão','valor_eur':'Valor (€)','tipo':'Tipo',
-            'nota':'Observação','usuario':'Por',
-            'forma_pagamento':'Forma','fatura_ref':'Fatura',
-            'status_cartao':'St.Cartão',
-            'status_liquidacao':'Liquidação','data_liquidacao':'Dt.Liq.'})
+        # Criamos uma cópia apenas para exibição
+        df_display = df_hist.copy()
+        df_display['Data'] = df_display['data_dt'].dt.strftime('%d/%m/%Y')
+        df_display.insert(0, "Remover", False)
+        
+        # Renomeamos para o usuário
+        df_display = df_display.rename(columns={
+            'id':'ID', 'categoria_pai':'Categoria', 'categoria_filho':'Detalhamento',
+            'beneficiario':'Beneficiário', 'fonte':'Conta/Cartão', 'valor_eur':'Valor (€)',
+            'tipo':'Tipo', 'nota':'Observação', 'status_liquidacao':'Liquidação'
+        })
+
+        # Selecionamos apenas as colunas importantes para não poluir o editor
+        colunas_editor = ["Remover", "Data", "Categoria", "Detalhamento", "Beneficiário", "Valor (€)", "Liquidação", "Observação"]
+        
         editor = st.data_editor(
-            df_display, key=f"ed_{st.session_state.ver}",
+            df_display[colunas_editor], 
+            key=f"ed_{st.session_state.ver}",
             use_container_width=True,
             column_config={
                 "Remover":    st.column_config.CheckboxColumn("🗑️"),
                 "Valor (€)":  st.column_config.NumberColumn(format="€ %.2f"),
-                "Liquidação": st.column_config.SelectboxColumn(
-                    options=["PAGO","PENDENTE","PREVISTO"]),
-            })
+                "Liquidação": st.column_config.SelectboxColumn(options=["PAGO","PENDENTE","PREVISTO"]),
+            }
+        )
+        
         if st.button("🗑️ Confirmar Remoção", type="secondary", key="rm_trans"):
-            ids_rm = editor[editor["Remover"] == True]["ID"].tolist()
+            # Usamos o ID original que veio do df_hist
+            ids_rm = df_display[editor["Remover"] == True]["ID"].tolist()
             if not ids_rm:
                 st.warning("Marque pelo menos um registro.")
             else:
                 ph = ",".join(["?"] * len(ids_rm))
-                try:
-                    db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
-                    st.session_state.ver += 1
-                    st.toast(f"🗑️ {len(ids_rm)} lançamento(s) removido(s) com sucesso.", icon="🗑️")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Não foi possível remover: {e}")
+                db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
+                st.session_state.ver += 1
+                st.rerun()
     else:
-        st.info("Nenhum lançamento encontrado com os filtros aplicados.")
+        st.info("Nenhum lançamento encontrado.")
+
 
 
 # ══════════════════════════════════════════════
