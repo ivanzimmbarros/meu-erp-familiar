@@ -14,6 +14,12 @@ def criar_quadro_legivel(titulo):
     """, unsafe_allow_html=True)
 
 def formatar_descricao(row):
+    # Se for uma linha de fatura (que criamos no SQL da Tab 2), 
+    # usamos a coluna 'nota' que já contém o nome do cartão e a referência.
+    if row.get('tipo_linha') == 'Fatura Cartão':
+        return f"📝 <strong>{row['nota']}</strong>"
+    
+    # Formato original para transações comuns
     nota = str(row['nota'])
     cat = f"{row['categoria_pai']}/{row['categoria_filho']}"
     
@@ -21,6 +27,7 @@ def formatar_descricao(row):
     if "(Parc" in nota:
         return f"💳 <strong>{cat}</strong> | {nota}"
     return f"📝 <strong>{cat}</strong> | {row['beneficiario'] or 'Sem beneficiário'}"
+
 
 # ─────────────────────────────────────────────
 #  AUDITORIA — log para terminal
