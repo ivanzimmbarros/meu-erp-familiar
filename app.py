@@ -856,13 +856,24 @@ with tab1:
                             data_v = data_input + relativedelta(months=i)
                             lista_parcelas.append((data_v.strftime("%Y-%m-%d"), v_p, i + 1))
 
-                    for data_venc, val, num in lista_parcelas:
-                        db_execute('''INSERT INTO transacoes 
-                            (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
-                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                            (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, 
-                             f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), 
-                             st.session_state.forma_pag, id_fonte if is_cartao else None, "PENDENTE", data_venc, "pendente" if is_cartao else None))
+                    for i, (data_venc, val, num) in enumerate(lista_parcelas):
+    
+                    # LÓGICA DE CORREÇÃO DO STATUS:
+                    if is_cartao:
+                        status_liq = "PENDENTE"
+                    else:
+                        # Se for débito/banco, a primeira parcela (i == 0) é PAGO, as outras PENDENTE
+                        status_liq = "PAGO" if i == 0 else "PENDENTE"
+
+                    db_execute('''INSERT INTO transacoes 
+                        (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, 
+                            f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), 
+                            st.session_state.forma_pag, id_fonte if is_cartao else None, 
+                            status_liq,  # <--- Usando a variável definid
+                            data_venc, 
+                            "pendente" if is_cartao else None))
                     
                     st.success(f"Despesa parcelada em {num_parcelas}x com sucesso!")
 
