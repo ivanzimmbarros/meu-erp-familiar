@@ -932,7 +932,46 @@ with tab2:
     with col_f5:
         filtro_busca  = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
 
-    df_hist = db_df("SELECT * FROM transacoes ORDER BY id DESC")
+    # 1. Buscar transações comuns (Dinheiro/Débito)
+    df_comuns = db_df("""
+        SELECT 'Transação' as tipo_linha, * 
+        FROM transacoes 
+        WHERE forma_pagamento != 'Cartão de Crédito'
+    """)
+    
+    # 2. Buscar resumos de faturas (agrupando por fatura_ref)
+    # Aqui transformamos cada fatura em uma "linha" na lista de lançamentos
+    df_faturas = db_df("""
+        SELECT 
+            'Fatura Cartão' as tipo_linha,
+            MIN(id) as id, -- Pega um ID qualquer da fatura para referência
+            fatura_ref as data,
+            'Cartão de Crédito' as categoria_pai,
+            'Pagamento Fatura' as categoria_filho,
+            'Diversos' as beneficiario,
+            fonte,
+            SUM(valor_eur) as valor_eur,
+            'Despesa' as tipo,
+            'Fatura Ref: ' || fatura_ref as nota,
+            usuario,
+            forma_pagamento,
+            cartao_id,
+            fatura_ref,
+            'pendente' as status_cartao,
+            'PENDENTE' as status_liquidacao,
+            NULL as data_liquidacao,
+            NULL as parcela_id,
+            0 as parcela_numero,
+            0 as total_parcelas
+        FROM transacoes 
+        WHERE forma_pagamento = 'Cartão de Crédito' 
+        GROUP BY fatura_ref, fonte
+    """)
+    
+    # 3. Concatenar tudo
+    df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
+    df_hist = df_hist.sort_values(by='data', ascending=False)
+
 
     # Formatação visual para parcelas
     if not df_hist.empty:
@@ -1003,10 +1042,15 @@ with tab2:
                 for _, row in grupo.iterrows():
                     tid    = int(row['id'])
                     sliq   = row['status_liquidacao']
+                    # Define se é fatura ou transação comum
+                    is_fatura = row.get('tipo_linha') == 'Fatura Cartão'
+                    
                     badge  = f'<span class="badge-pendente">PENDENTE</span>' if sliq == 'PENDENTE' \
                              else f'<span class="badge-previsto">PREVISTO</span>'
                     
                     desc_formatada = formatar_descricao(row)
+                    
+                    # Coluna A mostra a descrição
                     col_a, col_b = st.columns([5, 1])
                     with col_a:
                         st.markdown(
@@ -1016,13 +1060,23 @@ with tab2:
                             f'<strong>€{float(row["valor_eur"]):,.2f}</strong>'
                             f'</div>',
                             unsafe_allow_html=True)
+                    
+                    # Coluna B decide qual botão mostrar
                     with col_b:
-                        if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}",
-                                use_container_width=True, type="primary"):
-                            liquidar_transacao(tid, st.session_state.display_name)
-                            st.session_state.ver += 1
-                            st.toast(f"✅ Transação #{tid} liquidada!", icon="✅")
-                            st.rerun()
+                        if is_fatura:
+                            # BOTÃO PARA CARTÃO (Navegação)
+                            st.button("🔍 Ver", key=f"ver_fat_{tid}", 
+                                      help="Vá para a aba Cartões para ver o detalhe",
+                                      on_click=lambda: st.warning("Por favor, acesse a aba 💳 Cartões para visualizar os detalhes desta fatura."))
+                        else:
+                            # BOTÃO PARA TRANSAÇÃO COMUM (Liquidação)
+                            if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}",
+                                    use_container_width=True, type="primary"):
+                                liquidar_transacao(tid, st.session_state.display_name)
+                                st.session_state.ver += 1
+                                st.toast(f"✅ Transação #{tid} liquidada!", icon="✅")
+                                st.rerun()
+
 
         st.markdown("---")
 
