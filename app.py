@@ -129,6 +129,25 @@ st.markdown("""
         font-size: 0.85rem;
     }
 
+    .card {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+        margin-bottom: 10px;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    }
+    
+    .saldo-total-card {
+        background-color: #1e293b;
+        color: white;
+        padding: 25px;
+        border-radius: 12px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1129,18 +1148,12 @@ with tab3:
                 criar_quadro_legivel(f"🏦 {f}")
                 
                 # 2. Chama o restante do card (sem o título antigo)
-                st.markdown(
-                    f'<div class="saldo-card {cls_r}" style="border-top-left-radius: 0; border-top-right-radius: 0; border-top: none;">'
-                    f'<div class="{cls_vr}">{sinal_r}€ {saldo_r:,.2f}</div>'
-                    f'<div class="detalhe">Saldo Real (PAGO){ini_txt}</div>'
-                    '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #f1f5f9;">'
-                    f'<div class="{cls_vl}" style="font-size:1.4rem;">{sinal_l}€ {saldo_l:,.2f}</div>'
-                    '<div class="detalhe">Saldo Livre (Real − Compromissos)</div>'
-                    f'{comp_txt}'
-                    '</div>'
-                    f'{risco_txt}'
-                    '</div>',
-                    unsafe_allow_html=True
+                st.markdown(f"""
+                    <div class="card">
+                        <h3>{nome_conta}</h3>
+                        <p>Saldo: <strong>€{saldo:,.2f}</strong></p>
+                    </div>
+                """, unsafe_allow_html=True)
                 )
 
         st.divider()
