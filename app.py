@@ -78,13 +78,22 @@ st.markdown("""
     
     /* Estilo do Card do Cartão */
     .saldo-card-cartao {
-        background-color: #ffffff !important;
-        color: #333333 !important; /* Cor do texto garantida */
+        background-color: #f8f9fa !important;
         padding: 15px;
         border-left: 5px solid #3b82f6;
         border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         margin-bottom: 20px;
+        color: #333333 !important; /* Cor base do texto */
+    }
+
+    .saldo-card-cartao h4 {
+        color: #333333 !important; /* Cor do título */
+        margin: 0 0 10px 0 !important;
+        padding: 0 !important;
+    }
+    .saldo-card-cartao strong {
+        color: #000000 !important; /* Destaques em negrito ficam pretos */
     }
     
     /* Estilo das Faturas */
@@ -1403,25 +1412,22 @@ with tab4:
             pct_uso    = (usado / limite_c * 100) if limite_c > 0 else 0
             cor_disp   = "#16a34a" if disp > limite_c*0.3 else "#f59e0b" if disp > 0 else "#dc2626"
 
-            # --- CORREÇÃO DE LAYOUT DO CARD ---
-            # Removemos a margem negativa para evitar conflito com o Streamlit
+            # --- CARD ATUALIZADO ---
             st.markdown(f"""
-            <div style="background-color: #f8f9fa; padding: 15px; border-left: 5px solid #3b82f6; 
-                        border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px;">
-                <h4 style="margin: 0 0 10px 0; padding: 0;">💳 {nome_c}</h4>
+            <div class="saldo-card-cartao">
+                <h4>💳 {nome_c}</h4>
                 <div style="display:flex; gap: 20px; flex-wrap: wrap; font-size: 0.95rem;">
                     <div>Limite: <strong>€{limite_c:,.2f}</strong></div>
                     <div>Usado: <strong style="color:#ef4444;">€{usado:,.2f}</strong></div>
                     <div>Disp: <strong style="color:{cor_disp};">€{disp:,.2f}</strong></div>
                     <div>Uso: <strong>{pct_uso:.0f}%</strong></div>
                 </div>
-                <div style="margin-top: 10px; font-size: 0.8rem; color: #666; border-top: 1px solid #ddd; padding-top: 5px;">
+                <div style="margin-top: 10px; font-size: 0.8rem; color: #555; border-top: 1px solid #ddd; padding-top: 5px;">
                     Fechamento: dia {dia_fech_c} | Vencimento: dia {dia_venc_c} | Conta: {conta_pag}
                 </div>
             </div>
             """, unsafe_allow_html=True)
             # -----------------------------------
-
 
             faturas_df = db_df(
                 "SELECT fatura_ref, SUM(valor_eur) as total, COUNT(*) as n_compras, "
