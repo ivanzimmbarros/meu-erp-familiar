@@ -835,14 +835,7 @@ with tab1:
         nota = st.text_input("Observação (opcional)")
         submit_button = st.form_submit_button("Salvar Transação")
 
-    # --- 4. Processamento ---
-    if submit_button:
-        if not beneficiario:
-            st.error("Por favor, selecione um beneficiário.")
-        else:
-            try:
-                id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
-
+   # --- 4. Processamento (CORRIGIDO) ---
                 # Lógica de parcelamento (agora para Cartão OU Débito)
                 if eh_despesa and num_parcelas > 1:
                     if is_cartao:
@@ -856,26 +849,29 @@ with tab1:
                             data_v = data_input + relativedelta(months=i)
                             lista_parcelas.append((data_v.strftime("%Y-%m-%d"), v_p, i + 1))
 
+                    # O LOOP DEVE ABRANGER TODA A LÓGICA ABAIXO
                     for i, (data_venc, val, num) in enumerate(lista_parcelas):
-    
-                    # LÓGICA DE CORREÇÃO DO STATUS:
-                    if is_cartao:
-                        status_liq = "PENDENTE"
-                    else:
-                        # Se for débito/banco, a primeira parcela (i == 0) é PAGO, as outras PENDENTE
-                        status_liq = "PAGO" if i == 0 else "PENDENTE"
+                        
+                        # 1. Determina status conforme a regra definida
+                        if is_cartao:
+                            status_liq = "PENDENTE"
+                        else:
+                            # Se for Débito, i=0 é PAGO, o restante PENDENTE
+                            status_liq = "PAGO" if i == 0 else "PENDENTE"
 
-                    db_execute('''INSERT INTO transacoes 
-                        (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                        (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, 
-                            f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), 
-                            st.session_state.forma_pag, id_fonte if is_cartao else None, 
-                            status_liq,  # <--- Usando a variável definid
-                            data_venc, 
-                            "pendente" if is_cartao else None))
+                        # 2. Executa a inserção para CADA parcela dentro do loop
+                        db_execute('''INSERT INTO transacoes 
+                            (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                            (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, 
+                             f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), 
+                             st.session_state.forma_pag, id_fonte if is_cartao else None, 
+                             status_liq, 
+                             data_venc, 
+                             "pendente" if is_cartao else None))
                     
                     st.success(f"Despesa parcelada em {num_parcelas}x com sucesso!")
+
 
                 else:
                     # Transação única
