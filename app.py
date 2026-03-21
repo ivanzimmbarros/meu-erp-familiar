@@ -75,6 +75,34 @@ st.markdown("""
         border-radius: 4px;
         font-weight: bold;
     }
+
+    .saldo-card-cartao {
+    background-color: #ffffff;
+    padding: 15px;
+    border-left: 5px solid #3b82f6; /* Cor de destaque */
+    border-bottom: 1px solid #dee2e6;
+    border-right: 1px solid #dee2e6;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    .fatura-aberta {
+        background-color: #fffaf0;
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid #ffeeba;
+        margin: 5px 0;
+    }
+    
+    .fatura-fechada {
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid #dee2e6;
+        margin: 5px 0;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1362,22 +1390,25 @@ with tab4:
             pct_uso    = (usado / limite_c * 100) if limite_c > 0 else 0
             cor_disp   = "#16a34a" if disp > limite_c*0.3 else "#f59e0b" if disp > 0 else "#dc2626"
 
-            # --- CORREÇÃO AQUI ---
-            # 1. Título com a função de quadro
-            criar_quadro_legivel(f"💳 {nome_c}")
-            
-            # 2. Corpo do cartão (borda superior removida e margem negativa)
+            # --- CORREÇÃO DE LAYOUT DO CARD ---
+            # Removemos a margem negativa para evitar conflito com o Streamlit
             st.markdown(f"""
-            <div class="saldo-card saldo-card-cartao" style="border-top-left-radius: 0; border-top-right-radius: 0; border-top: none; margin-top: -15px;">
-                <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:8px;">
-                    <span>Limite: <strong>€{limite_c:,.2f}</strong></span>
-                    <span>Usado: <strong style="color:#ef4444;">€{usado:,.2f}</strong></span>
-                    <span>Disponível: <strong style="color:{cor_disp};">€{disp:,.2f}</strong></span>
-                    <span>Uso: <strong>{pct_uso:.0f}%</strong></span>
+            <div style="background-color: #f8f9fa; padding: 15px; border-left: 5px solid #3b82f6; 
+                        border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px;">
+                <h4 style="margin: 0 0 10px 0; padding: 0;">💳 {nome_c}</h4>
+                <div style="display:flex; gap: 20px; flex-wrap: wrap; font-size: 0.95rem;">
+                    <div>Limite: <strong>€{limite_c:,.2f}</strong></div>
+                    <div>Usado: <strong style="color:#ef4444;">€{usado:,.2f}</strong></div>
+                    <div>Disp: <strong style="color:{cor_disp};">€{disp:,.2f}</strong></div>
+                    <div>Uso: <strong>{pct_uso:.0f}%</strong></div>
                 </div>
-                <div class="detalhe">Fechamento: dia {dia_fech_c} | Vencimento: dia {dia_venc_c} | Conta: {conta_pag}</div>
-            </div>""", unsafe_allow_html=True)
-            # ---------------------
+                <div style="margin-top: 10px; font-size: 0.8rem; color: #666; border-top: 1px solid #ddd; padding-top: 5px;">
+                    Fechamento: dia {dia_fech_c} | Vencimento: dia {dia_venc_c} | Conta: {conta_pag}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            # -----------------------------------
+
 
             faturas_df = db_df(
                 "SELECT fatura_ref, SUM(valor_eur) as total, COUNT(*) as n_compras, "
