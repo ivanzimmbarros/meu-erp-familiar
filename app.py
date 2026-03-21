@@ -75,32 +75,45 @@ st.markdown("""
         border-radius: 4px;
         font-weight: bold;
     }
-
+    
+    /* Estilo do Card do Cartão */
     .saldo-card-cartao {
-    background-color: #ffffff;
-    padding: 15px;
-    border-left: 5px solid #3b82f6; /* Cor de destaque */
-    border-bottom: 1px solid #dee2e6;
-    border-right: 1px solid #dee2e6;
-    border-bottom-left-radius: 8px;
-    border-bottom-right-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        background-color: #ffffff !important;
+        color: #333333 !important; /* Cor do texto garantida */
+        padding: 15px;
+        border-left: 5px solid #3b82f6;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
     }
     
+    /* Estilo das Faturas */
     .fatura-aberta {
-        background-color: #fffaf0;
-        padding: 10px;
+        background-color: #fffaf0 !important;
+        color: #333333 !important; /* Texto escuro no fundo claro */
+        padding: 12px;
         border-radius: 6px;
         border: 1px solid #ffeeba;
-        margin: 5px 0;
+        margin-bottom: 10px;
     }
     
     .fatura-fechada {
-        background-color: #f8f9fa;
-        padding: 10px;
+        background-color: #f8f9fa !important;
+        color: #333333 !important; /* Texto escuro no fundo claro */
+        padding: 12px;
         border-radius: 6px;
         border: 1px solid #dee2e6;
-        margin: 5px 0;
+        margin-bottom: 10px;
+    }
+
+    /* Garantir que negritos e spans dentro dos cards também fiquem escuros */
+    .saldo-card-cartao strong, .fatura-aberta strong, .fatura-fechada strong {
+        color: #000000 !important;
+    }
+    
+    .detalhe {
+        color: #555555 !important;
+        font-size: 0.85rem;
     }
 
 </style>
