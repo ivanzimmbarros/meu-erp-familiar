@@ -958,14 +958,14 @@ with tab1:
 
 
 # ══════════════════════════════════════════════
-#  TAB 2 — TODOS OS LANÇAMENTOS
+#  TAB 2 — TODOS OS LANÇAMENTOS (RECONSTRUÍDA)
 # ══════════════════════════════════════════════
 with tab2:
     st.markdown("## 📋 Histórico de Lançamentos")
     st.caption("Visualize, filtre, exporte, liquide ou remova registros.")
     st.divider()
 
-    # 1. Definir opções de filtro
+    # 1. Filtros
     fontes_row2  = db_query("SELECT nome FROM fontes")
     cartoes_row2 = db_query("SELECT nome FROM cartoes")
     todas_fontes = (["Todas"] + [r[0] for r in fontes_row2] + [r[0] for r in cartoes_row2])
@@ -977,7 +977,7 @@ with tab2:
     with col_f4: filtro_status = st.selectbox("Status", ["Todos","PAGO","PENDENTE","PREVISTO"])
     with col_f5: filtro_busca  = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
 
-    # 2. Buscar dados
+    # 2. Dados
     df_comuns = db_df("SELECT 'Transação' as tipo_linha, * FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'")
     df_faturas = db_df("""
         SELECT 'Fatura Cartão' as tipo_linha, MIN(t.id) as id, t.fatura_ref as data, 
@@ -985,14 +985,17 @@ with tab2:
                'Diversos' as beneficiario, t.fonte, SUM(t.valor_eur) as valor_eur, 
                'Despesa' as tipo, 'Fatura do ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
                t.usuario, t.forma_pagamento, t.cartao_id, t.fatura_ref, 
-               'pendente' as status_cartao, 'PENDENTE' as status_liquidacao
+               'pendente' as status_cartao, 'PENDENTE' as status_liquidacao, NULL as data_liquidacao, 
+               NULL as parcela_id, 0 as parcela_numero, 0 as total_parcelas
         FROM transacoes t JOIN cartoes c ON t.cartao_id = c.id
         WHERE t.forma_pagamento = 'Cartão de Crédito' GROUP BY t.fatura_ref, t.fonte, c.nome
     """)
-    df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
     
-    # 3. Processamento de filtros
+    df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
     df_hist['data_dt'] = pd.to_datetime(df_hist['data'], errors='coerce')
+    df_hist = df_hist.sort_values(by='data_dt', ascending=False)
+
+    # 3. Aplicar filtros
     if filtro_tipo != "Todos": df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
     if filtro_fonte != "Todas": df_hist = df_hist[df_hist['fonte'] == filtro_fonte]
     if filtro_forma != "Todas": df_hist = df_hist[df_hist['forma_pagamento'] == filtro_forma]
@@ -1001,67 +1004,57 @@ with tab2:
         mask = (df_hist['nota'].str.contains(filtro_busca, case=False, na=False) |
                 df_hist['categoria_pai'].str.contains(filtro_busca, case=False, na=False))
         df_hist = df_hist[mask]
-    
-    df_hist = df_hist.sort_values(by='data_dt', ascending=False)
-    st.caption(f"📌 {len(df_hist)} registro(s)")
 
-    # ── Alerta de pendentes (Mantido) ──────────
-    pend_list = get_pendentes_vencidos()
-    if pend_list:
-        total_pend_v = sum(r[3] for r in pend_list if r[4] == "Despesa")
-        st.markdown(f'<div class="aviso-pendente">⚠️ <strong>Atenção: Contas Vencidas</strong> — Total em aberto: <strong>€{total_pend_v:,.2f}</strong>.</div>', unsafe_allow_html=True)
-
-    # ── Exportação ─────────────────────────────
-    if not df_hist.empty:
-        col_exp1, col_exp2, _ = st.columns([1, 1, 4])
-        csv_bytes = df_hist.to_csv(index=False).encode('utf-8-sig')
-        col_exp1.download_button("⬇️ CSV", csv_bytes, f"lancamentos.csv", "text/csv", use_container_width=True)
-
-    # ── Botões de liquidação ──────────────────
+    # 4. Blocos de Liquidação (Agrupados por Mês)
     df_liquidaveis = df_hist[df_hist['status_liquidacao'].isin(['PENDENTE','PREVISTO'])].copy()
     if not df_liquidaveis.empty:
-        with st.expander("✅ Liquidar transações pendentes"):
-            for _, row in df_liquidaveis.iterrows():
-                tid = int(row['id'])
-                if st.button(f"Liquidar #{tid} - {row['nota']}", key=f"liq_{tid}"):
-                    liquidar_transacao(tid, st.session_state.display_name)
-                    st.rerun()
+        st.markdown("**✅ Liquidar transações pendentes / previstas:**")
+        df_liquidaveis['mes_ano'] = df_liquidaveis['data_dt'].dt.to_period('M')
+        for periodo, grupo in df_liquidaveis.groupby('mes_ano', sort=False):
+            with st.expander(f"📅 {periodo.strftime('%B/%Y').capitalize()} ({len(grupo)} itens)"):
+                for _, row in grupo.iterrows():
+                    tid = int(row['id'])
+                    is_fatura = row.get('tipo_linha') == 'Fatura Cartão'
+                    col_a, col_b = st.columns([5, 1])
+                    with col_a:
+                        badge = f'<span class="badge-pendente">{"PENDENTE" if row["status_liquidacao"]=="PENDENTE" else "PREVISTO"}</span>'
+                        st.markdown(f'<div class="liquidar-row">{badge} {row["data"]} | {formatar_descricao(row)} | <strong>€{float(row["valor_eur"]):,.2f}</strong></div>', unsafe_allow_html=True)
+                    with col_b:
+                        if is_fatura:
+                            st.button("🔍 Ver", key=f"ver_fat_{tid}", on_click=lambda: st.warning("Acesse a aba 💳 Cartões para detalhes."))
+                        else:
+                            if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}"):
+                                liquidar_transacao(tid, st.session_state.display_name)
+                                st.session_state.ver += 1
+                                st.rerun()
 
-    # ── Tabela completa (Data Editor ÚNICO) ──────────────────────────
+    # 5. Tabela Geral (Data Editor)
+    st.markdown("---")
     if not df_hist.empty:
         df_display = df_hist.copy()
         df_display['Data'] = df_display['data_dt'].dt.strftime('%d/%m/%Y')
         df_display.insert(0, "Remover", False)
         
+        # Renomeação para exibir colunas amigáveis
         df_display = df_display.rename(columns={
-            'id':'ID', 'categoria_pai':'Categoria', 'categoria_filho':'Detalhamento',
-            'valor_eur':'Valor (€)', 'status_liquidacao':'Liquidação', 'nota':'Observação'
+            'id':'ID', 'categoria_pai':'Categoria', 'valor_eur':'Valor (€)',
+            'status_liquidacao':'Liquidação', 'nota':'Observação'
         })
 
-        colunas_visiveis = ["Remover", "Data", "Categoria", "Detalhamento", "Valor (€)", "Liquidação", "Observação"]
-        
         editor = st.data_editor(
-            df_display[colunas_visiveis], 
-            key=f"ed_{st.session_state.ver}",
-            use_container_width=True,
-            column_config={
-                "Remover":    st.column_config.CheckboxColumn("🗑️"),
-                "Valor (€)":  st.column_config.NumberColumn(format="€ %.2f"),
-                "Liquidação": st.column_config.SelectboxColumn(options=["PAGO","PENDENTE","PREVISTO"]),
-            }
+            df_display[["Remover", "Data", "Categoria", "Valor (€)", "Liquidação", "Observação"]], 
+            key=f"ed_final_{st.session_state.ver}",
+            use_container_width=True
         )
         
-        if st.button("🗑️ Confirmar Remoção", type="secondary"):
+        if st.button("🗑️ Confirmar Remoção"):
             ids_rm = df_display[editor["Remover"] == True]["ID"].tolist()
             if ids_rm:
-                ph = ",".join(["?"] * len(ids_rm))
-                db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
+                db_execute(f"DELETE FROM transacoes WHERE id IN ({','.join(['?']*len(ids_rm))})", tuple(ids_rm))
                 st.session_state.ver += 1
                 st.rerun()
     else:
         st.info("Nenhum lançamento encontrado.")
-
-
 
 # ══════════════════════════════════════════════
 #  TAB 3 — SALDOS
