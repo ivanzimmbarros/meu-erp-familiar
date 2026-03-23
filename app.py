@@ -2092,7 +2092,7 @@ with tab7:
     st.dataframe(users_df, use_container_width=True, hide_index=True)
 
 # ══════════════════════════════════════════════
-#  TAB 8 — TRANSFERÊNCIAS (VERSÃO CORRIGIDA)
+#  TAB 8 — TRANSFERÊNCIAS (VERSÃO FINAL)
 # ══════════════════════════════════════════════
 
 with tab8:
@@ -2106,23 +2106,27 @@ with tab8:
     if len(fontes_trans) < 2:
         st.warning("⚠️ Você precisa de pelo menos duas contas cadastradas para realizar transferências.")
     else:
-        # Criamos as seleções FORA do form para garantir que reajam imediatamente
         col_t1, col_t2 = st.columns(2)
         
-        # Estado inicial caso não exista
-        if 'origem_trans' not in st.session_state: st.session_state.origem_trans = fontes_trans[0]
+        # Estado inicial para evitar erros de índice
+        if 'origem_trans' not in st.session_state: 
+            st.session_state.origem_trans = fontes_trans[0]
         
         origem = col_t1.selectbox("Conta de Origem", fontes_trans, 
                                   index=fontes_trans.index(st.session_state.origem_trans),
                                   key="origem_trans")
         
-        # Filtro dinâmico
+        # Filtro dinâmico para a conta de destino
         opcoes_destino = [f for f in fontes_trans if f != origem]
         destino = col_t2.selectbox("Conta de Destino", opcoes_destino, key="destino_trans")
 
         with st.form("form_transferencia", clear_on_submit=True):
             valor_trans = st.number_input("Valor da Transferência (€)", min_value=0.01, step=10.0, format="%.2f")
-            data_trans = st.date_input("Data da Transferência", date.today())
+            
+            # O campo de data permanece aqui; o formato visual é gerenciado pelo SO/Browser,
+            # mas a conversão para o banco de dados é garantida abaixo no strftime.
+            data_trans = st.date_input("Data da Transferência", date.today(), format="DD/MM/YYYY")
+            
             nota_trans = st.text_input("Observação (opcional)")
             
             btn_enviar = st.form_submit_button("🔁 Executar Transferência", type="primary", use_container_width=True)
@@ -2132,6 +2136,7 @@ with tab8:
                     st.error("O valor deve ser maior que zero.")
                 else:
                     try:
+                        # Execução da transferência com conversão forçada para dd/mm/aaaa
                         realizar_transferencia(
                             origem, 
                             destino, 
