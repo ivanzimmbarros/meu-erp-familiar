@@ -2100,6 +2100,7 @@ with tab8:
     st.caption("Movimente valores entre suas contas mantendo o saldo equilibrado.")
     st.divider()
 
+    # Leitura das contas atualizadas diretamente do banco
     fontes_trans = [r[0] for r in db_query("SELECT nome FROM fontes ORDER BY nome")]
     
     if len(fontes_trans) < 2:
@@ -2107,29 +2108,42 @@ with tab8:
     else:
         with st.form("form_transferencia", clear_on_submit=True):
             col_t1, col_t2 = st.columns(2)
-            origem = col_t1.selectbox("Conta de Origem", fontes_trans)
-            destino = col_t2.selectbox("Conta de Destino", [f for f in fontes_trans if f != origem])
+            
+            # Adicionadas 'key' para evitar conflitos de estado no Streamlit
+            origem = col_t1.selectbox("Conta de Origem", fontes_trans, key="transf_origem")
+            
+            # Filtro dinâmico para a conta de destino
+            opcoes_destino = [f for f in fontes_trans if f != origem]
+            destino = col_t2.selectbox("Conta de Destino", opcoes_destino, key="transf_destino")
             
             valor_trans = st.number_input("Valor da Transferência (€)", min_value=0.01, step=10.0, format="%.2f")
             data_trans = st.date_input("Data da Transferência", date.today())
             nota_trans = st.text_input("Observação (opcional)")
             
             if st.form_submit_button("🔁 Executar Transferência", type="primary", use_container_width=True):
+                # Validação lógica de segurança
                 if origem == destino:
                     st.error("A conta de origem e destino devem ser diferentes.")
+                elif valor_trans <= 0:
+                    st.error("O valor da transferência deve ser maior que zero.")
                 else:
                     try:
-                        # Registro da Transferência
-                        # Usamos a função de realizar_transferencia
-                        # Nota: Certifique-se de ter definido a função abaixo no seu app.py
-                        realizar_transferencia(origem, destino, valor_trans, data_trans.strftime("%d/%m/%Y"), 
-                                               st.session_state.get('display_name', 'Admin'), nota_trans)
+                        # Execução da transferência
+                        realizar_transferencia(
+                            origem, 
+                            destino, 
+                            valor_trans, 
+                            data_trans.strftime("%d/%m/%Y"), 
+                            st.session_state.get('display_name', 'Admin'), 
+                            nota_trans
+                        )
                         
                         st.success(f"Transferência de €{valor_trans:,.2f} de {origem} para {destino} realizada com sucesso!")
                         
-                        # Atualiza o contador de versão para garantir que o cache do streamlit/tabelas seja limpo
-                        st.session_state.ver += 1
+                        # Atualiza o contador de versão para recarregar todos os dados do app
+                        if 'ver' in st.session_state:
+                            st.session_state.ver += 1
+                        
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao processar transferência: {e}")
-
