@@ -1115,8 +1115,15 @@ with tab2:
 #  TAB 3 — SALDOS
 # ══════════════════════════════════════════════
 with tab3:
-     # Acessar a versão para forçar re-renderização
-    _ = st.session_state.ver 
+    # Esta chave força o Streamlit a redesenhar todo o conteúdo desta aba 
+    # sempre que o contador 'ver' mudar.
+    with st.container(key=f"container_saldo_{st.session_state.ver}"):
+        st.markdown("## 💰 Saldos por Conta")
+        st.caption("Saldo Real (efetivado) | Saldo Livre (disponível)")
+        st.divider()
+        
+        # ... (seu código de cálculo e exibição continua exatamente igual aqui dentro)
+        fontes_saldo = [r[0] for r in db_query("SELECT nome FROM fontes")]
     st.markdown("## 💰 Saldos por Conta")
     st.caption(
         "**Saldo Real** = dinheiro já efectivado (PAGO). "
@@ -1624,126 +1631,123 @@ with tab6:
     col_lq1, col_lq2, col_lq3, col_lq4 = st.columns(4)
     # (Continue com o restante do seu layout original aqui...)
 
-
-
 # ══════════════════════════════════════════════
-#  TAB 7 — GESTÃO (VERSÃO VALIDADA E SEGURA)
+#  TAB 7 — GESTÃO (VERSÃO ATUALIZADA E SEGURA)
 # ══════════════════════════════════════════════
 with tab7:
     st.markdown("## ⚙️ Gestão e Configurações")
     st.caption("Configure as categorias, contas e beneficiários do seu sistema.")
 
-    # Garante que a versão de estado exista
-    if 'ver' not in st.session_state: st.session_state.ver = 0
+    # O container força a re-renderização completa da aba ao incrementar o ver
+    with st.container(key=f"container_gestao_{st.session_state.ver}"):
 
-    # ══ SEÇÃO 0: TAXA DE CÂMBIO ═══════════════════
-    st.markdown("---")
-    st.markdown('<div class="secao-titulo">💱 Seção 0 — Taxa de Câmbio BRL → EUR</div>', unsafe_allow_html=True)
-    col_tx1, col_tx2, col_tx3 = st.columns([1.5, 1, 3])
-    with col_tx1:
-        nova_taxa = st.number_input("Taxa (1 BRL = X EUR)", min_value=0.0001, max_value=10.0,
-                                     value=float(st.session_state.get('taxa_brl_eur', 0.16)),
-                                     step=0.001, format="%.4f", key=f"inp_taxa_{st.session_state.ver}")
-    with col_tx2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("💾 Salvar Taxa", use_container_width=True):
-            db_execute("INSERT OR REPLACE INTO configuracoes (chave,valor) VALUES ('taxa_brl_eur',?)", (str(nova_taxa),))
-            st.session_state['taxa_brl_eur'] = nova_taxa
-            st.success("Taxa atualizada.")
-            st.rerun()
-    with col_tx3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.info(f"1 BRL = **{st.session_state.get('taxa_brl_eur', 0):.4f} EUR**")
-
-    # ══ SEÇÃO 1: CATEGORIAS ═══════════════════════
-    st.markdown("---")
-    st.markdown('<div class="secao-titulo">📂 Seção 1 — Categorias</div>', unsafe_allow_html=True)
-    cat_df2 = db_df("SELECT id, nome, pai_id FROM categorias")
-    pai_opts2 = cat_df2[cat_df2['pai_id'].isna()]['nome'].tolist()
-
-    col_cat1, col_cat2 = st.columns(2)
-    with col_cat1:
-        n_pai = st.text_input("Nome Categoria Principal", key=f"inp_pai_{st.session_state.ver}")
-        if st.button("➕ Adicionar Principal"):
-            if n_pai.strip():
-                db_execute("INSERT INTO categorias (nome) VALUES (?)", (n_pai.strip(),))
+        # ══ SEÇÃO 0: TAXA DE CÂMBIO ═══════════════════
+        st.markdown("---")
+        st.markdown('<div class="secao-titulo">💱 Seção 0 — Taxa de Câmbio BRL → EUR</div>', unsafe_allow_html=True)
+        col_tx1, col_tx2, col_tx3 = st.columns([1.5, 1, 3])
+        with col_tx1:
+            nova_taxa = st.number_input("Taxa (1 BRL = X EUR)", min_value=0.0001, max_value=10.0,
+                                         value=float(st.session_state.get('taxa_brl_eur', 0.16)),
+                                         step=0.001, format="%.4f")
+        with col_tx2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("💾 Salvar Taxa"):
+                db_execute("INSERT OR REPLACE INTO configuracoes (chave,valor) VALUES ('taxa_brl_eur',?)", (str(nova_taxa),))
+                st.session_state['taxa_brl_eur'] = nova_taxa
                 st.session_state.ver += 1
                 st.rerun()
-    with col_cat2:
-        if pai_opts2:
-            pai_sel = st.selectbox("Categoria Pai", pai_opts2, key=f"sel_pai_{st.session_state.ver}")
-            n_sub = st.text_input("Nome do detalhamento", key=f"inp_sub_{st.session_state.ver}")
-            if st.button("➕ Adicionar Detalhamento"):
-                pid = int(cat_df2[cat_df2['nome'] == pai_sel]['id'].iloc[0])
-                db_execute("INSERT INTO categorias (nome, pai_id) VALUES (?,?)", (n_sub.strip(), pid))
-                st.session_state.ver += 1
-                st.rerun()
+        with col_tx3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.info(f"1 BRL = **{st.session_state.get('taxa_brl_eur', 0):.4f} EUR**")
 
-    if not cat_df2.empty:
-        cat_view = cat_df2.copy()
-        pai_map = cat_df2[cat_df2['pai_id'].isna()].set_index('id')['nome'].to_dict()
-        cat_view['Categoria Principal'] = cat_view['pai_id'].map(pai_map).fillna('—')
-        cat_view.insert(0, "Remover", False)
-        ed_cat = st.data_editor(cat_view, key=f"ed_cat_{st.session_state.ver}", use_container_width=True, 
-                                column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
-        
-        if st.button("🗑️ Remover Selecionadas"):
-            ids = ed_cat[ed_cat["Remover"] == True]["id"].tolist()
-            if ids:
-                bloqueados = [cid for cid in ids if verificar_bloqueio_delecao("categorias", cid)]
-                if bloqueados:
-                    st.error("⛔ Não é possível remover: algumas categorias possuem dados vinculados.")
-                else:
-                    db_execute(f"DELETE FROM categorias WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
+        # ══ SEÇÃO 1: CATEGORIAS ═══════════════════════
+        st.markdown("---")
+        st.markdown('<div class="secao-titulo">📂 Seção 1 — Categorias</div>', unsafe_allow_html=True)
+        cat_df2 = db_df("SELECT id, nome, pai_id FROM categorias")
+        pai_opts2 = cat_df2[cat_df2['pai_id'].isna()]['nome'].tolist()
+
+        col_cat1, col_cat2 = st.columns(2)
+        with col_cat1:
+            n_pai = st.text_input("Nome Categoria Principal")
+            if st.button("➕ Adicionar Principal"):
+                if n_pai.strip():
+                    db_execute("INSERT INTO categorias (nome) VALUES (?)", (n_pai.strip(),))
+                    st.session_state.ver += 1
+                    st.rerun()
+        with col_cat2:
+            if pai_opts2:
+                pai_sel = st.selectbox("Categoria Pai", pai_opts2)
+                n_sub = st.text_input("Nome do detalhamento")
+                if st.button("➕ Adicionar Detalhamento"):
+                    pid = int(cat_df2[cat_df2['nome'] == pai_sel]['id'].iloc[0])
+                    db_execute("INSERT INTO categorias (nome, pai_id) VALUES (?,?)", (n_sub.strip(), pid))
                     st.session_state.ver += 1
                     st.rerun()
 
-    # ══ SEÇÃO 2: CONTAS ══════════════════════════
-    st.markdown("---")
-    st.markdown('<div class="secao-titulo">🏦 Seção 2 — Contas</div>', unsafe_allow_html=True)
-    n_fonte = st.text_input("Nome da conta", key=f"inp_fonte_{st.session_state.ver}")
-    if st.button("➕ Adicionar Conta"):
-        if n_fonte.strip():
-            db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_fonte.strip(),))
-            st.session_state.ver += 1
-            st.rerun()
+        if not cat_df2.empty:
+            cat_view = cat_df2.copy()
+            pai_map = cat_df2[cat_df2['pai_id'].isna()].set_index('id')['nome'].to_dict()
+            cat_view['Categoria Principal'] = cat_view['pai_id'].map(pai_map).fillna('—')
+            cat_view.insert(0, "Remover", False)
+            ed_cat = st.data_editor(cat_view, use_container_width=True, 
+                                    column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
+            
+            if st.button("🗑️ Remover Selecionadas"):
+                ids = ed_cat[ed_cat["Remover"] == True]["id"].tolist()
+                if ids:
+                    if any(verificar_bloqueio_delecao("categorias", cid) for cid in ids):
+                        st.error("⛔ Não é possível remover: algumas categorias possuem dados vinculados.")
+                    else:
+                        db_execute(f"DELETE FROM categorias WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
+                        st.session_state.ver += 1
+                        st.rerun()
 
-    fontes_df = db_df("SELECT id, nome FROM fontes")
-    if not fontes_df.empty:
-        fontes_df.insert(0, "Remover", False)
-        ed_f = st.data_editor(fontes_df, key=f"ed_fontes_{st.session_state.ver}", use_container_width=True,
-                               column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
-        if st.button("🗑️ Remover Contas Selecionadas"):
-            ids = ed_f[ed_f["Remover"] == True]["id"].tolist()
-            if ids:
-                if any(verificar_bloqueio_delecao("fontes", cid) for cid in ids):
-                    st.error("⛔ Contas em uso. Impossível remover.")
-                else:
-                    db_execute(f"DELETE FROM fontes WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
-                    st.session_state.ver += 1
-                    st.rerun()
-
-    # ══ SEÇÃO 3: BENEFICIÁRIOS ════════════════════
-    st.markdown("---")
-    st.markdown('<div class="secao-titulo">👤 Seção 3 — Beneficiários</div>', unsafe_allow_html=True)
-    n_ben = st.text_input("Nome do beneficiário", key=f"inp_ben_{st.session_state.ver}")
-    if st.button("➕ Adicionar Beneficiário"):
-        if n_ben.strip():
-            db_execute("INSERT INTO beneficiarios (nome) VALUES (?)", (n_ben.strip(),))
-            st.session_state.ver += 1
-            st.rerun()
-
-    benef_df = db_df("SELECT id, nome FROM beneficiarios")
-    if not benef_df.empty:
-        benef_df.insert(0, "Remover", False)
-        ed_b = st.data_editor(benef_df, key=f"ed_ben_{st.session_state.ver}", use_container_width=True,
-                               column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
-        if st.button("🗑️ Remover Beneficiários Selecionados"):
-            ids = ed_b[ed_b["Remover"] == True]["id"].tolist()
-            if ids:
-                db_execute(f"DELETE FROM beneficiarios WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
+        # ══ SEÇÃO 2: CONTAS ══════════════════════════
+        st.markdown("---")
+        st.markdown('<div class="secao-titulo">🏦 Seção 2 — Contas</div>', unsafe_allow_html=True)
+        n_fonte = st.text_input("Nome da conta")
+        if st.button("➕ Adicionar Conta"):
+            if n_fonte.strip():
+                db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_fonte.strip(),))
                 st.session_state.ver += 1
                 st.rerun()
+
+        fontes_df = db_df("SELECT id, nome FROM fontes")
+        if not fontes_df.empty:
+            fontes_df.insert(0, "Remover", False)
+            ed_f = st.data_editor(fontes_df, use_container_width=True,
+                                   column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
+            if st.button("🗑️ Remover Contas Selecionadas"):
+                ids = ed_f[ed_f["Remover"] == True]["id"].tolist()
+                if ids:
+                    if any(verificar_bloqueio_delecao("fontes", cid) for cid in ids):
+                        st.error("⛔ Contas em uso. Impossível remover.")
+                    else:
+                        db_execute(f"DELETE FROM fontes WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
+                        st.session_state.ver += 1
+                        st.rerun()
+
+        # ══ SEÇÃO 3: BENEFICIÁRIOS ════════════════════
+        st.markdown("---")
+        st.markdown('<div class="secao-titulo">👤 Seção 3 — Beneficiários</div>', unsafe_allow_html=True)
+        n_ben = st.text_input("Nome do beneficiário")
+        if st.button("➕ Adicionar Beneficiário"):
+            if n_ben.strip():
+                db_execute("INSERT INTO beneficiarios (nome) VALUES (?)", (n_ben.strip(),))
+                st.session_state.ver += 1
+                st.rerun()
+
+        benef_df = db_df("SELECT id, nome FROM beneficiarios")
+        if not benef_df.empty:
+            benef_df.insert(0, "Remover", False)
+            ed_b = st.data_editor(benef_df, use_container_width=True,
+                                   column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
+            if st.button("🗑️ Remover Beneficiários Selecionados"):
+                ids = ed_b[ed_b["Remover"] == True]["id"].tolist()
+                if ids:
+                    db_execute(f"DELETE FROM beneficiarios WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
+                    st.session_state.ver += 1
+                    st.rerun()
 
 
 # ══════════════════════════════════════════════
