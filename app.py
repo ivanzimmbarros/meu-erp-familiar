@@ -897,212 +897,336 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
 ])
 
 
-# ─────────────────────────────────────────────────────────────
-#  TAB 1 — NOVO LANÇAMENTO (COMPLETAMENTE REVISTO)
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  TAB 1 — NOVO LANÇAMENTO (COMPLETA E VALIDADA)
+# ─────────────────────────────────────────────
+
 with tab1:
     st.markdown("## ➕ Registrar uma Movimentação")
     st.divider()
 
-    # --- 1. Estado Inicial ---
+    # --- 1. Estado Inicial (Session State) ---
     if 'tipo_mov' not in st.session_state: st.session_state.tipo_mov = "💸 Despesa"
     if 'forma_pag' not in st.session_state: st.session_state.forma_pag = "Dinheiro/Débito"
 
-    # --- 2. Controles de Escolha ---
+    # 2. Controles de Escolha (Reativos)
     col_tp1, col_tp2 = st.columns(2)
     st.session_state.tipo_mov = col_tp1.radio("Tipo de movimentação", ["💸 Despesa", "💵 Receita"], horizontal=True)
-    
+    st.session_state.forma_pag = col_tp2.radio("Forma de pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
+
+    # Lógica de controle: Parcelamento permitido se for Despesa (independente da fonte)
     eh_despesa = "Despesa" in st.session_state.tipo_mov
+    is_cartao = (st.session_state.forma_pag == "Cartão de Crédito" and eh_despesa)
     
-    # Lógica de Forma de Pagamento
-    if eh_despesa:
-        st.session_state.forma_pag = col_tp2.radio("Forma de pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
-        is_cartao = (st.session_state.forma_pag == "Cartão de Crédito")
+    if is_cartao:
+        label_fonte = "💳 Selecione o Cartão"
+        dados_fonte = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
     else:
-        st.session_state.forma_pag = "Dinheiro/Débito"
-        is_cartao = False
-    
-    # Busca de Fontes
-    try:
-        query_fonte = "SELECT id, nome FROM cartoes ORDER BY nome" if is_cartao else "SELECT id, nome FROM fontes ORDER BY nome"
-        dados_fonte = db_query(query_fonte)
-        lista_fontes = [op[1] for op in dados_fonte] if dados_fonte else []
-    except Exception:
-        lista_fontes = []
+        label_fonte = "🏦 Conta / Fonte"
+        dados_fonte = db_query("SELECT id, nome FROM fontes ORDER BY nome")
 
     # --- 3. Formulário ---
     with st.form("form_transacao", clear_on_submit=True):
-        fonte_selecionada = st.selectbox("Conta / Cartão" if not is_cartao else "Cartão", lista_fontes)
-        
+        fonte_selecionada = st.selectbox(label_fonte, [op[1] for op in dados_fonte])
         col_in1, col_in2 = st.columns(2)
         data_input = col_in1.date_input("Data", value=date.today())
         valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
         
-        num_parcelas = 1
+        # Agora o input de parcelas aparece sempre que for despesa
         if eh_despesa:
             num_parcelas = col_in1.number_input("Parcelas", min_value=1, max_value=24, value=1)
+        else:
+            num_parcelas = 1
         
-        # --- Lógica de Categorias ---
-        try:
-            cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
-            pai_opts = cat_df[cat_df['pai_id'].isna()]
-            col_cat1, col_cat2 = st.columns(2)
-            cat_pai_nome = col_cat1.selectbox("Categoria Principal", pai_opts['nome'].tolist())
-            id_pai_selecionado = pai_opts[pai_opts['nome'] == cat_pai_nome]['id'].iloc[0]
-            sub_opts = cat_df[cat_df['pai_id'] == id_pai_selecionado]
-            categoria_final = cat_pai_nome
-            if not sub_opts.empty:
-                cat_filho = col_cat2.selectbox("Detalhe (Subcategoria)", sub_opts['nome'].tolist())
-                categoria_final = cat_filho
-        except:
-            categoria_final = "Outros"
-
+        # ... (restante do código: Categoria, Beneficiário, Nota)
+        cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
+        pai_opts = cat_df[cat_df['pai_id'].isna()]['nome'].tolist()
+        cat_pai = st.selectbox("Categoria Principal", pai_opts)
         benef_db = db_query("SELECT nome FROM beneficiarios ORDER BY nome")
-        lista_benef = [b[0] for b in benef_db] if benef_db else []
-        beneficiario = st.selectbox("Beneficiário", [""] + lista_benef)
+        lista_benef = [""] + [b[0] for b in benef_db]
+        beneficiario = st.selectbox("Beneficiário", lista_benef)
         nota = st.text_input("Observação (opcional)")
-        
         submit_button = st.form_submit_button("Salvar Transação")
 
-    # --- 4. Processamento na TAB 1 ---
+       # --- 4. Processamento ---
     if submit_button:
-        if not beneficiario or not fonte_selecionada:
-            st.error("Por favor, preencha beneficiário e fonte.")
+        if not beneficiario:
+            st.error("Por favor, selecione um beneficiário.")
         else:
             try:
                 id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
 
-                if not eh_despesa:
-                    db_execute('''INSERT INTO transacoes 
-                        (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, 
-                         usuario, forma_pagamento, status_liquidacao) 
-                        VALUES (?,?,?,?,?,?,?,?,?,?)''',
-                        (data_input.strftime("%Y-%m-%d"), categoria_final, beneficiario, fonte_selecionada, 
-                         valor_input, st.session_state.tipo_mov, nota, 
-                         st.session_state.get('display_name', 'Admin'), "Dinheiro/Débito", "RECEBIDO"))
-                    st.success("Receita registrada com sucesso!")
-                
-                else:
-                    # Lógica de Despesa (Parcelas ou Única)
-                    if num_parcelas > 1:
-                        # ... (mantenha sua lógica de parcelas)
-                        for data_venc, val, num in lista_parcelas:
-                            db_execute('''INSERT INTO transacoes (...) VALUES (...)''', (...))
-                        st.success(f"Despesa parcelada em {num_parcelas}x registrada!")
+                # Lógica de parcelamento (agora para Cartão OU Débito)
+                if eh_despesa and num_parcelas > 1:
+                    if is_cartao:
+                        cartao_info = db_query("SELECT dia_fechamento, dia_vencimento FROM cartoes WHERE id=?", (id_fonte,))[0]
+                        lista_parcelas = calcular_parcelas(data_input.strftime("%Y-%m-%d"), cartao_info[0], cartao_info[1], valor_input, num_parcelas)
                     else:
-                        # ... (mantenha sua lógica única)
-                        db_execute('''INSERT INTO transacoes (...) VALUES (...)''', (...))
-                        st.success("Despesa registrada com sucesso!")
+                        # Para Débito, parcelas mensais simples a partir da data informada
+                        lista_parcelas = []
+                        v_p = round(valor_input / num_parcelas, 2)
+                        for i in range(num_parcelas):
+                            data_v = data_input + relativedelta(months=i)
+                            lista_parcelas.append((data_v.strftime("%Y-%m-%d"), v_p, i + 1))
 
-                # --- A SOLUÇÃO ESTÁ AQUI ---
-                st.session_state.ver += 1 
-                st.rerun()
+                    for i, (data_venc, val, num) in enumerate(lista_parcelas):
+                        # LÓGICA DE CORREÇÃO DO STATUS:
+                        if is_cartao:
+                            status_liq = "PENDENTE"
+                        else:
+                            status_liq = "PAGO" if i == 0 else "PENDENTE"
 
+                        db_execute('''INSERT INTO transacoes 
+                            (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, 
+                             usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) 
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                            (data_venc, # <--- AQUI: Use data_venc (data calculada) em vez de data_input
+                             cat_pai, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, 
+                             f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), 
+                             st.session_state.forma_pag, id_fonte if is_cartao else None, 
+                             status_liq, 
+                             data_venc, # Fatura ref continua sendo a data de vencimento
+                             "pendente" if is_cartao else None))
+                    
+                    st.success(f"Despesa parcelada em {num_parcelas}x com sucesso!")
+
+                else:
+                    # Transação única
+                    fatura_ref = None
+                    if is_cartao:
+                        fechamento = int(db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (id_fonte,))[0][0])
+                        fatura_ref = calcular_fatura_ref(data_input.strftime("%d/%m/%Y"), fechamento)
+
+                    db_execute('''INSERT INTO transacoes (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        (data_input.strftime("%Y-%m-%d"), cat_pai, beneficiario, fonte_selecionada, valor_input, st.session_state.tipo_mov, nota, 
+                         st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, id_fonte if is_cartao else None, 
+                         "PAGO" if not is_cartao else "PENDENTE", fatura_ref, "pendente" if is_cartao else None))
+                    
+                    st.success("Transação registrada com sucesso!")
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
 
+
 # ══════════════════════════════════════════════
-#  TAB 2 — TODOS OS LANÇAMENTOS (CORRIGIDA)
+#  TAB 2 — TODOS OS LANÇAMENTOS (RECONSTRUÍDA)
 # ══════════════════════════════════════════════
 with tab2:
     st.markdown("## 📋 Histórico de Lançamentos")
-    
-    # 1. Dados (Consulta explícita para garantir a coluna forma_pagamento)
-    df_comuns = db_df("""
-        SELECT 'Transação' as tipo_linha, id, data, categoria_pai, categoria_filho, 
-               beneficiario, fonte, valor_eur, tipo, nota, forma_pagamento, 
-               status_liquidacao, fatura_ref
-        FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'
-    """)
-    
+    st.caption("Visualize, filtre, exporte, liquide ou remova registros.")
+    st.divider()
+
+    # 1. Filtros
+    fontes_row2  = db_query("SELECT nome FROM fontes")
+    cartoes_row2 = db_query("SELECT nome FROM cartoes")
+    todas_fontes = (["Todas"] + [r[0] for r in fontes_row2] + [r[0] for r in cartoes_row2])
+
+    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+    with col_f1: filtro_tipo   = st.selectbox("Tipo", ["Todos","Despesa","Receita"])
+    with col_f2: filtro_fonte  = st.selectbox("Conta", todas_fontes)
+    with col_f3: filtro_forma  = st.selectbox("Forma", ["Todas","Dinheiro/Débito","Cartão de Crédito"])
+    with col_f4: filtro_status = st.selectbox("Status", ["Todos","PAGO","PENDENTE","PREVISTO"])
+    with col_f5: filtro_busca  = st.text_input("🔍 Buscar", placeholder="Nota, categoria...")
+
+    # 2. Dados
+    df_comuns = db_df("SELECT 'Transação' as tipo_linha, * FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'")
     df_faturas = db_df("""
         SELECT 'Fatura Cartão' as tipo_linha, MIN(t.id) as id, t.fatura_ref as data, 
                'Cartão de Crédito' as categoria_pai, c.nome as categoria_filho, 
                'Diversos' as beneficiario, t.fonte, SUM(t.valor_eur) as valor_eur, 
-               'Despesa' as tipo, 'Fatura: ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
-               'Cartão de Crédito' as forma_pagamento, 'PENDENTE' as status_liquidacao
+               'Despesa' as tipo, 'Fatura do ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
+               t.usuario, t.forma_pagamento, t.cartao_id, t.fatura_ref, 
+               'pendente' as status_cartao, 'PENDENTE' as status_liquidacao, NULL as data_liquidacao, 
+               NULL as parcela_id, 0 as parcela_numero, 0 as total_parcelas
         FROM transacoes t JOIN cartoes c ON t.cartao_id = c.id
         WHERE t.forma_pagamento = 'Cartão de Crédito' GROUP BY t.fatura_ref, t.fonte, c.nome
     """)
     
     df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
     df_hist['data_dt'] = pd.to_datetime(df_hist['data'], errors='coerce')
-    
-    # 2. Tabela Geral com indicador de Débito/Crédito
+    df_hist = df_hist.sort_values(by='data_dt', ascending=False)
+
+    # 3. Aplicar filtros
+    if filtro_tipo != "Todos": df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
+    if filtro_fonte != "Todas": df_hist = df_hist[df_hist['fonte'] == filtro_fonte]
+    if filtro_forma != "Todas": df_hist = df_hist[df_hist['forma_pagamento'] == filtro_forma]
+    if filtro_status != "Todos": df_hist = df_hist[df_hist['status_liquidacao'] == filtro_status]
+    if filtro_busca:
+        mask = (df_hist['nota'].str.contains(filtro_busca, case=False, na=False) |
+                df_hist['categoria_pai'].str.contains(filtro_busca, case=False, na=False))
+        df_hist = df_hist[mask]
+
+    # 4. Blocos de Liquidação (Agrupados por Mês)
+    df_liquidaveis = df_hist[df_hist['status_liquidacao'].isin(['PENDENTE','PREVISTO'])].copy()
+    if not df_liquidaveis.empty:
+        st.markdown("**✅ Liquidar transações pendentes / previstas:**")
+        
+        # Garante que a data está como datetime para o agrupamento
+        df_liquidaveis['data_dt'] = pd.to_datetime(df_liquidaveis['data'], errors='coerce')
+        df_liquidaveis['mes_ano'] = df_liquidaveis['data_dt'].dt.to_period('M')
+        
+        for periodo, grupo in df_liquidaveis.groupby('mes_ano', sort=False):
+            with st.expander(f"📅 {periodo.strftime('%B/%Y').capitalize()} ({len(grupo)} itens)"):
+                for _, row in grupo.iterrows():
+                    tid = int(row['id'])
+                    is_fatura = row.get('tipo_linha') == 'Fatura Cartão'
+                    
+                    # --- CORREÇÃO AQUI: Formatar a data para exibição ---
+                    data_exibicao = row['data_dt'].strftime('%d/%m/%Y') if pd.notnull(row['data_dt']) else row['data']
+                    
+                    col_a, col_b = st.columns([5, 1])
+                    with col_a:
+                        badge = f'<span class="badge-pendente">{"PENDENTE" if row["status_liquidacao"]=="PENDENTE" else "PREVISTO"}</span>'
+                        # Usamos a data formatada aqui:
+                        st.markdown(f'<div class="liquidar-row">{badge} {data_exibicao} | {formatar_descricao(row)} | <strong>€{float(row["valor_eur"]):,.2f}</strong></div>', unsafe_allow_html=True)
+                    with col_b:
+                        if is_fatura:
+                            # Botão para redirecionar à aba de cartões
+                            st.button("🔍 Ver", key=f"ver_fat_{tid}", on_click=lambda: st.warning("Acesse a aba 💳 Cartões para visualizar os detalhes desta fatura."))
+                        else:
+                            if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}"):
+                                liquidar_transacao(tid, st.session_state.display_name)
+                                st.session_state.ver += 1
+                                st.rerun()
+
+    # 5. Tabela Geral (Data Editor)
     st.markdown("---")
-    df_display = df_hist.copy()
-    # Identificador visual de crédito
-    df_display['Tipo Pag.'] = df_display['forma_pagamento'].apply(
-        lambda x: "💳 Crédito" if x == 'Cartão de Crédito' else "💵 Débito"
-    )
-    
-    df_display = df_display.rename(columns={
-        'data':'Data', 'categoria_pai':'Categoria', 'valor_eur':'Valor (€)',
-        'status_liquidacao':'Status', 'nota':'Observação'
-    })
-    
-    df_display.insert(0, "Remover", False)
-    
-    editor = st.data_editor(
-        df_display[["Remover", "Data", "Tipo Pag.", "Categoria", "Valor (€)", "Status", "Observação"]], 
-        key=f"ed_final_{st.session_state.ver}",
-        use_container_width=True
-    )
-    
-    if st.button("🗑️ Confirmar Remoção"):
-        ids_rm = df_hist.loc[editor[editor["Remover"] == True].index, 'id'].tolist()
-        if ids_rm:
-            db_execute(f"DELETE FROM transacoes WHERE id IN ({','.join(['?']*len(ids_rm))})", tuple(ids_rm))
-            st.session_state.ver += 1
-            st.rerun()
+    if not df_hist.empty:
+        df_display = df_hist.copy()
+        df_display['Data'] = df_display['data_dt'].dt.strftime('%d/%m/%Y')
+        df_display.insert(0, "Remover", False)
+        
+        # Renomeação para exibir colunas amigáveis
+        df_display = df_display.rename(columns={
+            'id':'ID', 'categoria_pai':'Categoria', 'valor_eur':'Valor (€)',
+            'status_liquidacao':'Liquidação', 'nota':'Observação'
+        })
+
+        editor = st.data_editor(
+            df_display[["Remover", "Data", "Categoria", "Valor (€)", "Liquidação", "Observação"]], 
+            key=f"ed_final_{st.session_state.ver}",
+            use_container_width=True
+        )
+        
+        if st.button("🗑️ Confirmar Remoção"):
+            ids_rm = df_display[editor["Remover"] == True]["ID"].tolist()
+            if ids_rm:
+                db_execute(f"DELETE FROM transacoes WHERE id IN ({','.join(['?']*len(ids_rm))})", tuple(ids_rm))
+                st.session_state.ver += 1
+                st.rerun()
+    else:
+        st.info("Nenhum lançamento encontrado.")
 
 # ══════════════════════════════════════════════
-#  TAB 3 — SALDOS (CORRIGIDA E ESTRUTURADA)
+#  TAB 3 — SALDOS
 # ══════════════════════════════════════════════
 with tab3:
-    # Container único para garantir atualização visual
-    with st.container(key=f"container_saldo_{st.session_state.ver}"):
-        st.markdown("## 💰 Saldos por Conta")
-        st.caption("Saldo Real (PAGO) | Saldo Livre (Saldo Real - Comprometido)")
+    st.markdown("## 💰 Saldos por Conta")
+    st.caption(
+        "**Saldo Real** = dinheiro já efectivado (PAGO). "
+        "**Saldo Livre** = Saldo Real − compromissos futuros (PENDENTE + PREVISTO + cartão).")
+    st.divider()
+
+    fontes_saldo = [r[0] for r in db_query("SELECT nome FROM fontes")]
+
+    if not fontes_saldo:
+        st.info("💡 Vá até ⚙️ Gestão para cadastrar suas contas bancárias.")
+    else:
+        total_real  = 0.0
+        total_livre = 0.0
+        cols_saldo  = st.columns(min(len(fontes_saldo), 3))
+
+        for i, f in enumerate(fontes_saldo):
+            saldo_r = calcular_saldo_real(f)
+            saldo_l = calcular_saldo_livre(f)
+            comp    = calcular_comprometido(f)
+            total_real  += saldo_r
+            total_livre += saldo_l
+
+            # Passivo cartão
+            passivo = db_query(
+                "SELECT COALESCE(SUM(t.valor_eur),0) FROM transacoes t "
+                "JOIN cartoes c ON t.cartao_id=c.id "
+                "WHERE c.conta_pagamento=? AND t.status_cartao='pendente'", (f,))[0][0]
+
+            ini_r   = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (f,))
+            ini     = ini_r[0][0] if ini_r else 0.0
+            
+            # Ajuste de formatação visual do card individual
+            cls_vr = "valor-positivo" if saldo_r >= 0 else "valor-negativo"
+            sinal_r = "+" if saldo_r > 0 else ""
+
+            with cols_saldo[i % 3]:
+                # Desenha o título legível e o conteúdo do saldo
+                criar_quadro_legivel(f"🏦 {f}")
+                st.markdown(f"""
+                    <div class="card" style="margin-bottom: 20px; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0;">
+                        <p style="margin: 0; font-size: 0.9rem; color: #666;">Saldo Disponível:</p>
+                        <h2 style="margin: 5px 0; color: {'#16a34a' if saldo_r >= 0 else '#dc2626'};">
+                            {sinal_r}€{saldo_r:,.2f}
+                        </h2>
+                    </div>
+                """, unsafe_allow_html=True)
+
         st.divider()
 
-        fontes_saldo = [r[0] for r in db_query("SELECT nome FROM fontes")]
+        # Cards de totais
+        col_tot1, col_tot2 = st.columns(2)
+        with col_tot1:
+            cls_tr = "valor-positivo" if total_real >= 0 else "valor-negativo"
+            s_tr   = "+" if total_real > 0 else ""
+            st.markdown(f"""<div class="saldo-card" style="background:#1e293b; color:white; padding: 20px; border-radius: 10px; border-left: 5px solid #3b82f6;">
+                <h3 style="color:#94a3b8; margin-top:0;">🏦 SALDO REAL TOTAL</h3>
+                <div class="{cls_tr}" style="font-size:2rem; font-weight:bold;">{s_tr}€ {total_real:,.2f}</div>
+                <div class="detalhe" style="color:#64748b; margin-top:5px;">Dinheiro efectivamente disponível (PAGO)</div>
+            </div>""", unsafe_allow_html=True)
+            
+        with col_tot2:
+            is_insol = total_livre < 0
+            # CORREÇÃO: Definindo cor do texto do valor para garantir contraste contra o fundo
+            val_color = "#ffffff" if not is_insol else "#9b1c1c"
+            s_tl      = "+" if total_livre > 0 else ""
+            insol_msg = "<div style='color:#9b1c1c; font-weight:700; margin-top:6px;'>🚨 RISCO DE INSOLVÊNCIA</div>" if is_insol else ""
+            
+            st.markdown(f"""<div class="saldo-card" style="background:{'#fef2f2' if is_insol else '#1e293b'}; padding: 20px; border-radius: 10px; border-left: 5px solid {'#9b1c1c' if is_insol else '#10b981'};">
+                <h3 style="color:{'#9b1c1c' if is_insol else '#94a3b8'}; margin-top:0;">📊 DISPONIBILIDADE REAL</h3>
+                <div style="font-size:2rem; font-weight:bold; color:{val_color};">{s_tl}€ {total_livre:,.2f}</div>
+                <div class="detalhe" style="color:{'#9b1c1c' if is_insol else '#64748b'}; margin-top:5px;">Saldo Real − todos os compromissos</div>
+                {insol_msg}
+            </div>""", unsafe_allow_html=True)
 
-        if not fontes_saldo:
-            st.info("💡 Vá até ⚙️ Gestão para cadastrar contas bancárias.")
-        else:
-            cols = st.columns(3)
-            for i, f in enumerate(fontes_saldo):
-                saldo_r = calcular_saldo_real(f)
-                saldo_l = calcular_saldo_livre(f)
-                
-                with cols[i % 3]:
-                    st.markdown(f"#### 🏦 {f}")
-                    st.metric("Saldo Real", f"€{saldo_r:,.2f}")
-                    st.metric("Saldo Livre", f"€{saldo_l:,.2f}", delta=f"€{(saldo_l-saldo_r):,.2f}", delta_color="inverse")
-            
-            st.divider()
-            
-            # Totais Gerais
-            total_real_geral = sum(calcular_saldo_real(f) for f in fontes_saldo)
-            col_tot1, col_tot2 = st.columns(2)
-            col_tot1.metric("TOTAL SALDO REAL", f"€{total_real_geral:,.2f}")
-            
-            # Ajuste de Saldo
-            st.markdown("#### ⚖️ Bater Saldo com o Banco")
-            for f in fontes_saldo:
-                saldo_r_aj = calcular_saldo_real(f)
-                c_aj1, c_aj2, c_aj3 = st.columns([2, 1.5, 1])
-                with c_aj1:
-                    st.write(f"**{f}** (Atual: €{saldo_r_aj:,.2f})")
-                with c_aj2:
-                    valor_banco = st.number_input(f"Saldo real em {f}", value=float(saldo_r_aj), key=f"aj_{f}")
-                with c_aj3:
-                    if st.button("⚖️ Ajustar", key=f"btn_aj_{f}"):
-                        ajustar_saldo(f, valor_banco, st.session_state.display_name)
-                        st.session_state.ver += 1
-                        st.rerun()
+        # ── Bater Saldo (Ajuste) ─────────────────────────────────────
+        st.divider()
+        st.markdown("#### ⚖️ Bater Saldo com o Banco")
+        for f in fontes_saldo:
+            saldo_r_aj = calcular_saldo_real(f)
+            col_aj1, col_aj2, col_aj3 = st.columns([2, 1.5, 1])
+            with col_aj1:
+                st.markdown(f"**🏦 {f}** — Saldo Real actual: <strong style='color:{'#16a34a' if saldo_r_aj>=0 else '#dc2626'};'>€{saldo_r_aj:,.2f}</strong>", unsafe_allow_html=True)
+                valor_banco = st.number_input("Quanto tenho nesta conta agora? (€)", value=round(float(saldo_r_aj), 2), step=0.01, format="%.2f", key=f"ajuste_banco_{f}", label_visibility="collapsed")
+            with col_aj2:
+                diff_preview = round(valor_banco - saldo_r_aj, 2)
+                if abs(diff_preview) < 0.005: st.caption("✅ Saldo já coincide")
+                elif diff_preview > 0: st.caption(f"➕ Diferença: +€{diff_preview:,.2f}")
+                else: st.caption(f"➖ Diferença: €{diff_preview:,.2f}")
+            with col_aj3:
+                if st.button("⚖️ Ajustar", key=f"btn_ajuste_{f}", use_container_width=True):
+                    resultado_aj = ajustar_saldo(f, valor_banco, st.session_state.display_name)
+                    st.rerun()
+
+        # ── Saldos iniciais ──────────────────────────────────────────
+        st.divider()
+        st.markdown("#### 🔧 Definir Saldo Inicial por Conta")
+        for f in fontes_saldo:
+            ini_row2  = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (f,))
+            ini_atual = ini_row2[0][0] if ini_row2 else 0.0
+            col_si1, col_si2 = st.columns([3, 1])
+            with col_si1:
+                novo_ini = st.number_input(f"Saldo inicial de **{f}**", value=float(ini_atual), step=10.0, format="%.2f", key=f"ini_{f}")
+            with col_si2:
+                if st.button("Salvar", key=f"salvar_ini_{f}"):
+                    db_execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f, novo_ini))
+                    st.rerun()
 
 
 
@@ -1504,124 +1628,267 @@ with tab6:
     col_lq1, col_lq2, col_lq3, col_lq4 = st.columns(4)
     # (Continue com o restante do seu layout original aqui...)
 
+
+
 # ══════════════════════════════════════════════
-#  TAB 7 — GESTÃO (VERSÃO ATUALIZADA E SEGURA)
+#  TAB 7 — GESTÃO
 # ══════════════════════════════════════════════
 with tab7:
     st.markdown("## ⚙️ Gestão e Configurações")
     st.caption("Configure as categorias, contas e beneficiários do seu sistema.")
 
-    # O container força a re-renderização completa da aba ao incrementar o ver
-    with st.container(key=f"container_gestao_{st.session_state.ver}"):
+    cat_df2   = db_df("SELECT id, nome, pai_id FROM categorias")
+    pai_opts2 = cat_df2[cat_df2['pai_id'].isna()]['nome'].tolist()
 
-        # ══ SEÇÃO 0: TAXA DE CÂMBIO ═══════════════════
-        st.markdown("---")
-        st.markdown('<div class="secao-titulo">💱 Seção 0 — Taxa de Câmbio BRL → EUR</div>', unsafe_allow_html=True)
-        col_tx1, col_tx2, col_tx3 = st.columns([1.5, 1, 3])
-        with col_tx1:
-            nova_taxa = st.number_input("Taxa (1 BRL = X EUR)", min_value=0.0001, max_value=10.0,
-                                         value=float(st.session_state.get('taxa_brl_eur', 0.16)),
-                                         step=0.001, format="%.4f")
-        with col_tx2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("💾 Salvar Taxa"):
-                db_execute("INSERT OR REPLACE INTO configuracoes (chave,valor) VALUES ('taxa_brl_eur',?)", (str(nova_taxa),))
-                st.session_state['taxa_brl_eur'] = nova_taxa
-                st.session_state.ver += 1
-                st.rerun()
-        with col_tx3:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.info(f"1 BRL = **{st.session_state.get('taxa_brl_eur', 0):.4f} EUR**")
+    # ══ SEÇÃO 0: TAXA DE CÂMBIO ═══════════════════
+    st.markdown("---")
+    st.markdown('<div class="secao-titulo">💱 Seção 0 — Taxa de Câmbio BRL → EUR</div>', unsafe_allow_html=True)
+    st.markdown('<div class="secao-sub">Define quanto 1 Real brasileiro vale em Euro.</div>', unsafe_allow_html=True)
+    col_tx1, col_tx2, col_tx3 = st.columns([1.5, 1, 3])
+    with col_tx1:
+        nova_taxa = st.number_input("Taxa (1 BRL = X EUR)",
+            min_value=0.0001, max_value=10.0,
+            value=float(st.session_state['taxa_brl_eur']),
+            step=0.001, format="%.4f", key="inp_taxa")
+    with col_tx2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("💾 Salvar Taxa", use_container_width=True, key="btn_taxa"):
+            db_execute("INSERT OR REPLACE INTO configuracoes (chave,valor) VALUES ('taxa_brl_eur',?)",
+                       (str(nova_taxa),))
+            st.session_state['taxa_brl_eur'] = nova_taxa
+            st.success(f"Taxa atualizada para {nova_taxa:.4f}.")
+            st.rerun()
+    with col_tx3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.info(f"💡 1 BRL = **{st.session_state['taxa_brl_eur']:.4f} EUR** | "
+                f"Ex: R$100 = €{100*st.session_state['taxa_brl_eur']:.2f}")
 
-        # ══ SEÇÃO 1: CATEGORIAS ═══════════════════════
-        st.markdown("---")
-        st.markdown('<div class="secao-titulo">📂 Seção 1 — Categorias</div>', unsafe_allow_html=True)
-        cat_df2 = db_df("SELECT id, nome, pai_id FROM categorias")
-        pai_opts2 = cat_df2[cat_df2['pai_id'].isna()]['nome'].tolist()
-
-        col_cat1, col_cat2 = st.columns(2)
-        with col_cat1:
-            n_pai = st.text_input("Nome Categoria Principal")
-            if st.button("➕ Adicionar Principal"):
-                if n_pai.strip():
+    # ══ SEÇÃO 1: CATEGORIAS ═══════════════════════
+    st.markdown("---")
+    st.markdown('<div class="secao-titulo">📂 Seção 1 — Categorias</div>', unsafe_allow_html=True)
+    st.markdown('<div class="secao-sub">Organize seus gastos e receitas em categorias e detalhamentos.</div>', unsafe_allow_html=True)
+    col_cat1, col_cat2 = st.columns(2)
+    with col_cat1:
+        st.markdown("**Adicionar Categoria Principal**")
+        st.caption("Ex: Alimentação, Transporte, Saúde, Lazer")
+        n_pai = st.text_input("Nome", key="inp_pai", placeholder="Ex: Alimentação")
+        if st.button("➕ Adicionar Categoria Principal", use_container_width=True):
+            if n_pai.strip():
+                try:
                     db_execute("INSERT INTO categorias (nome) VALUES (?)", (n_pai.strip(),))
-                    st.session_state.ver += 1
+                    st.toast(f"✅ Categoria '{n_pai}' adicionada com sucesso!", icon="✅")
                     st.rerun()
-        with col_cat2:
-            if pai_opts2:
-                pai_sel = st.selectbox("Categoria Pai", pai_opts2)
-                n_sub = st.text_input("Nome do detalhamento")
-                if st.button("➕ Adicionar Detalhamento"):
-                    pid = int(cat_df2[cat_df2['nome'] == pai_sel]['id'].iloc[0])
-                    db_execute("INSERT INTO categorias (nome, pai_id) VALUES (?,?)", (n_sub.strip(), pid))
-                    st.session_state.ver += 1
-                    st.rerun()
-
-        if not cat_df2.empty:
-            cat_view = cat_df2.copy()
-            pai_map = cat_df2[cat_df2['pai_id'].isna()].set_index('id')['nome'].to_dict()
-            cat_view['Categoria Principal'] = cat_view['pai_id'].map(pai_map).fillna('—')
-            cat_view.insert(0, "Remover", False)
-            ed_cat = st.data_editor(cat_view, use_container_width=True, 
-                                    column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
-            
-            if st.button("🗑️ Remover Selecionadas"):
-                ids = ed_cat[ed_cat["Remover"] == True]["id"].tolist()
-                if ids:
-                    if any(verificar_bloqueio_delecao("categorias", cid) for cid in ids):
-                        st.error("⛔ Não é possível remover: algumas categorias possuem dados vinculados.")
-                    else:
-                        db_execute(f"DELETE FROM categorias WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
-                        st.session_state.ver += 1
+                except Exception:
+                    st.error("❌ Já existe uma categoria com esse nome.")
+            else:
+                st.warning("Digite um nome.")
+    with col_cat2:
+        st.markdown("**Adicionar Detalhamento**")
+        st.caption("Ex: Alimentação → Supermercado, Restaurante...")
+        if pai_opts2:
+            pai_sel_gest = st.selectbox("Dentro de qual categoria?", pai_opts2, key="sel_pai_gest")
+            n_sub = st.text_input("Nome do detalhamento", key="inp_sub", placeholder="Ex: Supermercado")
+            if st.button("➕ Adicionar Detalhamento", use_container_width=True):
+                if n_sub.strip():
+                    try:
+                        pid2 = int(cat_df2[cat_df2['nome'] == pai_sel_gest]['id'].iloc[0])
+                        db_execute("INSERT INTO categorias (nome,pai_id) VALUES (?,?)",
+                                   (n_sub.strip(), pid2))
+                        st.toast(f"✅ '{n_sub}' adicionado em '{pai_sel_gest}'!", icon="✅")
                         st.rerun()
+                    except Exception:
+                        st.error("❌ Já existe um detalhamento com esse nome.")
+                else:
+                    st.warning("Digite um nome.")
+        else:
+            st.info("Crie uma Categoria Principal primeiro.")
 
-        # ══ SEÇÃO 2: CONTAS ══════════════════════════
-        st.markdown("---")
-        st.markdown('<div class="secao-titulo">🏦 Seção 2 — Contas</div>', unsafe_allow_html=True)
-        n_fonte = st.text_input("Nome da conta")
-        if st.button("➕ Adicionar Conta"):
+    st.markdown("**Categorias cadastradas:**")
+    if not cat_df2.empty:
+        cat_view = cat_df2.copy()
+        pai_map  = cat_df2[cat_df2['pai_id'].isna()].set_index('id')['nome'].to_dict()
+        cat_view['Categoria Principal'] = cat_view['pai_id'].map(pai_map).fillna('— (é principal)')
+        cat_view = cat_view.rename(columns={'nome': 'Nome'})
+        cat_view.insert(0, "Remover", False)
+        cat_display = cat_view[['Remover','id','Nome','Categoria Principal']]
+        ed_cat = st.data_editor(cat_display, key=f"ed_cat_{st.session_state.ver}",
+            use_container_width=True,
+            column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
+        if st.button("🗑️ Remover Categorias Selecionadas", key="rm_cat"):
+            ids_cat = ed_cat[ed_cat["Remover"] == True]["id"].tolist()
+            if not ids_cat:
+                st.warning("Selecione pelo menos uma.")
+            else:
+                bloqueados = []
+                for cid in ids_cat:
+                    # Verifica bloqueio usando a função de segurança
+                    if verificar_bloqueio_delecao("categorias", cid):
+                        nome_cat = cat_df2[cat_df2['id'] == cid]['nome'].values[0]
+                        bloqueados.append(nome_cat)
+                
+                if bloqueados:
+                    st.error(f"⛔ Não é possível remover: **{', '.join(bloqueados)}** possuem subcategorias ou transações vinculadas.")
+                else:
+                    ph = ",".join(["?"] * len(ids_cat))
+                    try:
+                        db_execute(f"DELETE FROM categorias WHERE id IN ({ph})", tuple(ids_cat))
+                        
+                        # --- ADICIONE ESTA LINHA ---
+                        st.session_state["inp_pai"] = ""
+                        st.session_state["inp_sub"] = ""
+                        st.session_state.ver += 1 
+                        # ---------------------------
+                        
+                        st.toast(f"🗑️ {len(ids_cat)} categoria(s) removida(s).", icon="🗑️")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erro ao remover: {e}")
+
+    else:
+        st.info("Nenhuma categoria cadastrada ainda.")
+
+    # ══ SEÇÃO 2: CONTAS E FONTES ══════════════════
+    st.markdown("---")
+    st.markdown('<div class="secao-titulo">🏦 Seção 2 — Contas e Fontes de Dinheiro</div>', unsafe_allow_html=True)
+    st.markdown('<div class="secao-sub">Cadastre as contas onde o dinheiro da sua família fica guardado.</div>', unsafe_allow_html=True)
+    col_f1g, col_f2g = st.columns([2, 1])
+    with col_f1g:
+        n_fonte = st.text_input("Nome da conta", key="inp_fonte",
+                                 placeholder="Ex: Banco CGD, Carteira, Poupança...")
+    with col_f2g:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("➕ Adicionar Conta", use_container_width=True, key="btn_fonte"):
             if n_fonte.strip():
-                db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_fonte.strip(),))
-                st.session_state.ver += 1
-                st.rerun()
-
-        fontes_df = db_df("SELECT id, nome FROM fontes")
-        if not fontes_df.empty:
-            fontes_df.insert(0, "Remover", False)
-            ed_f = st.data_editor(fontes_df, use_container_width=True,
-                                   column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
-            if st.button("🗑️ Remover Contas Selecionadas"):
-                ids = ed_f[ed_f["Remover"] == True]["id"].tolist()
-                if ids:
-                    if any(verificar_bloqueio_delecao("fontes", cid) for cid in ids):
-                        st.error("⛔ Contas em uso. Impossível remover.")
-                    else:
-                        db_execute(f"DELETE FROM fontes WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
-                        st.session_state.ver += 1
-                        st.rerun()
-
-        # ══ SEÇÃO 3: BENEFICIÁRIOS ════════════════════
-        st.markdown("---")
-        st.markdown('<div class="secao-titulo">👤 Seção 3 — Beneficiários</div>', unsafe_allow_html=True)
-        n_ben = st.text_input("Nome do beneficiário")
-        if st.button("➕ Adicionar Beneficiário"):
-            if n_ben.strip():
-                db_execute("INSERT INTO beneficiarios (nome) VALUES (?)", (n_ben.strip(),))
-                st.session_state.ver += 1
-                st.rerun()
-
-        benef_df = db_df("SELECT id, nome FROM beneficiarios")
-        if not benef_df.empty:
-            benef_df.insert(0, "Remover", False)
-            ed_b = st.data_editor(benef_df, use_container_width=True,
-                                   column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
-            if st.button("🗑️ Remover Beneficiários Selecionados"):
-                ids = ed_b[ed_b["Remover"] == True]["id"].tolist()
-                if ids:
-                    db_execute(f"DELETE FROM beneficiarios WHERE id IN ({','.join(['?']*len(ids))})", tuple(ids))
-                    st.session_state.ver += 1
+                try:
+                    db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_fonte.strip(),))
+                    st.toast(f"✅ Conta '{n_fonte}' adicionada com sucesso!", icon="✅")
+                    
+                    # Limpeza do campo (isso limpa o widget text_input lá em cima)
+                    st.session_state["inp_fonte"] = ""
+                    
                     st.rerun()
+                except Exception:
+                    st.error("❌ Já existe uma conta com esse nome.")
+            else:
+                st.warning("Digite um nome.")
+    fontes_df = db_df("SELECT id, nome FROM fontes")
+    st.markdown("**Contas cadastradas:**")
+    if not fontes_df.empty:
+        fontes_df.insert(0, "Remover", False)
+        fontes_df = fontes_df.rename(columns={'nome': 'Nome da Conta'})
+        ed_fontes = st.data_editor(fontes_df, key=f"ed_fontes_{st.session_state.ver}",
+            use_container_width=True,
+            column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
+        if st.button("🗑️ Remover Contas Selecionadas", key="rm_fontes"):
+            ids_f   = ed_fontes[ed_fontes["Remover"] == True]["id"].tolist()
+            nomes_f = ed_fontes[ed_fontes["Remover"] == True]["Nome da Conta"].tolist()
+            
+            if not ids_f:
+                st.warning("Selecione pelo menos uma conta.")
+            else:
+                # --- INÍCIO DA INSERÇÃO DA LÓGICA DE BLOQUEIO ---
+                bloqueados = []
+                for cid in ids_f:
+                    if verificar_bloqueio_delecao("fontes", cid):
+                        bloqueados.append(str(cid))
+                
+                if bloqueados:
+                    st.error(f"⛔ Não é possível remover: uma ou mais contas selecionadas possuem transações ou saldos vinculados.")
+                else:
+                    # --- LÓGICA DE EXCLUSÃO ORIGINAL ---
+                    ph = ",".join(["?"] * len(ids_f))
+                    ops = [(f"DELETE FROM fontes WHERE id IN ({ph})", tuple(ids_f))]
+                    for nm in nomes_f:
+                        ops.append(("DELETE FROM saldos_iniciais WHERE fonte=?", (nm,)))
+                    
+                    try:
+                        db_execute_many(ops)
+                        st.session_state.ver += 1
+                        st.session_state["inp_fonte"] = "" 
+                        st.toast(f"🗑️ {len(ids_f)} conta(s) removida(s).", icon="🗑️")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Erro ao remover conta(s): {e}")
+                # --- FIM DA INSERÇÃO ---
 
+
+    else:
+        st.info("Nenhuma conta cadastrada ainda.")
+
+    # ══ SEÇÃO 3: BENEFICIÁRIOS ════════════════════
+    st.markdown("---")
+    st.markdown('<div class="secao-titulo">👤 Seção 3 — Beneficiários</div>', unsafe_allow_html=True)
+    st.markdown('<div class="secao-sub">Registe quem costuma enviar ou receber dinheiro da sua família.</div>', unsafe_allow_html=True)
+    col_b1g, col_b2g = st.columns([2, 1])
+    with col_b1g:
+        n_benef = st.text_input("Nome do beneficiário", key="inp_benef",
+                                 placeholder="Ex: Pingo Doce, João Silva...")
+    with col_b2g:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("➕ Adicionar Beneficiário", use_container_width=True, key="btn_benef"):
+            if n_benef.strip():
+                try:
+                    db_execute("INSERT INTO beneficiarios (nome) VALUES (?)", (n_benef.strip(),))
+                    st.toast(f"✅ Beneficiário '{n_benef}' adicionado!", icon="✅")
+                    st.rerun()
+                except Exception:
+                    st.error("❌ Já existe um beneficiário com esse nome.")
+            else:
+                st.warning("Digite um nome.")
+    benef_df = db_df("SELECT id, nome FROM beneficiarios")
+    st.markdown("**Beneficiários cadastrados:**")
+    if not benef_df.empty:
+        benef_df.insert(0, "Remover", False)
+        benef_df = benef_df.rename(columns={'nome': 'Nome'})
+        ed_benef = st.data_editor(benef_df, key=f"ed_benef_{st.session_state.ver}",
+            use_container_width=True,
+            column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
+        if st.button("🗑️ Remover Beneficiários Selecionados", key="rm_benef"):
+            ids_b = ed_benef[ed_benef["Remover"] == True]["id"].tolist()
+            if not ids_b:
+                st.warning("Selecione pelo menos um.")
+            else:
+                ph = ",".join(["?"] * len(ids_b))
+                try:
+                    db_execute(f"DELETE FROM beneficiarios WHERE id IN ({ph})", tuple(ids_b))
+                    st.toast(f"🗑️ {len(ids_b)} beneficiário(s) removido(s).", icon="🗑️")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao remover: {e}")
+    else:
+        st.info("Nenhum beneficiário cadastrado ainda.")
+
+    # ══ SEÇÃO 4: UTILIZADORES ════════════════════
+    st.markdown("---")
+    st.markdown('<div class="secao-titulo">👥 Seção 4 — Utilizadores do Sistema</div>', unsafe_allow_html=True)
+    st.markdown('<div class="secao-sub">Adicione os membros da família que também podem usar o sistema.</div>', unsafe_allow_html=True)
+    col_u1, col_u2, col_u3 = st.columns(3)
+    with col_u1:
+        n_user = st.text_input("Nome de utilizador", key="inp_user", placeholder="Ex: maria")
+    with col_u2:
+        n_nome = st.text_input("Nome para exibição", key="inp_nome", placeholder="Ex: Maria Silva")
+    with col_u3:
+        n_pass = st.text_input("Senha inicial", type="password", key="inp_pass",
+                               placeholder="Mínimo 4 caracteres")
+    if st.button("➕ Adicionar Utilizador", key="btn_user"):
+        if n_user.strip() and n_pass.strip() and n_nome.strip():
+            if len(n_pass) < 4:
+                st.warning("A senha deve ter pelo menos 4 caracteres.")
+            else:
+                try:
+                    db_execute(
+                        "INSERT INTO usuarios (username,password,nome_exibicao) VALUES (?,?,?)",
+                        (n_user.strip(), hash_password(n_pass), n_nome.strip()))
+                    st.toast(f"✅ Utilizador '{n_nome}' adicionado com sucesso!", icon="✅")
+                    st.rerun()
+                except Exception:
+                    st.error("❌ Já existe um utilizador com esse nome de login.")
+        else:
+            st.warning("Preencha todos os campos.")
+    users_df = db_df("SELECT id, username, nome_exibicao FROM usuarios")
+    users_df = users_df.rename(columns={'username':'Login','nome_exibicao':'Nome de Exibição'})
+    st.markdown("**Utilizadores cadastrados:**")
+    st.dataframe(users_df, use_container_width=True, hide_index=True)
 
 # ══════════════════════════════════════════════
 #  TAB 8 — TRANSFERÊNCIAS (VERSÃO FINAL)
