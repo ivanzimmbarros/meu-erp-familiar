@@ -8,15 +8,6 @@ import logging
 from datetime import datetime, date, timedelta
 
 
-# 1. Converter coluna de data para datetime
-df_transacoes['data'] = pd.to_datetime(df_transacoes['data'], format='%d/%m/%Y')
-
-# 2. Agrupar por mês (ou semana/ano)
-# Resample 'M' agrupa por mês (fim do mês). Use 'W' para semana.
-df_mensal = df_transacoes.resample('M', on='data')['valor'].sum().reset_index()
-
-# Opcional: Renomear para melhorar a visualização
-df_mensal.columns = ['Mês', 'Total (€)']
 def criar_quadro_legivel(titulo):
     st.markdown(f"""
         <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #dee2e6;">
@@ -406,20 +397,20 @@ def verificar_bloqueio_delecao(tabela, id_item):
         
         return len(tem_sub) > 0 or len(tem_trans) > 0
 
-        if tabela == "fontes":
-            # Verifica se o ID existe antes de processar
-            res_conta = db_query("SELECT nome FROM fontes WHERE id=?", (id_item,))
-            if not res_conta: return False
-            nome_conta = res_conta[0][0]
-            
-            # 1. Verifica transações vinculadas
-            tem_trans = db_query("SELECT id FROM transacoes WHERE fonte=?", (nome_conta,))
-            
-            # 2. Verifica se existe saldo inicial configurado para esta conta
-            tem_saldo_inicial = db_query("SELECT fonte FROM saldos_iniciais WHERE fonte=?", (nome_conta,))
-            
-            # A exclusão é bloqueada se houver transações OU saldo inicial definido
-            return len(tem_trans) > 0 or len(tem_saldo_inicial) > 0
+    if tabela == "fontes":
+        # Verifica se o ID existe antes de processar
+        res_conta = db_query("SELECT nome FROM fontes WHERE id=?", (id_item,))
+        if not res_conta: return False
+        nome_conta = res_conta[0][0]
+        
+        # 1. Verifica transações vinculadas
+        tem_trans = db_query("SELECT id FROM transacoes WHERE fonte=?", (nome_conta,))
+        
+        # 2. Verifica se existe saldo inicial configurado para esta conta
+        tem_saldo_inicial = db_query("SELECT fonte FROM saldos_iniciais WHERE fonte=?", (nome_conta,))
+        
+        # A exclusão é bloqueada se houver transações OU saldo inicial definido
+        return len(tem_trans) > 0 or len(tem_saldo_inicial) > 0
 
 
 # 3. Carregamento de configurações iniciais
@@ -1570,13 +1561,13 @@ with tab6:
     st.caption("Painel em tempo real — liquidez, orçamento e saúde financeira.")
     st.divider()
 
-    
-     # --- INÍCIO DA ADIÇÃO: VISÃO TEMPORAL ---
-    st.markdown("### 📈 Evolução Financeira")
+    # CARREGAMENTO ÚNICO DOS DADOS
     df_temp = db_df("SELECT data, valor_eur as valor, tipo FROM transacoes")
     
+    st.markdown("### 📈 Evolução Financeira")
+    
     if not df_temp.empty:
-        # Tratamento de datas
+        # Tratamento de datas (garantindo formato ISO YYYY-MM-DD vindo do SQLite)
         df_temp['data'] = pd.to_datetime(df_temp['data'], format='%Y-%m-%d', errors='coerce')
         
         # 1. Gráfico de Área (Evolução Geral)
@@ -1589,7 +1580,6 @@ with tab6:
 
         # 2. Gráfico de Barras (Por Tipo)
         st.markdown("### 📊 Comparativo por Tipo (Receita vs Despesa)")
-        # Agrupamento mensal por tipo para o gráfico de barras
         df_tipo = df_temp.groupby([pd.Grouper(key='data', freq='ME'), 'tipo'])['valor'].sum().reset_index()
         
         fig2 = px.bar(df_tipo, x='data', y='valor', color='tipo', 
@@ -1599,18 +1589,16 @@ with tab6:
         st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("Sem dados suficientes para gerar os gráficos.")
-    # --- FIM DA ADIÇÃO ---
 
+    # Controles de período
     hoje_d = datetime.now()
     col_d1, col_d2, _ = st.columns([1, 1, 4])
     with col_d1:
-        dash_ano = st.number_input("Ano", min_value=2020, max_value=2100,
-                                    value=hoje_d.year, step=1, key="dash_ano")
+        dash_ano = st.number_input("Ano", min_value=2020, max_value=2100, value=hoje_d.year, step=1, key="dash_ano")
     with col_d2:
-        dash_mes = st.number_input("Mês", min_value=1, max_value=12,
-                                    value=hoje_d.month, step=1, key="dash_mes")
+        dash_mes = st.number_input("Mês", min_value=1, max_value=12, value=hoje_d.month, step=1, key="dash_mes")
+    
     dash_mes_ano = f"{int(dash_ano):04d}-{int(dash_mes):02d}"
-    ano_d, mes_d = dash_mes_ano.split("-")
 
     # ── BLOCO 1: Liquidez ──────────────────────
     st.markdown(f"### 💧 Liquidez — {dash_mes_ano}")
@@ -1618,11 +1606,8 @@ with tab6:
     fontes_dash = [r[0] for r in db_query("SELECT nome FROM fontes")]
     total_real_dash  = sum(calcular_saldo_real(f)  for f in fontes_dash)
     total_livre_dash = sum(calcular_saldo_livre(f) for f in fontes_dash)
-    total_comp_dash  = sum(calcular_comprometido(f) for f in fontes_dash)
     total_pend_dash  = get_total_pendentes()
     risco_global     = total_livre_dash < 0
-
-    # ... (Restante do seu código original permanece intacto abaixo)
     
     if risco_global:
         st.markdown(
@@ -1641,7 +1626,8 @@ with tab6:
             unsafe_allow_html=True)
 
     col_lq1, col_lq2, col_lq3, col_lq4 = st.columns(4)
-    # ... (O restante da tab6 segue exatamente como o original que você enviou)
+    # (Continue com o restante do seu layout original aqui...)
+
 
 
 # ══════════════════════════════════════════════
