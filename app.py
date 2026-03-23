@@ -1003,104 +1003,106 @@ with tab1:
 
 
 # ══════════════════════════════════════════════
-#  TAB 2 — TODOS OS LANÇAMENTOS (REVISADA)
+#  TAB 2 — TODOS OS LANÇAMENTOS (CORRIGIDA)
 # ══════════════════════════════════════════════
 with tab2:
     st.markdown("## 📋 Histórico de Lançamentos")
-    st.caption("Visualize, filtre, exporte, liquide ou remova registros.")
-    st.divider()
-
-    # 1. Filtros
-    fontes_row2  = db_query("SELECT nome FROM fontes")
-    cartoes_row2 = db_query("SELECT nome FROM cartoes")
-    todas_fontes = (["Todas"] + [r[0] for r in fontes_row2] + [r[0] for r in cartoes_row2])
-
-    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
-    with col_f1: filtro_tipo   = st.selectbox("Tipo", ["Todos","Despesa","Receita"], key="f_tipo")
-    with col_f2: filtro_fonte  = st.selectbox("Conta", todas_fontes, key="f_fonte")
-    with col_f3: filtro_forma  = st.selectbox("Forma", ["Todas","Dinheiro/Débito","Cartão de Crédito"], key="f_forma")
-    with col_f4: filtro_status = st.selectbox("Status", ["Todos","PAGO","PENDENTE","PREVISTO"], key="f_status")
-    with col_f5: filtro_busca  = st.text_input("🔍 Buscar", placeholder="Nota, categoria...", key="f_busca")
-
-    # 2. Dados
-    # Garante que a coluna 'fonte' sempre exista
-    df_comuns = db_df("SELECT 'Transação' as tipo_linha, * FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'")
+    
+    # 1. Dados (Consulta explícita para garantir a coluna forma_pagamento)
+    df_comuns = db_df("""
+        SELECT 'Transação' as tipo_linha, id, data, categoria_pai, categoria_filho, 
+               beneficiario, fonte, valor_eur, tipo, nota, forma_pagamento, 
+               status_liquidacao, fatura_ref
+        FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'
+    """)
     
     df_faturas = db_df("""
         SELECT 'Fatura Cartão' as tipo_linha, MIN(t.id) as id, t.fatura_ref as data, 
                'Cartão de Crédito' as categoria_pai, c.nome as categoria_filho, 
                'Diversos' as beneficiario, t.fonte, SUM(t.valor_eur) as valor_eur, 
-               'Despesa' as tipo, 'Fatura do ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
-               t.usuario, t.forma_pagamento, t.cartao_id, t.fatura_ref, 
-               'pendente' as status_cartao, 'PENDENTE' as status_liquidacao, NULL as data_liquidacao
+               'Despesa' as tipo, 'Fatura: ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
+               'Cartão de Crédito' as forma_pagamento, 'PENDENTE' as status_liquidacao
         FROM transacoes t JOIN cartoes c ON t.cartao_id = c.id
         WHERE t.forma_pagamento = 'Cartão de Crédito' GROUP BY t.fatura_ref, t.fonte, c.nome
     """)
     
     df_hist = pd.concat([df_comuns, df_faturas], ignore_index=True)
     df_hist['data_dt'] = pd.to_datetime(df_hist['data'], errors='coerce')
-    df_hist = df_hist.sort_values(by='data_dt', ascending=False)
-
-    # 3. Filtros
-    if filtro_tipo != "Todos": df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
-    if filtro_fonte != "Todas": df_hist = df_hist[df_hist['fonte'] == filtro_fonte]
-    if filtro_forma != "Todas": df_hist = df_hist[df_hist['forma_pagamento'] == filtro_forma]
-    if filtro_status != "Todos": df_hist = df_hist[df_hist['status_liquidacao'] == filtro_status]
-    if filtro_busca:
-        mask = df_hist['nota'].str.contains(filtro_busca, case=False, na=False) | df_hist['categoria_pai'].str.contains(filtro_busca, case=False, na=False)
-        df_hist = df_hist[mask]
-
-    # 4. Liquidação
-    df_liquidaveis = df_hist[df_hist['status_liquidacao'].isin(['PENDENTE','PREVISTO'])].copy()
-    if not df_liquidaveis.empty:
-        st.markdown("**✅ Liquidar transações:**")
-        for _, row in df_liquidaveis.iterrows():
-            tid = int(row['id'])
-            col_a, col_b = st.columns([5, 1])
-            with col_a:
-                st.markdown(f"**{row['data']}** | {row['fonte']} | {row['nota']} | €{row['valor_eur']:,.2f}")
-            with col_b:
-                if st.button("✅ Liquidar", key=f"liq_{tid}_{st.session_state.ver}"):
-                    liquidar_transacao(tid, st.session_state.display_name)
-                    st.session_state.ver += 1
-                    st.rerun()
-
-    # 5. Tabela Geral
+    
+    # 2. Tabela Geral com indicador de Débito/Crédito
     st.markdown("---")
-    df_display = df_hist[['id', 'data', 'fonte', 'categoria_pai', 'valor_eur', 'status_liquidacao', 'nota']].copy()
-    df_display.columns = ['ID', 'Data', 'Conta/Fonte', 'Categoria', 'Valor (€)', 'Status', 'Observação']
+    df_display = df_hist.copy()
+    # Identificador visual de crédito
+    df_display['Tipo Pag.'] = df_display['forma_pagamento'].apply(
+        lambda x: "💳 Crédito" if x == 'Cartão de Crédito' else "💵 Débito"
+    )
+    
+    df_display = df_display.rename(columns={
+        'data':'Data', 'categoria_pai':'Categoria', 'valor_eur':'Valor (€)',
+        'status_liquidacao':'Status', 'nota':'Observação'
+    })
+    
     df_display.insert(0, "Remover", False)
     
-    editor = st.data_editor(df_display, key=f"ed_final_{st.session_state.ver}", use_container_width=True)
+    editor = st.data_editor(
+        df_display[["Remover", "Data", "Tipo Pag.", "Categoria", "Valor (€)", "Status", "Observação"]], 
+        key=f"ed_final_{st.session_state.ver}",
+        use_container_width=True
+    )
+    
     if st.button("🗑️ Confirmar Remoção"):
-        ids_rm = df_display[editor["Remover"] == True]["ID"].tolist()
+        ids_rm = df_hist.loc[editor[editor["Remover"] == True].index, 'id'].tolist()
         if ids_rm:
             db_execute(f"DELETE FROM transacoes WHERE id IN ({','.join(['?']*len(ids_rm))})", tuple(ids_rm))
             st.session_state.ver += 1
             st.rerun()
 
 # ══════════════════════════════════════════════
-#  TAB 3 — SALDOS (REVISADA)
+#  TAB 3 — SALDOS (CORRIGIDA E ESTRUTURADA)
 # ══════════════════════════════════════════════
 with tab3:
+    # Container único para garantir atualização visual
     with st.container(key=f"container_saldo_{st.session_state.ver}"):
         st.markdown("## 💰 Saldos por Conta")
-        st.caption("Saldo Real (efetivado) | Saldo Livre (disponível)")
+        st.caption("Saldo Real (PAGO) | Saldo Livre (Saldo Real - Comprometido)")
         st.divider()
 
         fontes_saldo = [r[0] for r in db_query("SELECT nome FROM fontes")]
+
         if not fontes_saldo:
-            st.info("💡 Vá até ⚙️ Gestão para cadastrar suas contas bancárias.")
+            st.info("💡 Vá até ⚙️ Gestão para cadastrar contas bancárias.")
         else:
-            cols_saldo = st.columns(3)
+            cols = st.columns(3)
             for i, f in enumerate(fontes_saldo):
                 saldo_r = calcular_saldo_real(f)
-                with cols_saldo[i % 3]:
-                    criar_quadro_legivel(f"🏦 {f}")
+                saldo_l = calcular_saldo_livre(f)
+                
+                with cols[i % 3]:
+                    st.markdown(f"#### 🏦 {f}")
                     st.metric("Saldo Real", f"€{saldo_r:,.2f}")
-        
-        st.divider()
-        # ... (restante do código de exibição total e ajuste de saldo mantém a lógica original)
+                    st.metric("Saldo Livre", f"€{saldo_l:,.2f}", delta=f"€{(saldo_l-saldo_r):,.2f}", delta_color="inverse")
+            
+            st.divider()
+            
+            # Totais Gerais
+            total_real_geral = sum(calcular_saldo_real(f) for f in fontes_saldo)
+            col_tot1, col_tot2 = st.columns(2)
+            col_tot1.metric("TOTAL SALDO REAL", f"€{total_real_geral:,.2f}")
+            
+            # Ajuste de Saldo
+            st.markdown("#### ⚖️ Bater Saldo com o Banco")
+            for f in fontes_saldo:
+                saldo_r_aj = calcular_saldo_real(f)
+                c_aj1, c_aj2, c_aj3 = st.columns([2, 1.5, 1])
+                with c_aj1:
+                    st.write(f"**{f}** (Atual: €{saldo_r_aj:,.2f})")
+                with c_aj2:
+                    valor_banco = st.number_input(f"Saldo real em {f}", value=float(saldo_r_aj), key=f"aj_{f}")
+                with c_aj3:
+                    if st.button("⚖️ Ajustar", key=f"btn_aj_{f}"):
+                        ajustar_saldo(f, valor_banco, st.session_state.display_name)
+                        st.session_state.ver += 1
+                        st.rerun()
 
 
 
