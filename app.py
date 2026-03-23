@@ -1670,15 +1670,21 @@ with tab7:
     col_cat1, col_cat2 = st.columns(2)
     with col_cat1:
         st.markdown("**Adicionar Categoria Principal**")
-        st.caption("Ex: Alimentação, Transporte, Saúde, Lazer")
-        n_pai = st.text_input("Nome", key="inp_pai", placeholder="Ex: Alimentação")
-        if st.button("➕ Adicionar Categoria Principal", use_container_width=True):
-            if n_pai.strip():
+        n_pai = st.text_input("Nome", key="inp_pai_widget", placeholder="Ex: Alimentação")
+        
+        if st.button("➕ Adicionar Categoria Principal", key="btn_add_pai"):
+            if not n_pai.strip():
+                st.warning("Digite um nome.")
+            else:
                 try:
                     db_execute("INSERT INTO categorias (nome) VALUES (?)", (n_pai.strip(),))
-                    st.toast(f"✅ Categoria '{n_pai}' adicionada com sucesso!", icon="✅")
+                    # O toast aparece no canto e some automaticamente
+                    st.toast(f"✅ Categoria '{n_pai}' adicionada!", icon="✅")
+                    # Limpa o input
+                    st.session_state["inp_pai_widget"] = "" 
                     st.rerun()
                 except Exception:
+                    # Se der erro de duplicidade, mostra o erro no console e um alerta amigável
                     st.error("❌ Já existe uma categoria com esse nome.")
             else:
                 st.warning("Digite um nome.")
