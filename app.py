@@ -922,13 +922,13 @@ with tab1:
         st.session_state.forma_pag = "Dinheiro/Débito"
         is_cartao = False
     
-    # Busca de Fontes (com tratamento para evitar erros vazios)
+    # Busca de Fontes
     try:
         query_fonte = "SELECT id, nome FROM cartoes ORDER BY nome" if is_cartao else "SELECT id, nome FROM fontes ORDER BY nome"
         dados_fonte = db_query(query_fonte)
-        lista_fontes = [op[1] for op in dados_fonte] if dados_fonte else ["Nenhuma conta encontrada"]
+        lista_fontes = [op[1] for op in dados_fonte] if dados_fonte else []
     except Exception:
-        lista_fontes = ["Erro ao carregar fontes"]
+        lista_fontes = []
 
     # --- 3. Formulário ---
     with st.form("form_transacao", clear_on_submit=True):
@@ -946,56 +946,70 @@ with tab1:
         try:
             cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
             pai_opts = cat_df[cat_df['pai_id'].isna()]
-            
             col_cat1, col_cat2 = st.columns(2)
             cat_pai_nome = col_cat1.selectbox("Categoria Principal", pai_opts['nome'].tolist())
-            
             id_pai_selecionado = pai_opts[pai_opts['nome'] == cat_pai_nome]['id'].iloc[0]
             sub_opts = cat_df[cat_df['pai_id'] == id_pai_selecionado]
-            
             categoria_final = cat_pai_nome
             if not sub_opts.empty:
                 cat_filho = col_cat2.selectbox("Detalhe (Subcategoria)", sub_opts['nome'].tolist())
                 categoria_final = cat_filho
-        except Exception:
-            st.error("Erro ao carregar categorias. Verifique a tabela no banco.")
+        except:
             categoria_final = "Outros"
 
         benef_db = db_query("SELECT nome FROM beneficiarios ORDER BY nome")
         lista_benef = [b[0] for b in benef_db] if benef_db else []
-        beneficiario = st.selectbox("Beneficiário", lista_benef)
+        beneficiario = st.selectbox("Beneficiário", [""] + lista_benef)
         nota = st.text_input("Observação (opcional)")
         
-        # O BOTÃO DE SUBMIT AGORA ESTÁ DENTRO DO WITH CORRETAMENTE
         submit_button = st.form_submit_button("Salvar Transação")
 
     # --- 4. Processamento ---
     if submit_button:
-        if not beneficiario:
-            st.error("Por favor, selecione um beneficiário.")
+        if not beneficiario or not fonte_selecionada:
+            st.error("Por favor, preencha beneficiário e fonte.")
         else:
             try:
                 id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
 
                 if not eh_despesa:
+                    # Inserção de Receita
                     db_execute('''INSERT INTO transacoes 
                         (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, 
                          usuario, forma_pagamento, status_liquidacao) 
                         VALUES (?,?,?,?,?,?,?,?,?,?)''',
                         (data_input.strftime("%Y-%m-%d"), categoria_final, beneficiario, fonte_selecionada, 
                          valor_input, st.session_state.tipo_mov, nota, 
-                         st.session_state.get('display_name', 'Admin'), "Dinheiro/Débito", "PAGO"))
-                else:
-                    # Lógica de Despesa (Parcelas ou Única)
-                    # ... (seu código de cálculo de parcelas mantido aqui) ...
-                    # Certifique-se que o INSERT está alinhado com as colunas reais da sua tabela
-                    pass 
+                         st.session_state.get('display_name', 'Admin'), "Dinheiro/Débito", "RECEBIDO"))
+                    st.success("Receita registrada com sucesso!")
                 
-                st.success("Transação registrada com sucesso!")
-                st.rerun() 
+                else:
+                    # Inserção de Despesa
+                    if num_parcelas > 1:
+                        if is_cartao:
+                            cartao_info = db_query("SELECT dia_fechamento, dia_vencimento FROM cartoes WHERE id=?", (id_fonte,))[0]
+                            lista_parcelas = calcular_parcelas(data_input.strftime("%Y-%m-%d"), cartao_info[0], cartao_info[1], valor_input, num_parcelas)
+                        else:
+                            lista_parcelas = [( (data_input + relativedelta(months=i)).strftime("%Y-%m-%d"), round(valor_input/num_parcelas, 2), i+1 ) for i in range(num_parcelas)]
+
+                        for data_venc, val, num in lista_parcelas:
+                            db_execute('''INSERT INTO transacoes (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                                (data_venc, categoria_final, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, (id_fonte if is_cartao else None), ("PAGO" if not is_cartao and num==1 else "PENDENTE"), data_venc, ("pendente" if is_cartao else None)))
+                        st.success(f"Despesa parcelada em {num_parcelas}x registrada!")
+                    else:
+                        fatura_ref = None
+                        if is_cartao:
+                            fechamento = int(db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (id_fonte,))[0][0])
+                            fatura_ref = calcular_fatura_ref(data_input.strftime("%d/%m/%Y"), fechamento)
+                        
+                        db_execute('''INSERT INTO transacoes (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                            (data_input.strftime("%Y-%m-%d"), categoria_final, beneficiario, fonte_selecionada, valor_input, st.session_state.tipo_mov, nota, st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, (id_fonte if is_cartao else None), ("PAGO" if not is_cartao else "PENDENTE"), fatura_ref, ("pendente" if is_cartao else None)))
+                        st.success("Despesa registrada com sucesso!")
+                
+                st.rerun()
 
             except Exception as e:
-                st.error(f"Erro ao salvar no banco: {e}")
+                st.error(f"Erro ao salvar: {e}")
 
 
 # ══════════════════════════════════════════════
