@@ -395,17 +395,21 @@ def verificar_bloqueio_delecao(tabela, id_item):
         
         return len(tem_sub) > 0 or len(tem_trans) > 0
 
-    if tabela == "fontes":
-        # Verifica se o ID existe antes de processar
-        res_conta = db_query("SELECT nome FROM fontes WHERE id=?", (id_item,))
-        if not res_conta: return False
-        nome_conta = res_conta[0][0]
-        
-        # Verifica transações vinculadas
-        tem_trans = db_query("SELECT id FROM transacoes WHERE fonte=?", (nome_conta,))
-        return len(tem_trans) > 0
-        
-    return False
+        if tabela == "fontes":
+            # Verifica se o ID existe antes de processar
+            res_conta = db_query("SELECT nome FROM fontes WHERE id=?", (id_item,))
+            if not res_conta: return False
+            nome_conta = res_conta[0][0]
+            
+            # 1. Verifica transações vinculadas
+            tem_trans = db_query("SELECT id FROM transacoes WHERE fonte=?", (nome_conta,))
+            
+            # 2. Verifica se existe saldo inicial configurado para esta conta
+            tem_saldo_inicial = db_query("SELECT fonte FROM saldos_iniciais WHERE fonte=?", (nome_conta,))
+            
+            # A exclusão é bloqueada se houver transações OU saldo inicial definido
+            return len(tem_trans) > 0 or len(tem_saldo_inicial) > 0
+
 
 # 3. Carregamento de configurações iniciais
 _taxa_salva = db_query("SELECT valor FROM configuracoes WHERE chave='taxa_brl_eur'")
@@ -795,6 +799,30 @@ def get_saude_orcamento(mes_ano):
         })
     return resultado
 
+# ────────────────────────────────────────────
+#  FUNÇÕES DE NEGÓCIO — TRANSFERENCIA ENTRE BANCOS
+# ─────────────────────────────────────────────
+
+def realizar_transferencia(conta_origem, conta_destino, valor, data_str, usuario, nota):
+    """
+    Executa a transferência atômica no banco de dados.
+    """
+    # Nota composta para facilitar busca
+    nota_formatada = f"Transferência: {conta_origem} -> {conta_destino} | {nota}"
+    
+    queries = [
+        # Debita da origem
+        ("INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, usuario, status_liquidacao) VALUES (?,?,?,?,?,?,?,?,?,?)",
+         (data_str, "Transferência", "Saída", "Para " + conta_destino, conta_origem, valor, "Despesa", nota_formatada, usuario, "PAGO")),
+        
+        # Credita no destino
+        ("INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, usuario, status_liquidacao) VALUES (?,?,?,?,?,?,?,?,?,?)",
+         (data_str, "Transferência", "Entrada", "De " + conta_origem, conta_destino, valor, "Receita", nota_formatada, usuario, "PAGO"))
+    ]
+    
+    db_execute_many(queries)
+
+
 
 # ─────────────────────────────────────────────
 #  LOGIN
@@ -842,6 +870,7 @@ with st.sidebar:
     st.markdown("🎯 **Metas** → Planejamento")
     st.markdown("📊 **Dashboard** → Saúde financeira")
     st.markdown("⚙️ **Gestão** → Categorias e contas")
+    st.markdown("🔄 **Transferências** → Transferências Bancárias")
     st.divider()
     taxa_atual = st.session_state['taxa_brl_eur']
     st.caption(f"💱 Taxa BRL → EUR: **{taxa_atual:.4f}**")
@@ -862,6 +891,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🎯  Metas",
     "📊  Dashboard",
     "⚙️  Gestão",
+    "🔄  Transferências",
 ])
 
 
@@ -2060,3 +2090,46 @@ with tab7:
     users_df = users_df.rename(columns={'username':'Login','nome_exibicao':'Nome de Exibição'})
     st.markdown("**Utilizadores cadastrados:**")
     st.dataframe(users_df, use_container_width=True, hide_index=True)
+
+# ══════════════════════════════════════════════
+#  TAB 8 — TRANSFERÊNCIAS
+# ══════════════════════════════════════════════
+
+with tab8:
+    st.markdown("## 🔄 Transferência entre Contas")
+    st.caption("Movimente valores entre suas contas mantendo o saldo equilibrado.")
+    st.divider()
+
+    fontes_trans = [r[0] for r in db_query("SELECT nome FROM fontes ORDER BY nome")]
+    
+    if len(fontes_trans) < 2:
+        st.warning("⚠️ Você precisa de pelo menos duas contas cadastradas para realizar transferências.")
+    else:
+        with st.form("form_transferencia", clear_on_submit=True):
+            col_t1, col_t2 = st.columns(2)
+            origem = col_t1.selectbox("Conta de Origem", fontes_trans)
+            destino = col_t2.selectbox("Conta de Destino", [f for f in fontes_trans if f != origem])
+            
+            valor_trans = st.number_input("Valor da Transferência (€)", min_value=0.01, step=10.0, format="%.2f")
+            data_trans = st.date_input("Data da Transferência", date.today())
+            nota_trans = st.text_input("Observação (opcional)")
+            
+            if st.form_submit_button("🔁 Executar Transferência", type="primary", use_container_width=True):
+                if origem == destino:
+                    st.error("A conta de origem e destino devem ser diferentes.")
+                else:
+                    try:
+                        # Registro da Transferência
+                        # Usamos a função de realizar_transferencia
+                        # Nota: Certifique-se de ter definido a função abaixo no seu app.py
+                        realizar_transferencia(origem, destino, valor_trans, data_trans.strftime("%d/%m/%Y"), 
+                                               st.session_state.get('display_name', 'Admin'), nota_trans)
+                        
+                        st.success(f"Transferência de €{valor_trans:,.2f} de {origem} para {destino} realizada com sucesso!")
+                        
+                        # Atualiza o contador de versão para garantir que o cache do streamlit/tabelas seja limpo
+                        st.session_state.ver += 1
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao processar transferência: {e}")
+
