@@ -898,121 +898,96 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
 
 
 # ─────────────────────────────────────────────────────────────
-#  TAB 1 — NOVO LANÇAMENTO (CORRIGIDA E VALIDADA)
+#  TAB 1 — NOVO LANÇAMENTO (COMPLETAMENTE REVISTO)
 # ─────────────────────────────────────────────────────────────
 with tab1:
     st.markdown("## ➕ Registrar uma Movimentação")
     st.divider()
 
     # --- 1. Estado Inicial ---
-    if 'tipo_mov' not in st.session_state: st.session_state.tipo_mov = "💸 Despesa"
-    if 'forma_pag' not in st.session_state: st.session_state.forma_pag = "Dinheiro/Débito"
-
-    # --- 2. Controles de Escolha ---
-    col_tp1, col_tp2 = st.columns(2)
-    st.session_state.tipo_mov = col_tp1.radio("Tipo de movimentação", ["💸 Despesa", "💵 Receita"], horizontal=True)
+    if 'tipo_mov' not in st.session_state: 
+        st.session_state.tipo_mov = "💸 Despesa"
     
-    eh_despesa = "Despesa" in st.session_state.tipo_mov
+    st.session_state.tipo_mov = st.radio("Tipo de movimentação", ["💸 Despesa", "💵 Receita"], horizontal=True)
+    eh_despesa = (st.session_state.tipo_mov == "💸 Despesa")
     
-    # Forma de pagamento apenas para despesas
+    # --- 2. Configuração de Fonte/Cartão ---
     if eh_despesa:
-        st.session_state.forma_pag = col_tp2.radio("Forma de pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
-        is_cartao = (st.session_state.forma_pag == "Cartão de Crédito")
+        forma_pag = st.radio("Forma de pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
+        is_cartao = (forma_pag == "Cartão de Crédito")
+        query_fonte = "SELECT id, nome FROM cartoes ORDER BY nome" if is_cartao else "SELECT id, nome FROM fontes ORDER BY nome"
     else:
-        st.session_state.forma_pag = "Dinheiro/Débito"
+        forma_pag = "Dinheiro/Débito"
         is_cartao = False
+        query_fonte = "SELECT id, nome FROM fontes ORDER BY nome"
     
-    if is_cartao:
-        label_fonte = "💳 Selecione o Cartão"
-        dados_fonte = db_query("SELECT id, nome FROM cartoes ORDER BY nome")
-    else:
-        label_fonte = "🏦 Conta / Fonte"
-        dados_fonte = db_query("SELECT id, nome FROM fontes ORDER BY nome")
+    dados_fonte = db_query(query_fonte)
+    lista_fontes = [op[1] for op in dados_fonte]
 
-    # --- 3. Formulário ---
+    # --- 3. Formulário de Entrada ---
     with st.form("form_transacao", clear_on_submit=True):
-        fonte_selecionada = st.selectbox(label_fonte, [op[1] for op in dados_fonte])
+        fonte_selecionada = st.selectbox("Conta / Cartão" if eh_despesa else "Conta de Destino", lista_fontes)
         
         col_in1, col_in2 = st.columns(2)
         data_input = col_in1.date_input("Data", value=date.today())
         valor_input = col_in2.number_input("Valor (€)", min_value=0.01, step=1.0, format="%.2f")
         
-        num_parcelas = 1
-        if eh_despesa and not is_cartao:
-            num_parcelas = col_in1.number_input("Parcelas", min_value=1, max_value=24, value=1)
-        elif is_cartao:
-            num_parcelas = col_in1.number_input("Parcelas", min_value=1, max_value=24, value=1)
-        
-        # --- Lógica de Categorias ---
-        cat_df = db_df("SELECT id, nome, pai_id FROM categorias")
-        pai_opts = cat_df[cat_df['pai_id'].isna()]
+        # Filtro de categorias
+        cat_df = db_df("SELECT id, nome, pai_id, tipo_categoria FROM categorias") 
+        tipo_filtro = "Despesa" if eh_despesa else "Receita"
+        cat_df_filtrado = cat_df[cat_df['tipo_categoria'] == tipo_filtro] if 'tipo_categoria' in cat_df.columns else cat_df
+        pai_opts = cat_df_filtrado[cat_df_filtrado['pai_id'].isna()]
         
         col_cat1, col_cat2 = st.columns(2)
         cat_pai_nome = col_cat1.selectbox("Categoria Principal", pai_opts['nome'].tolist())
+        id_pai = pai_opts[pai_opts['nome'] == cat_pai_nome]['id'].iloc[0]
         
-        id_pai_selecionado = pai_opts[pai_opts['nome'] == cat_pai_nome]['id'].iloc[0]
-        sub_opts = cat_df[cat_df['pai_id'] == id_pai_selecionado]
-        
-        categoria_final = cat_pai_nome
+        sub_opts = cat_df_filtrado[cat_df_filtrado['pai_id'] == id_pai]
         if not sub_opts.empty:
-            cat_filho = col_cat2.selectbox("Detalhe (Subcategoria)", sub_opts['nome'].tolist())
-            categoria_final = cat_filho
+            cat_filho_nome = col_cat2.selectbox("Subcategoria", sub_opts['nome'].tolist())
+            categoria_final = cat_filho_nome
         else:
-            col_cat2.info("Sem subcategorias.")
+            col_cat2.info("Sem subcategorias")
+            categoria_final = cat_pai_nome
 
-        benef_db = db_query("SELECT nome FROM beneficiarios ORDER BY nome")
-        lista_benef = [""] + [b[0] for b in benef_db]
-        beneficiario = st.selectbox("Beneficiário", lista_benef)
-        nota = st.text_input("Observação (opcional)")
+        beneficiario = st.selectbox("Beneficiário", [b[0] for b in db_query("SELECT nome FROM beneficiarios ORDER BY nome")])
+        nota = st.text_input("Observação")
         
         submit_button = st.form_submit_button("Salvar Transação")
 
-    # --- 4. Processamento ---
+    # --- 4. Processamento do Salvamento ---
     if submit_button:
-        if not beneficiario:
-            st.error("Por favor, selecione um beneficiário.")
-        else:
-            try:
-                id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
+        try:
+            # Recuperar ID da fonte
+            id_fonte_sel = dados_fonte[lista_fontes.index(fonte_selecionada)][0]
+            user = st.session_state.get('display_name', 'Admin')
+            
+            # Definir status
+            status = "PENDENTE" if (eh_despesa and is_cartao) else ("PAGO" if eh_despesa else "RECEBIDO")
+            tipo_str = "Despesa" if eh_despesa else "Receita"
 
-                if not eh_despesa:
-                    # Inserção de Receita
-                    db_execute('''INSERT INTO transacoes 
-                        (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, 
-                         usuario, forma_pagamento, status_liquidacao) 
-                        VALUES (?,?,?,?,?,?,?,?,?,?)''',
-                        (data_input.strftime("%Y-%m-%d"), categoria_final, beneficiario, fonte_selecionada, 
-                         valor_input, st.session_state.tipo_mov, nota, 
-                         st.session_state.get('display_name', 'Admin'), "Dinheiro/Débito", "PAGO"))
-                    st.success("Receita registrada com sucesso!")
-                
-                else:
-                    # Inserção de Despesa (Parcelada ou Única)
-                    if num_parcelas > 1:
-                        if is_cartao:
-                            cartao_info = db_query("SELECT dia_fechamento, dia_vencimento FROM cartoes WHERE id=?", (id_fonte,))[0]
-                            lista_parcelas = calcular_parcelas(data_input.strftime("%Y-%m-%d"), cartao_info[0], cartao_info[1], valor_input, num_parcelas)
-                        else:
-                            lista_parcelas = [( (data_input + relativedelta(months=i)).strftime("%Y-%m-%d"), round(valor_input/num_parcelas, 2), i+1 ) for i in range(num_parcelas)]
+            # Inserção
+            query_insert = '''INSERT INTO transacoes 
+                (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, status_liquidacao) 
+                VALUES (?,?,?,?,?,?,?,?,?,?)'''
+            
+            db_execute(query_insert, (
+                data_input.strftime("%Y-%m-%d"), 
+                categoria_final, 
+                beneficiario, 
+                fonte_selecionada, 
+                valor_input, 
+                tipo_str, 
+                nota, 
+                user, 
+                forma_pag, 
+                status
+            ))
 
-                        for data_venc, val, num in lista_parcelas:
-                            db_execute('''INSERT INTO transacoes (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                                (data_venc, categoria_final, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, (id_fonte if is_cartao else None), ("PAGO" if not is_cartao and num==1 else "PENDENTE"), data_venc, ("pendente" if is_cartao else None)))
-                        st.success(f"Despesa parcelada em {num_parcelas}x com sucesso!")
-                    else:
-                        fatura_ref = None
-                        if is_cartao:
-                            fechamento = int(db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (id_fonte,))[0][0])
-                            fatura_ref = calcular_fatura_ref(data_input.strftime("%d/%m/%Y"), fechamento)
-                        
-                        db_execute('''INSERT INTO transacoes (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                            (data_input.strftime("%Y-%m-%d"), categoria_final, beneficiario, fonte_selecionada, valor_input, st.session_state.tipo_mov, nota, st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, (id_fonte if is_cartao else None), ("PAGO" if not is_cartao else "PENDENTE"), fatura_ref, ("pendente" if is_cartao else None)))
-                        st.success("Despesa registrada com sucesso!")
-                
-                st.rerun() # Atualiza a UI para refletir os saldos
-
-            except Exception as e:
-                st.error(f"Erro ao salvar: {e}")
+            st.success(f"{tipo_str} registrada com sucesso!")
+            st.rerun() 
+        except Exception as e:
+            st.error(f"Erro ao salvar: {e}")
 
 
 # ══════════════════════════════════════════════
