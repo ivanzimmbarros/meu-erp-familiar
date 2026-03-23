@@ -2092,7 +2092,7 @@ with tab7:
     st.dataframe(users_df, use_container_width=True, hide_index=True)
 
 # ══════════════════════════════════════════════
-#  TAB 8 — TRANSFERÊNCIAS
+#  TAB 8 — TRANSFERÊNCIAS (VERSÃO CORRIGIDA)
 # ══════════════════════════════════════════════
 
 with tab8:
@@ -2100,35 +2100,38 @@ with tab8:
     st.caption("Movimente valores entre suas contas mantendo o saldo equilibrado.")
     st.divider()
 
-    # Leitura das contas atualizadas diretamente do banco
+    # Leitura das contas
     fontes_trans = [r[0] for r in db_query("SELECT nome FROM fontes ORDER BY nome")]
     
     if len(fontes_trans) < 2:
         st.warning("⚠️ Você precisa de pelo menos duas contas cadastradas para realizar transferências.")
     else:
+        # Criamos as seleções FORA do form para garantir que reajam imediatamente
+        col_t1, col_t2 = st.columns(2)
+        
+        # Estado inicial caso não exista
+        if 'origem_trans' not in st.session_state: st.session_state.origem_trans = fontes_trans[0]
+        
+        origem = col_t1.selectbox("Conta de Origem", fontes_trans, 
+                                  index=fontes_trans.index(st.session_state.origem_trans),
+                                  key="origem_trans")
+        
+        # Filtro dinâmico
+        opcoes_destino = [f for f in fontes_trans if f != origem]
+        destino = col_t2.selectbox("Conta de Destino", opcoes_destino, key="destino_trans")
+
         with st.form("form_transferencia", clear_on_submit=True):
-            col_t1, col_t2 = st.columns(2)
-            
-            # Adicionadas 'key' para evitar conflitos de estado no Streamlit
-            origem = col_t1.selectbox("Conta de Origem", fontes_trans, key="transf_origem")
-            
-            # Filtro dinâmico para a conta de destino
-            opcoes_destino = [f for f in fontes_trans if f != origem]
-            destino = col_t2.selectbox("Conta de Destino", opcoes_destino, key="transf_destino")
-            
             valor_trans = st.number_input("Valor da Transferência (€)", min_value=0.01, step=10.0, format="%.2f")
             data_trans = st.date_input("Data da Transferência", date.today())
             nota_trans = st.text_input("Observação (opcional)")
             
-            if st.form_submit_button("🔁 Executar Transferência", type="primary", use_container_width=True):
-                # Validação lógica de segurança
-                if origem == destino:
-                    st.error("A conta de origem e destino devem ser diferentes.")
-                elif valor_trans <= 0:
-                    st.error("O valor da transferência deve ser maior que zero.")
+            btn_enviar = st.form_submit_button("🔁 Executar Transferência", type="primary", use_container_width=True)
+            
+            if btn_enviar:
+                if valor_trans <= 0:
+                    st.error("O valor deve ser maior que zero.")
                 else:
                     try:
-                        # Execução da transferência
                         realizar_transferencia(
                             origem, 
                             destino, 
@@ -2140,10 +2143,8 @@ with tab8:
                         
                         st.success(f"Transferência de €{valor_trans:,.2f} de {origem} para {destino} realizada com sucesso!")
                         
-                        # Atualiza o contador de versão para recarregar todos os dados do app
                         if 'ver' in st.session_state:
                             st.session_state.ver += 1
-                        
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao processar transferência: {e}")
