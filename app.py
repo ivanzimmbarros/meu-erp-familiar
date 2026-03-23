@@ -1686,8 +1686,8 @@ with tab7:
                 except Exception:
                     # Se der erro de duplicidade, mostra o erro no console e um alerta amigável
                     st.error("❌ Já existe uma categoria com esse nome.")
-            else:
-                st.warning("Digite um nome.")
+        else:
+            st.warning("Digite um nome.")
     with col_cat2:
         st.markdown("**Adicionar Detalhamento**")
         st.caption("Ex: Alimentação → Supermercado, Restaurante...")
