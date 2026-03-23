@@ -1754,29 +1754,31 @@ with tab7:
         st.info("Nenhuma categoria cadastrada ainda.")
 
     # ══ SEÇÃO 2: CONTAS E FONTES ══════════════════
+        # ══ SEÇÃO 2: CONTAS E FONTES ══════════════════
     st.markdown("---")
     st.markdown('<div class="secao-titulo">🏦 Seção 2 — Contas e Fontes de Dinheiro</div>', unsafe_allow_html=True)
     st.markdown('<div class="secao-sub">Cadastre as contas onde o dinheiro da sua família fica guardado.</div>', unsafe_allow_html=True)
+    
     col_f1g, col_f2g = st.columns([2, 1])
     with col_f1g:
-        n_fonte = st.text_input("Nome da conta", key="inp_fonte",
-                                 placeholder="Ex: Banco CGD, Carteira, Poupança...")
+        # A chave 'inp_fonte' deve ser única e consistente
+        n_fonte = st.text_input("Nome da conta", key="inp_fonte_input", placeholder="Ex: Banco CGD...")
+        
     with col_f2g:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("➕ Adicionar Conta", use_container_width=True, key="btn_fonte"):
-            if n_fonte.strip():
+        # O botão agora controla todo o fluxo de feedback
+        if st.button("➕ Adicionar Conta", use_container_width=True, key="btn_fonte_add"):
+            if not n_fonte.strip():
+                st.warning("Por favor, digite um nome para a conta.")
+            else:
                 try:
                     db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_fonte.strip(),))
                     st.toast(f"✅ Conta '{n_fonte}' adicionada com sucesso!", icon="✅")
-                    
-                    # Limpeza do campo (isso limpa o widget text_input lá em cima)
-                    st.session_state["inp_fonte"] = ""
-                    
-                    st.rerun()
+                    # Limpa o campo de input via session_state
+                    st.session_state["inp_fonte_input"] = ""
+                    st.rerun() # Recarrega para limpar as mensagens e atualizar a tabela
                 except Exception:
-                    st.error("❌ Já existe uma conta com esse nome.")
-            else:
-                st.warning("Digite um nome.")
+                    st.error(f"❌ Já existe uma conta com o nome '{n_fonte}'.")
     fontes_df = db_df("SELECT id, nome FROM fontes")
     st.markdown("**Contas cadastradas:**")
     if not fontes_df.empty:
