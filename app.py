@@ -1754,56 +1754,61 @@ with tab7:
         st.info("Nenhuma categoria cadastrada ainda.")
 
     # ══ SEÇÃO 2: CONTAS E FONTES ══════════════════
-        # ══ SEÇÃO 2: CONTAS E FONTES ══════════════════
     st.markdown("---")
     st.markdown('<div class="secao-titulo">🏦 Seção 2 — Contas e Fontes de Dinheiro</div>', unsafe_allow_html=True)
     st.markdown('<div class="secao-sub">Cadastre as contas onde o dinheiro da sua família fica guardado.</div>', unsafe_allow_html=True)
     
+    # Container para mensagens de feedback de cadastro
+    msg_cadastro = st.empty()
+    
     col_f1g, col_f2g = st.columns([2, 1])
     with col_f1g:
-        # A chave 'inp_fonte' deve ser única e consistente
         n_fonte = st.text_input("Nome da conta", key="inp_fonte_input", placeholder="Ex: Banco CGD...")
         
     with col_f2g:
         st.markdown("<br>", unsafe_allow_html=True)
-        # O botão agora controla todo o fluxo de feedback
         if st.button("➕ Adicionar Conta", use_container_width=True, key="btn_fonte_add"):
             if not n_fonte.strip():
-                st.warning("Por favor, digite um nome para a conta.")
+                msg_cadastro.warning("Por favor, digite um nome para a conta.")
             else:
                 try:
                     db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_fonte.strip(),))
-                    st.toast(f"✅ Conta '{n_fonte}' adicionada com sucesso!", icon="✅")
-                    # Limpa o campo de input via session_state
-                    st.session_state["inp_fonte_input"] = ""
-                    st.rerun() # Recarrega para limpar as mensagens e atualizar a tabela
+                    st.session_state["inp_fonte_input"] = "" # Limpa o input
+                    st.toast(f"✅ Conta '{n_fonte}' adicionada!", icon="✅")
+                    st.rerun()
                 except Exception:
-                    st.error(f"❌ Já existe uma conta com o nome '{n_fonte}'.")
+                    msg_cadastro.error(f"❌ Já existe uma conta com o nome '{n_fonte}'.")
+    
+    # Listagem e Remoção
     fontes_df = db_df("SELECT id, nome FROM fontes")
     st.markdown("**Contas cadastradas:**")
+    
+    # Container para mensagens de feedback de remoção
+    msg_remocao = st.empty()
+    
     if not fontes_df.empty:
         fontes_df.insert(0, "Remover", False)
         fontes_df = fontes_df.rename(columns={'nome': 'Nome da Conta'})
-        ed_fontes = st.data_editor(fontes_df, key=f"ed_fontes_{st.session_state.ver}",
+        
+        ed_fontes = st.data_editor(
+            fontes_df, 
+            key=f"ed_fontes_{st.session_state.get('ver', 0)}",
             use_container_width=True,
-            column_config={"Remover": st.column_config.CheckboxColumn("🗑️")})
+            column_config={"Remover": st.column_config.CheckboxColumn("🗑️")}
+        )
+        
         if st.button("🗑️ Remover Contas Selecionadas", key="rm_fontes"):
-            ids_f   = ed_fontes[ed_fontes["Remover"] == True]["id"].tolist()
+            ids_f = ed_fontes[ed_fontes["Remover"] == True]["id"].tolist()
             nomes_f = ed_fontes[ed_fontes["Remover"] == True]["Nome da Conta"].tolist()
             
             if not ids_f:
-                st.warning("Selecione pelo menos uma conta.")
+                msg_remocao.warning("Selecione pelo menos uma conta para remover.")
             else:
-                # --- INÍCIO DA INSERÇÃO DA LÓGICA DE BLOQUEIO ---
-                bloqueados = []
-                for cid in ids_f:
-                    if verificar_bloqueio_delecao("fontes", cid):
-                        bloqueados.append(str(cid))
+                bloqueados = [str(cid) for cid in ids_f if verificar_bloqueio_delecao("fontes", cid)]
                 
                 if bloqueados:
-                    st.error(f"⛔ Não é possível remover: uma ou mais contas selecionadas possuem transações ou saldos vinculados.")
+                    msg_remocao.error("⛔ Não é possível remover: uma ou mais contas selecionadas possuem transações vinculadas.")
                 else:
-                    # --- LÓGICA DE EXCLUSÃO ORIGINAL ---
                     ph = ",".join(["?"] * len(ids_f))
                     ops = [(f"DELETE FROM fontes WHERE id IN ({ph})", tuple(ids_f))]
                     for nm in nomes_f:
@@ -1811,15 +1816,12 @@ with tab7:
                     
                     try:
                         db_execute_many(ops)
-                        st.session_state.ver += 1
-                        st.session_state["inp_fonte"] = "" 
+                        if "ver" in st.session_state:
+                            st.session_state.ver += 1
                         st.toast(f"🗑️ {len(ids_f)} conta(s) removida(s).", icon="🗑️")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Erro ao remover conta(s): {e}")
-                # --- FIM DA INSERÇÃO ---
-
-
+                        msg_remocao.error(f"❌ Erro ao remover: {e}")
     else:
         st.info("Nenhuma conta cadastrada ainda.")
 
