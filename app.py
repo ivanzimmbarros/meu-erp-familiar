@@ -964,7 +964,7 @@ with tab1:
         
         submit_button = st.form_submit_button("Salvar Transação")
 
-    # --- 4. Processamento ---
+    # --- 4. Processamento na TAB 1 ---
     if submit_button:
         if not beneficiario or not fonte_selecionada:
             st.error("Por favor, preencha beneficiário e fonte.")
@@ -973,7 +973,6 @@ with tab1:
                 id_fonte = [op[0] for op in dados_fonte if op[1] == fonte_selecionada][0]
 
                 if not eh_despesa:
-                    # Inserção de Receita
                     db_execute('''INSERT INTO transacoes 
                         (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, 
                          usuario, forma_pagamento, status_liquidacao) 
@@ -984,28 +983,19 @@ with tab1:
                     st.success("Receita registrada com sucesso!")
                 
                 else:
-                    # Inserção de Despesa
+                    # Lógica de Despesa (Parcelas ou Única)
                     if num_parcelas > 1:
-                        if is_cartao:
-                            cartao_info = db_query("SELECT dia_fechamento, dia_vencimento FROM cartoes WHERE id=?", (id_fonte,))[0]
-                            lista_parcelas = calcular_parcelas(data_input.strftime("%Y-%m-%d"), cartao_info[0], cartao_info[1], valor_input, num_parcelas)
-                        else:
-                            lista_parcelas = [( (data_input + relativedelta(months=i)).strftime("%Y-%m-%d"), round(valor_input/num_parcelas, 2), i+1 ) for i in range(num_parcelas)]
-
+                        # ... (mantenha sua lógica de parcelas)
                         for data_venc, val, num in lista_parcelas:
-                            db_execute('''INSERT INTO transacoes (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                                (data_venc, categoria_final, beneficiario, fonte_selecionada, val, st.session_state.tipo_mov, f"{nota} (Parc {num}/{num_parcelas})", st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, (id_fonte if is_cartao else None), ("PAGO" if not is_cartao and num==1 else "PENDENTE"), data_venc, ("pendente" if is_cartao else None)))
+                            db_execute('''INSERT INTO transacoes (...) VALUES (...)''', (...))
                         st.success(f"Despesa parcelada em {num_parcelas}x registrada!")
                     else:
-                        fatura_ref = None
-                        if is_cartao:
-                            fechamento = int(db_query("SELECT dia_fechamento FROM cartoes WHERE id=?", (id_fonte,))[0][0])
-                            fatura_ref = calcular_fatura_ref(data_input.strftime("%d/%m/%Y"), fechamento)
-                        
-                        db_execute('''INSERT INTO transacoes (data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, status_liquidacao, fatura_ref, status_cartao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                            (data_input.strftime("%Y-%m-%d"), categoria_final, beneficiario, fonte_selecionada, valor_input, st.session_state.tipo_mov, nota, st.session_state.get('display_name', 'Admin'), st.session_state.forma_pag, (id_fonte if is_cartao else None), ("PAGO" if not is_cartao else "PENDENTE"), fatura_ref, ("pendente" if is_cartao else None)))
+                        # ... (mantenha sua lógica única)
+                        db_execute('''INSERT INTO transacoes (...) VALUES (...)''', (...))
                         st.success("Despesa registrada com sucesso!")
-                
+
+                # --- A SOLUÇÃO ESTÁ AQUI ---
+                st.session_state.ver += 1 
                 st.rerun()
 
             except Exception as e:
@@ -1125,6 +1115,8 @@ with tab2:
 #  TAB 3 — SALDOS
 # ══════════════════════════════════════════════
 with tab3:
+     # Acessar a versão para forçar re-renderização
+    _ = st.session_state.ver 
     st.markdown("## 💰 Saldos por Conta")
     st.caption(
         "**Saldo Real** = dinheiro já efectivado (PAGO). "
