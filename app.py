@@ -161,26 +161,32 @@ st.set_page_config(page_title="FinanceMaster", layout="wide")
 
 st.markdown("""
 <style>
-    /* Força o fundo da aplicação para um cinza muito claro */
-    .stApp { background-color: #f0f2f6; }
+    /* Força o fundo branco na página e na barra lateral */
+    .stApp, [data-testid="stSidebar"] {
+        background-color: #ffffff !important;
+    }
     
-    /* Força todos os textos principais, títulos e labels para azul escuro/preto */
-    h1, h2, h3, p, span, label, .stMarkdown {
+    /* Força todos os textos para preto/cinza escuro com alta prioridade */
+    h1, h2, h3, h4, h5, h6, p, label, span, div {
         color: #1a1a1a !important;
-        font-family: 'Segoe UI', sans-serif;
+    }
+
+    /* Ajusta especificamente os títulos das abas (Tabs) */
+    button[data-baseweb="tab"] div {
+        color: #1a1a1a !important;
+    }
+
+    /* Melhora o contraste dos inputs e botões */
+    .stTextInput input, .stSelectbox div {
+        color: #1a1a1a !important;
+        background-color: #f0f2f6 !important;
     }
     
-    /* Ajusta os cards de métricas para terem fundo branco e sombra */
-    [data-testid="stMetricValue"] {
-        color: #2e7d32 !important;
-    }
-    
-    /* Melhora a visibilidade dos botões */
+    /* Botão de login e outros botões com cor sólida */
     .stButton>button {
-        width: 100%;
-        border-radius: 5px;
-        background-color: #2c3e50;
+        background-color: #2c3e50 !important;
         color: white !important;
+        border: none;
     }
 </style>
 """, unsafe_allow_html=True)
