@@ -81,6 +81,17 @@ def init_db():
 
 init_db()
 
+# 1. Correção/Migração da Tabela Metas
+DBManager.execute("""
+    CREATE TABLE IF NOT EXISTS metas_novo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        categoria TEXT,
+        valor_meta REAL,
+        mes TEXT
+    )
+""")
+
+
 # ─────────────────────────────────────────────
 #  BLOCO 2: FUNÇÕES DE NEGÓCIO E CÁLCULOS
 # ─────────────────────────────────────────────
@@ -492,15 +503,6 @@ with tab5:
 #  BLOCO 9: MANUTENÇÃO, AUDITORIA E CORREÇÃO DE ESTRUTURA
 # ─────────────────────────────────────────────────────────────
 
-# 1. Correção/Migração da Tabela Metas
-DBManager.execute("""
-    CREATE TABLE IF NOT EXISTS metas_novo (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        categoria TEXT,
-        valor_meta REAL,
-        mes TEXT
-    )
-""")
 # Nota: Em produção real, você faria uma migração de dados aqui. 
 # Para fins deste projeto, garantimos que as próximas inserções sigam o padrão do Bloco 8.
 
