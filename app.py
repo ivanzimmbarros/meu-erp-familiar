@@ -23,19 +23,19 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-  /* ── Reset e Base ── */
-  html, body, [data-testid="stAppViewContainer"],
-  [data-testid="stApp"], .stApp {
+  /* ── Base da página ── */
+  .stApp, [data-testid="stAppViewContainer"] {
       background-color: #f5f7fa !important;
-      color: #1a1a2e !important;
-      font-family: 'Segoe UI', sans-serif !important;
   }
 
-  /* ── Sidebar ── */
+  /* ── Sidebar (área de login) ── */
   [data-testid="stSidebar"] {
       background-color: #1a1a2e !important;
   }
-  [data-testid="stSidebar"] * {
+  [data-testid="stSidebar"] label,
+  [data-testid="stSidebar"] p,
+  [data-testid="stSidebar"] span:not([data-baseweb]),
+  [data-testid="stSidebar"] .stMarkdown {
       color: #ffffff !important;
   }
   [data-testid="stSidebar"] input {
@@ -45,43 +45,95 @@ st.markdown("""
       border-radius: 8px !important;
   }
 
-  /* ── Botão Principal ── */
-  .stButton > button {
-      background-color: #2c3e50 !important;
-      color: #ffffff !important;
-      border: none !important;
-      border-radius: 8px !important;
-      padding: 0.5rem 1.2rem !important;
-      font-weight: 600 !important;
-      transition: background 0.2s ease !important;
-      width: 100% !important;
-  }
-  .stButton > button:hover {
-      background-color: #1a252f !important;
+  /* ── Títulos e subtítulos da área logada ── */
+  .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
+      color: #1a1a2e !important;
+      font-weight: 700 !important;
   }
 
-  /* ── Inputs e Selects ── */
-  .stTextInput input,
-  .stNumberInput input,
-  .stSelectbox > div > div,
-  .stDateInput input {
+  /* ── Labels de widgets (fora da sidebar) ── */
+  .stApp [data-testid="stWidgetLabel"] p,
+  .stApp [data-testid="stWidgetLabel"] label {
+      color: #1a1a2e !important;
+  }
+
+  /* ── Inputs de texto e número ── */
+  .stApp .stTextInput input,
+  .stApp .stNumberInput input {
       background-color: #ffffff !important;
       color: #1a1a2e !important;
       border: 1px solid #d0d5e8 !important;
       border-radius: 8px !important;
   }
 
-  /* ── Labels e Textos ── */
-  label, .stRadio label, p, span, div {
+  /* ── Selectbox — campo fechado ── */
+  .stApp .stSelectbox [data-baseweb="select"] > div:first-child {
+      background-color: #ffffff !important;
+      border: 1px solid #d0d5e8 !important;
+      border-radius: 8px !important;
+  }
+  .stApp .stSelectbox [data-baseweb="select"] [data-testid="stMarkdownContainer"] p,
+  .stApp .stSelectbox [data-baseweb="select"] span {
       color: #1a1a2e !important;
   }
-  h1, h2, h3, h4 {
+
+  /* ── Date input — campo fechado ── */
+  .stApp .stDateInput input {
+      background-color: #ffffff !important;
       color: #1a1a2e !important;
-      font-weight: 700 !important;
+      border: 1px solid #d0d5e8 !important;
+      border-radius: 8px !important;
+  }
+
+  /* ── Botões principais ── */
+  .stApp .stButton > button {
+      background-color: #2c3e50 !important;
+      color: #ffffff !important;
+      border: none !important;
+      border-radius: 8px !important;
+      padding: 0.5rem 1.2rem !important;
+      font-weight: 600 !important;
+      width: 100% !important;
+  }
+  .stApp .stButton > button:hover {
+      background-color: #1a252f !important;
+  }
+
+  /* ── Radio buttons ── */
+  .stApp .stRadio label {
+      color: #1a1a2e !important;
+  }
+
+  /* ── Tabs ── */
+  .stApp [data-baseweb="tab-list"] {
+      background-color: transparent !important;
+  }
+  .stApp button[data-baseweb="tab"] {
+      color: #1a1a2e !important;
+      background-color: transparent !important;
+  }
+  .stApp button[data-baseweb="tab"][aria-selected="true"] {
+      color: #2c3e50 !important;
+      border-bottom: 3px solid #2c3e50 !important;
+  }
+
+  /* ── Métricas (cards de saldo) ── */
+  .stApp [data-testid="stMetricLabel"] p,
+  .stApp [data-testid="stMetricValue"] {
+      color: #1a1a2e !important;
+  }
+
+  /* ── Mensagens de info/sucesso/erro ── */
+  .stApp .stAlert p {
+      color: inherit !important;
+  }
+
+  /* ── Captions e texto auxiliar ── */
+  .stApp .stCaption p {
+      color: #555577 !important;
   }
 </style>
-""", unsafe_allow_html=True)
-
+""", u
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
 # ─────────────────────────────────────────────
