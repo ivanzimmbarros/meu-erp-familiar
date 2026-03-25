@@ -161,10 +161,27 @@ st.set_page_config(page_title="FinanceMaster", layout="wide")
 
 st.markdown("""
 <style>
-    .stApp { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; border-radius: 5px; }
-    h1, h2 { color: #2c3e50; font-family: 'Segoe UI', sans-serif; }
-    .css-1d391kg { padding: 1rem; } /* Ajuste mobile */
+    /* Força o fundo da aplicação para um cinza muito claro */
+    .stApp { background-color: #f0f2f6; }
+    
+    /* Força todos os textos principais, títulos e labels para azul escuro/preto */
+    h1, h2, h3, p, span, label, .stMarkdown {
+        color: #1a1a1a !important;
+        font-family: 'Segoe UI', sans-serif;
+    }
+    
+    /* Ajusta os cards de métricas para terem fundo branco e sombra */
+    [data-testid="stMetricValue"] {
+        color: #2e7d32 !important;
+    }
+    
+    /* Melhora a visibilidade dos botões */
+    .stButton>button {
+        width: 100%;
+        border-radius: 5px;
+        background-color: #2c3e50;
+        color: white !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
