@@ -12,73 +12,49 @@ from dateutil.relativedelta import relativedelta
 #  CONFIGURAÇÃO GLOBAL — DEVE SER A 1ª CHAMADA
 # ─────────────────────────────────────────────
 
-# --- SUBSTITUIÇÃO DEFINITIVA DO BLOCO DE CSS (LINHAS 23-60) ---
+# ─────────────────────────────────────────────
+#  CSS GLOBAL — FORÇAR MODO CLARO E CORES SUAVES
+# ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* 1. CONFIGURAÇÃO DE TEMA GLOBAL (SOFT & CLEAN) */
+    /* 1. FUNDO DA PÁGINA */
     .stApp {
-        background-color: #F0F2F6 !important;
-        color: #2C3E50 !important;
+        background-color: #F8F9FB !important;
     }
 
-    /* 2. CABEÇALHOS, LABELS E TEXTOS (CONTRASTE ALTO) */
-    h1, h2, h3, h4, h5, h6, p, span, label, [data-testid="stWidgetLabel"] p {
-        color: #1A1C23 !important;
-        font-family: 'Inter', sans-serif !important;
-        font-weight: 500 !important;
-    }
-
-    /* 3. INPUTS E CAMPOS DE SELEÇÃO (FUNDOS CLAROS) */
-    /* Remove o fundo preto/escuro dos campos de entrada */
-    .stTextInput input, .stSelectbox div[data-baseweb="select"], 
-    .stNumberInput input, .stTextArea textarea {
+    /* 2. INPUTS (Adeus fundo preto, olá branco) */
+    div[data-baseweb="input"], div[data-baseweb="select"], .stTextArea textarea, input {
         background-color: #FFFFFF !important;
         color: #1A1C23 !important;
-        border: 1px solid #D1D5DB !important;
-        border-radius: 8px !important;
+        -webkit-text-fill-color: #1A1C23 !important;
     }
 
-    /* 4. BOTÕES (AZUL PROFISSIONAL COM TEXTO BRANCO NITIDO) */
+    /* 3. BOTÕES (Azul Marinho com texto Branco sempre visível) */
     .stButton > button {
         background-color: #243B55 !important;
         color: #FFFFFF !important;
         border-radius: 8px !important;
         border: none !important;
         font-weight: 600 !important;
-        padding: 0.6rem 1rem !important;
-        width: 100% !important;
-        transition: all 0.2s ease-in-out !important;
     }
-
-    /* Efeito de destaque ao passar o mouse */
+    
+    /* Garante que o texto do botão não suma ao passar o mouse */
     .stButton > button:hover {
         background-color: #3A506B !important;
         color: #FFFFFF !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
     }
-
-    /* 5. CORREÇÃO ESPECÍFICA DA PÁGINA DE LOGIN (SIDEBAR) */
-    [data-testid="stSidebar"] {
-        background-color: #1A1C23 !important; /* Sidebar Escura para contraste */
-    }
-    
-    [data-testid="stSidebar"] .login-title {
+    .stButton > button p {
         color: #FFFFFF !important;
-        font-size: 1.8rem;
-        font-weight: 700;
     }
 
-    [data-testid="stSidebar"] label, [data-testid="stSidebar"] p {
-        color: #ECF0F1 !important; /* Labels do login em branco/cinza claro */
-    }
-
-    /* 6. MENSAGENS DE NOTIFICAÇÃO (SUCESSO/ERRO) */
-    div[data-testid="stNotification"] {
-        background-color: #FFFFFF !important;
+    /* 4. LABELS E TEXTOS */
+    label, p, [data-testid="stWidgetLabel"] p {
         color: #1A1C23 !important;
-        border-left: 5px solid #243B55 !important;
-        border-radius: 8px !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
+    }
+
+    /* 5. TABS (ABAS) */
+    button[data-baseweb="tab"] p {
+        color: #4A5B6D !important;
     }
 </style>
 """, unsafe_allow_html=True)
