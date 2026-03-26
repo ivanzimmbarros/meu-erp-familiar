@@ -12,63 +12,57 @@ from dateutil.relativedelta import relativedelta
 #  CONFIGURAÇÃO GLOBAL — DEVE SER A 1ª CHAMADA
 # ─────────────────────────────────────────────
 
+# --- INÍCIO DA CORREÇÃO (Substitua o bloco de CSS por este) ---
+st.markdown("""
 <style>
-    /* 1. FUNDO GERAL E TEXTOS */
+    /* 1. RESET DE TEMA (FORÇA MODO CLARO) */
     .stApp {
-        background-color: #F0F2F6 !important;
-    }
-    h1, h2, h3, p, label, span, [data-testid="stWidgetLabel"] p {
-        color: #1A1C23 !important;
+        background-color: #F8F9FB !important;
     }
 
-    /* 2. FORÇAR INPUTS BRANCOS (BLOQUEIA O FUNDO PRETO) */
-    /* Este seletor ataca a div interna dos inputs do Streamlit */
-    div[data-baseweb="input"], div[data-baseweb="select"], .stTextArea textarea, [data-testid="stMarkdownContainer"] input {
+    /* 2. INPUTS (REMOÇÃO DO FUNDO PRETO) */
+    /* Forçamos o fundo branco e texto preto em todos os campos de entrada */
+    div[data-baseweb="input"], div[data-baseweb="select"], .stTextArea textarea, input {
         background-color: #FFFFFF !important;
-        color: #1A1C23 !important;
-    }
-    
-    /* Garante que o texto digitado seja preto */
-    input {
         color: #1A1C23 !important;
         -webkit-text-fill-color: #1A1C23 !important;
     }
 
-    /* 3. BOTÕES (AZUL ESCURO COM TEXTO BRANCO FIXO) */
-    button[kind="primary"], button[kind="secondary"], .stButton > button {
+    /* 3. BOTÕES (CORREÇÃO DA ILEGIBILIDADE) */
+    /* Azul Marinho Sólido com Texto Branco Fixo */
+    .stButton > button {
         background-color: #243B55 !important;
-        color: #FFFFFF !important; /* Branco Puro */
-        border: none !important;
-        opacity: 1 !important;
-    }
-
-    /* Força a cor do texto do botão mesmo em hover ou active */
-    .stButton > button p, .stButton > button div, .stButton > button span {
         color: #FFFFFF !important;
+        border: none !important;
+        font-weight: 600 !important;
+        border-radius: 8px !important;
     }
 
-    .stButton > button:hover {
+    /* Garante que o texto do botão continue branco ao passar o mouse */
+    .stButton > button:hover, .stButton > button:active, .stButton > button:focus {
         background-color: #3A506B !important;
         color: #FFFFFF !important;
     }
-
-    /* 4. TABS (ABAS) MAIS CLARAS */
-    button[data-baseweb="tab"] p {
-        color: #4A5B6D !important;
-    }
-    button[data-baseweb="tab"][aria-selected="true"] p {
-        color: #243B55 !important;
-        font-weight: bold !important;
+    
+    .stButton > button p {
+        color: #FFFFFF !important;
     }
 
-    /* 5. MENSAGENS DE ALERTA */
+    /* 4. LABELS E TEXTOS (CONTRASTE) */
+    label, p, [data-testid="stWidgetLabel"] p {
+        color: #1A1C23 !important;
+        font-weight: 500 !important;
+    }
+
+    /* 5. MENSAGENS DE NOTIFICAÇÃO */
     div[data-testid="stNotification"] {
         background-color: #FFFFFF !important;
         color: #1A1C23 !important;
         border: 1px solid #243B55 !important;
     }
 </style>
-
+""", unsafe_allow_html=True)
+# --- FIM DA CORREÇÃO ---
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
 # ─────────────────────────────────────────────
