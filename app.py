@@ -26,7 +26,7 @@ st.markdown("""
     /* 2. FINANCEMASTER - AGORA COM ENFASE TOTAL (ESTILO ANTERIOR DOS LABELS) */
     [data-testid="stHeaderElement"], h1, #financemaster {
         color: #1A202C !important;
-        font-size: 50rem !important; /* Tamanho massivo */
+        font-size: 5.5rem !important; /* Tamanho massivo */
         font-weight: 900 !important;
         line-height: 1.1 !important;
         letter-spacing: -2px !important;
