@@ -15,62 +15,56 @@ from dateutil.relativedelta import relativedelta
 # --- SUBSTITUIÇÃO DA LINHA 23 À 60 ---
 st.markdown("""
 <style>
-    /* 1. FUNDO GERAL (Cinza ultra claro para conforto visual) */
+    /* 1. FUNDO E TEXTO GLOBAL */
     .stApp {
-        background-color: #f8f9fa !important;
-    }
-
-    /* 2. TEXTOS E LABELS (Preto Suave) */
-    h1, h2, h3, h4, h5, h6, p, label, span, [data-testid="stWidgetLabel"] p {
-        color: #2c3e50 !important;
-        font-family: 'Segoe UI', sans-serif;
-    }
-
-    /* 3. INPUTS (Fundo Cinza Claro - Adeus fundo preto) */
-    div[data-baseweb="input"], div[data-baseweb="select"], .stTextArea textarea {
-        background-color: #ffffff !important;
-        color: #2c3e50 !important;
-        border: 1px solid #dcdde1 !important;
-    }
-
-    /* 4. BOTÕES (Azul Marinho Clean - Visíveis e Legíveis) */
-    .stButton>button {
-        background-color: #2c3e50 !important;
-        color: #ffffff !important;
-        border: none !important;
-        padding: 0.5rem 1rem !important;
-        border-radius: 5px !important;
-        width: 100%;
-        transition: 0.3s;
+        background-color: #F0F2F6 !important;
     }
     
-    .stButton>button:hover {
-        background-color: #34495e !important;
-        color: #ffffff !important;
-    }
-
-    /* 5. MENSAGENS DE SUCESSO/ERRO (Legibilidade Máxima) */
-    div[data-testid="stNotification"] {
-        background-color: #ffffff !important;
-        border-left: 5px solid #2ecc71 !important; /* Barra lateral verde para sucesso */
-        border-radius: 4px !important;
-        box-shadow: 0px 2px 5px rgba(0,0,0,0.1) !important;
-    }
-    
-    div[data-testid="stNotification"] p {
-        color: #2c3e50 !important;
+    /* Força Labels e Textos para Azul Escuro (Contraste Máximo) */
+    .stMarkdown, p, label, [data-testid="stWidgetLabel"] p {
+        color: #1A1C23 !important;
         font-weight: 500 !important;
     }
 
-    /* 6. ABAS (TABS) */
-    button[data-baseweb="tab"] {
-        color: #7f8c8d !important;
+    /* 2. INPUTS (REMOÇÃO DO FUNDO PRETO) */
+    input, div[data-baseweb="select"], div[data-baseweb="input"], .stTextArea textarea {
+        background-color: #FFFFFF !important;
+        color: #1A1C23 !important;
+        border: 1px solid #C6CCD2 !important;
     }
-    button[data-baseweb="tab"][aria-selected="true"] {
-        color: #2c3e50 !important;
-        border-bottom: 2px solid #2c3e50 !important;
+
+    /* 3. BOTÕES (CORREÇÃO DA ILEGIBILIDADE) */
+    .stButton>button {
+        background-color: #2C3E50 !important; /* Azul Marinho Sólido */
+        color: #FFFFFF !important;           /* Texto Branco Puro */
+        border: none !important;
+        padding: 10px 20px !important;
+        border-radius: 4px !important;
+        display: block !important;
+    }
+    
+    /* Efeito de Hover (Passar o mouse) */
+    .stButton>button:hover {
+        background-color: #4A5B6D !important;
+        color: #FFFFFF !important;
+    }
+
+    /* 4. TELA DE LOGIN (ESTRUTURA CLEAN) */
+    [data-testid="stForm"] {
+        background-color: #FFFFFF !important;
+        padding: 30px !important;
+        border-radius: 10px !important;
+        border: 1px solid #E0E4E8 !important;
+    }
+
+    /* 5. MENSAGENS DE SUCESSO/ERRO */
+    [data-testid="stNotification"] {
+        background-color: #FFFFFF !important;
+        color: #1A1C23 !important;
+        border: 1px solid #2C3E50 !important;
     }
 </style>
+""", unsafe_allow_html=True)
 """, unsafe_allow_html=True)    
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
