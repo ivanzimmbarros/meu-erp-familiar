@@ -15,36 +15,63 @@ from dateutil.relativedelta import relativedelta
 # --- SUBSTITUIÇÃO DA LINHA 23 À 60 ---
 st.markdown("""
 <style>
-    /* 1. Reset visual para garantir que o fundo seja claro */
+    /* 1. FUNDO GERAL (Cinza ultra claro para conforto visual) */
     .stApp {
-        background-color: #FFFFFF !important;
+        background-color: #f8f9fa !important;
     }
 
-    /* 2. Forçar todos os textos (Labels, Títulos, Parágrafos) para PRETO */
-    h1, h2, h3, h4, h5, h6, p, label, span, .stMarkdown {
-        color: #000000 !important;
+    /* 2. TEXTOS E LABELS (Preto Suave) */
+    h1, h2, h3, h4, h5, h6, p, label, span, [data-testid="stWidgetLabel"] p {
+        color: #2c3e50 !important;
+        font-family: 'Segoe UI', sans-serif;
     }
 
-    /* 3. CORREÇÃO DAS MENSAGENS (Sucesso/Erro) */
-    /* Isso garante que a caixa de texto de sucesso tenha fundo cinza e letra preta */
+    /* 3. INPUTS (Fundo Cinza Claro - Adeus fundo preto) */
+    div[data-baseweb="input"], div[data-baseweb="select"], .stTextArea textarea {
+        background-color: #ffffff !important;
+        color: #2c3e50 !important;
+        border: 1px solid #dcdde1 !important;
+    }
+
+    /* 4. BOTÕES (Azul Marinho Clean - Visíveis e Legíveis) */
+    .stButton>button {
+        background-color: #2c3e50 !important;
+        color: #ffffff !important;
+        border: none !important;
+        padding: 0.5rem 1rem !important;
+        border-radius: 5px !important;
+        width: 100%;
+        transition: 0.3s;
+    }
+    
+    .stButton>button:hover {
+        background-color: #34495e !important;
+        color: #ffffff !important;
+    }
+
+    /* 5. MENSAGENS DE SUCESSO/ERRO (Legibilidade Máxima) */
     div[data-testid="stNotification"] {
-        background-color: #f0f2f6 !important;
-        color: #000000 !important;
-        border: 2px solid #000000 !important;
+        background-color: #ffffff !important;
+        border-left: 5px solid #2ecc71 !important; /* Barra lateral verde para sucesso */
+        border-radius: 4px !important;
+        box-shadow: 0px 2px 5px rgba(0,0,0,0.1) !important;
     }
     
     div[data-testid="stNotification"] p {
-        color: #000000 !important;
-        font-weight: bold !important;
+        color: #2c3e50 !important;
+        font-weight: 500 !important;
     }
 
-    /* 4. Ajuste das Abas (Tabs) para leitura clara */
-    button[data-baseweb="tab"] p {
-        color: #000000 !important;
+    /* 6. ABAS (TABS) */
+    button[data-baseweb="tab"] {
+        color: #7f8c8d !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #2c3e50 !important;
+        border-bottom: 2px solid #2c3e50 !important;
     }
 </style>
-""", unsafe_allow_html=True)
-    
+""", unsafe_allow_html=True)    
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
 # ─────────────────────────────────────────────
