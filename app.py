@@ -13,59 +13,57 @@ from dateutil.relativedelta import relativedelta
 # ─────────────────────────────────────────────
 
 # --- SUBSTITUIÇÃO DA LINHA 23 À 60 ---
+# --- SUBSTITUA O BLOCO DE CSS (LINHAS 23-60) POR ESTE ---
 st.markdown("""
 <style>
-    /* 1. FUNDO E TEXTO GLOBAL */
+    /* 1. FUNDO E TEXTO PRINCIPAL */
     .stApp {
-        background-color: #F0F2F6 !important;
+        background-color: #F8F9FB !important;
     }
     
-    /* Força Labels e Textos para Azul Escuro (Contraste Máximo) */
-    .stMarkdown, p, label, [data-testid="stWidgetLabel"] p {
+    /* Força Labels, Textos e Títulos para Preto (Contraste Máximo) */
+    h1, h2, h3, p, label, span, [data-testid="stWidgetLabel"] p {
         color: #1A1C23 !important;
-        font-weight: 500 !important;
     }
 
     /* 2. INPUTS (REMOÇÃO DO FUNDO PRETO) */
-    input, div[data-baseweb="select"], div[data-baseweb="input"], .stTextArea textarea {
+    /* Garante que campos de texto e seleção sejam Brancos com borda Cinza */
+    .stTextInput input, .stSelectbox div[data-baseweb="select"], .stNumberInput input {
         background-color: #FFFFFF !important;
         color: #1A1C23 !important;
-        border: 1px solid #C6CCD2 !important;
+        border: 1px solid #D1D5DB !important;
     }
 
-    /* 3. BOTÕES (CORREÇÃO DA ILEGIBILIDADE) */
-    .stButton>button {
-        background-color: #2C3E50 !important; /* Azul Marinho Sólido */
-        color: #FFFFFF !important;           /* Texto Branco Puro */
+    /* 3. BOTÕES (AZUL MARINHO COM TEXTO BRANCO) */
+    /* Resolve o problema de botões "invisíveis" */
+    .stButton > button {
+        background-color: #243B55 !important;
+        color: #FFFFFF !important;
+        border-radius: 6px !important;
         border: none !important;
-        padding: 10px 20px !important;
-        border-radius: 4px !important;
-        display: block !important;
+        font-weight: 600 !important;
+        height: 3em !important;
+        width: 100% !important;
     }
     
-    /* Efeito de Hover (Passar o mouse) */
-    .stButton>button:hover {
-        background-color: #4A5B6D !important;
+    /* Efeito ao passar o mouse */
+    .stButton > button:hover {
+        background-color: #3A506B !important;
         color: #FFFFFF !important;
+        border: none !important;
     }
 
-    /* 4. TELA DE LOGIN (ESTRUTURA CLEAN) */
-    [data-testid="stForm"] {
+    /* 4. MENSAGENS DE SUCESSO/ERRO */
+    div[data-testid="stNotification"] {
         background-color: #FFFFFF !important;
-        padding: 30px !important;
-        border-radius: 10px !important;
-        border: 1px solid #E0E4E8 !important;
+        border: 1px solid #243B55 !important;
+        border-radius: 8px !important;
     }
-
-    /* 5. MENSAGENS DE SUCESSO/ERRO */
-    [data-testid="stNotification"] {
-        background-color: #FFFFFF !important;
+    div[data-testid="stNotification"] p {
         color: #1A1C23 !important;
-        border: 1px solid #2C3E50 !important;
     }
 </style>
 """, unsafe_allow_html=True)
-""", unsafe_allow_html=True)    
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
 # ─────────────────────────────────────────────
