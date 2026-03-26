@@ -13,39 +13,60 @@ from dateutil.relativedelta import relativedelta
 # ─────────────────────────────────────────────
 
 # ─────────────────────────────────────────────
-#  AJUSTE DE CONTRASTE E INTEGRAÇÃO DE ABAS
+#  DESIGN UNIFICADO — SLATE GRAY & ABAS MINIMALISTAS
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* 1. FUNDO GERAL DO SISTEMA (Cinza Slate) */
-    .stApp {
-        background-color: #E2E8F0 !important;
+    /* 1. FUNDO GERAL E LOGIN (Tom Slate Gray mais profundo) */
+    .stApp, [data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+        background-color: #CBD5E0 !important; /* Cinza médio-escuro equilibrado */
     }
 
-    /* 2. ÁREA DAS ABAS (TABS) - Faz o fundo sumir para integrar com o sistema */
+    /* 2. CUSTOMIZAÇÃO DAS ABAS (TABS) */
+    /* Remove o fundo branco e bordas da lista de abas */
     div[data-baseweb="tab-list"] {
         background-color: transparent !important;
-        border-bottom: 2px solid #CBD5E0 !important; /* Linha sutil embaixo das abas */
+        border-bottom: 2px solid #A0AEC0 !important;
     }
 
-    /* Estilo dos botões das abas quando NÃO selecionados */
+    /* Estilo base de todas as abas (transparentes) */
     button[data-baseweb="tab"] {
         background-color: transparent !important;
-        color: #4A5568 !important; /* Cinza escuro para o texto */
+        border: none !important;
+        color: #4A5568 !important; /* Cor suave para abas inativas */
+        transition: all 0.3s ease;
+    }
+
+    /* ABA SELECIONADA: Fundo igual ao geral, apenas texto em NEGRITO */
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: transparent !important; /* Mantém a cor do fundo geral */
         border: none !important;
     }
-
-    /* Estilo da aba quando ESTÁ SELECIONADA */
-    button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: #F8F9FB !important; /* Um cinza quase branco para destacar a aba ativa */
-        border-radius: 5px 5px 0 0 !important;
-        color: #243B55 !important;
-        font-weight: bold !important;
+    
+    button[data-baseweb="tab"][aria-selected="true"] p {
+        color: #1A202C !important; /* Texto quase preto */
+        font-weight: 800 !important; /* Força o negrito intenso */
+        font-size: 1.05rem !important;
     }
 
-    /* 3. MANTÉM OS INPUTS BRANCOS PARA CONTRASTE */
-    div[data-baseweb="input"], div[data-baseweb="select"] {
+    /* 3. CONTRASTE DOS INPUTS E BOTÕES */
+    /* Mantém os campos brancos para não perder a legibilidade */
+    div[data-baseweb="input"], div[data-baseweb="select"], .stTextArea textarea {
         background-color: #FFFFFF !important;
+        border-radius: 8px !important;
+    }
+
+    /* Botões em azul escuro para máximo contraste sobre o cinza */
+    .stButton > button {
+        background-color: #2D3748 !important;
+        color: #FFFFFF !important;
+        font-weight: 600 !important;
+        border: none !important;
+    }
+    
+    .stButton > button:hover {
+        background-color: #1A202C !important;
+        color: #FFFFFF !important;
     }
 </style>
 """, unsafe_allow_html=True)
