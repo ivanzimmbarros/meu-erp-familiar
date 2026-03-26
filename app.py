@@ -13,25 +13,39 @@ from dateutil.relativedelta import relativedelta
 # ─────────────────────────────────────────────
 
 # ─────────────────────────────────────────────
-#  AJUSTE DE CONTRASTE VISUAL
+#  AJUSTE DE CONTRASTE E INTEGRAÇÃO DE ABAS
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Fundo Geral do Sistema (Cinza mais escuro/fechado) */
+    /* 1. FUNDO GERAL DO SISTEMA (Cinza Slate) */
     .stApp {
         background-color: #E2E8F0 !important;
     }
 
-    /* Manter os cartões e áreas de conteúdo em branco para gerar o contraste */
-    [data-testid="stVerticalBlock"] > div > div > div[data-testid="stVerticalBlock"] {
-        background-color: transparent;
+    /* 2. ÁREA DAS ABAS (TABS) - Faz o fundo sumir para integrar com o sistema */
+    div[data-baseweb="tab-list"] {
+        background-color: transparent !important;
+        border-bottom: 2px solid #CBD5E0 !important; /* Linha sutil embaixo das abas */
     }
 
-    /* Opcional: Destacar as abas (Tabs) sobre o fundo cinza */
+    /* Estilo dos botões das abas quando NÃO selecionados */
     button[data-baseweb="tab"] {
-        background-color: #F8F9FB !important;
-        margin-right: 5px !important;
+        background-color: transparent !important;
+        color: #4A5568 !important; /* Cinza escuro para o texto */
+        border: none !important;
+    }
+
+    /* Estilo da aba quando ESTÁ SELECIONADA */
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: #F8F9FB !important; /* Um cinza quase branco para destacar a aba ativa */
         border-radius: 5px 5px 0 0 !important;
+        color: #243B55 !important;
+        font-weight: bold !important;
+    }
+
+    /* 3. MANTÉM OS INPUTS BRANCOS PARA CONTRASTE */
+    div[data-baseweb="input"], div[data-baseweb="select"] {
+        background-color: #FFFFFF !important;
     }
 </style>
 """, unsafe_allow_html=True)
