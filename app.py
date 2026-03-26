@@ -1,4 +1,3 @@
-
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -13,35 +12,45 @@ from dateutil.relativedelta import relativedelta
 #  CONFIGURAÇÃO GLOBAL — DEVE SER A 1ª CHAMADA
 # ─────────────────────────────────────────────
 
-st.markdown("""
 <style>
-  /* 1. FUNDO E TEXTO BASE */
-  .stApp { background-color: #f5f7fa !important; color: #1a1a2e !important; }
-
-  /* 2. BARRA LATERAL (SIDEBAR) */
-  [data-testid="stSidebar"] { background-color: #1a1a2e !important; }
-  [data-testid="stSidebar"] * { color: #ffffff !important; }
-
-  /* 3. CORREÇÃO DAS MENSAGENS (Sucesso, Erro, Info, Warning) */
-  /* Força o fundo das caixas a ter uma borda escura e o texto SEMPRE preto */
-  [data-testid="stNotification"], [data-testid="stNotificationContent"] {
-      background-color: #ffffff !important;
-      border: 2px solid #1a1a2e !important;
-      border-radius: 8px !important;
+  /* 1. RESET PARA CORES PADRÃO DE ALTO CONTRASTE */
+  .stApp { 
+      background-color: #ffffff !important; 
   }
   
-  [data-testid="stNotification"] p, [data-testid="stNotification"] div {
+  /* Força todos os textos principais para preto absoluto */
+  h1, h2, h3, p, label, .stMarkdown, [data-testid="stWidgetLabel"] p {
       color: #000000 !important;
-      font-weight: 700 !important;
-      font-size: 16px !important;
   }
 
-  /* 4. TABS E BOTÕES */
-  button[data-baseweb="tab"] { color: #1a1a2e !important; }
-  .stButton>button { background-color: #1a1a2e !important; color: white !important; }
-</style>
-""", unsafe_allow_html=True)
+  /* 2. CORREÇÃO DAS ABAS (TABS) */
+  button[data-baseweb="tab"] p {
+      color: #000000 !important;
+  }
 
+  /* 3. MENSAGENS DE SISTEMA (A CAUSA DO ERRO ANTERIOR) */
+  /* Forçamos o conteúdo das notificações a ser preto sobre fundo branco */
+  [data-testid="stNotificationContent"] {
+      color: #000000 !important;
+      background-color: #f0f2f6 !important;
+      border: 1px solid #000000 !important;
+      padding: 10px !important;
+  }
+  
+  /* Ícones e textos dentro do alerta */
+  [data-testid="stNotificationContent"] p, [data-testid="data-testid="stNotification"] svg {
+      color: #000000 !important;
+  }
+
+  /* 4. BARRA LATERAL PARA CONTRASTE */
+  [data-testid="stSidebar"] {
+      background-color: #1a1a2e !important;
+  }
+  [data-testid="stSidebar"] * {
+      color: #ffffff !important;
+  }
+</style>
+    
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
 # ─────────────────────────────────────────────
