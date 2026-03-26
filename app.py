@@ -1,3 +1,4 @@
+
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -14,191 +15,28 @@ from dateutil.relativedelta import relativedelta
 
 st.markdown("""
 <style>
-  /* ── Base da página ── */
-  .stApp, [data-testid="stAppViewContainer"] {
-      background-color: #f5f7fa !important;
-  }
+  /* Base e Fundo */
+  .stApp { background-color: #f5f7fa !important; color: #1a1a2e !important; }
 
-  /* ── Sidebar ── */
-  [data-testid="stSidebar"] {
-      background-color: #1a1a2e !important;
-  }
-  [data-testid="stSidebar"] label,
-  [data-testid="stSidebar"] p,
-  [data-testid="stSidebar"] .stMarkdown {
-      color: #ffffff !important;
-  }
-  [data-testid="stSidebar"] input {
-      background-color: #2c2c54 !important;
-      color: #ffffff !important;
-      border: 1px solid #4a4a8a !important;
-      border-radius: 8px !important;
-  }
+  /* Sidebar */
+  [data-testid="stSidebar"] { background-color: #1a1a2e !important; }
+  [data-testid="stSidebar"] * { color: #ffffff !important; }
 
-  /* ── Títulos ── */
-  .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
-      color: #1a1a2e !important;
-      font-weight: 700 !important;
-  }
-
-  /* ── Labels de todos os widgets ── */
-  .stApp [data-testid="stWidgetLabel"] p,
-  .stApp [data-testid="stWidgetLabel"] label,
-  .stApp label {
-      color: #1a1a2e !important;
-      font-weight: 500 !important;
-  }
-
-  /* ── Radio buttons — label e texto ── */
-  .stApp .stRadio [data-testid="stWidgetLabel"] p {
-      color: #1a1a2e !important;
-  }
-  .stApp .stRadio label {
-      color: #1a1a2e !important;
-      background-color: transparent !important;
-  }
-  .stApp .stRadio div[role="radiogroup"] label p {
-      color: #1a1a2e !important;
-  }
-  /* Força texto visível dentro do radio */
-  .stApp div[data-baseweb="radio"] label {
-      color: #1a1a2e !important;
-  }
-  .stApp div[data-baseweb="radio"] label > div:last-child {
-      color: #1a1a2e !important;
-  }
-
-  /* ── Inputs texto e número ── */
-  .stApp .stTextInput input,
-  .stApp .stNumberInput input {
-      background-color: #ffffff !important;
-      color: #1a1a2e !important;
-      border: 1px solid #d0d5e8 !important;
-      border-radius: 8px !important;
-  }
-
-  /* ── Selectbox — campo fechado e valor seleccionado ── */
-  .stApp .stSelectbox [data-baseweb="select"] > div:first-child {
-      background-color: #ffffff !important;
-      border: 1px solid #d0d5e8 !important;
-      border-radius: 8px !important;
-  }
-  .stApp .stSelectbox [data-baseweb="select"] [data-testid="stMarkdownContainer"] p,
-  .stApp .stSelectbox [data-baseweb="select"] span,
-  .stApp .stSelectbox [data-baseweb="select"] div {
-      color: #1a1a2e !important;
-  }
-
-  /* ── Date input ── */
-  .stApp .stDateInput input {
-      background-color: #ffffff !important;
-      color: #1a1a2e !important;
-      border: 1px solid #d0d5e8 !important;
-      border-radius: 8px !important;
-  }
-
-  /* ── Botões — normal, hover e focus ── */
-  .stApp .stButton > button {
-      background-color: #2c3e50 !important;
-      color: #ffffff !important;
-      border: none !important;
-      border-radius: 8px !important;
-      padding: 0.5rem 1.2rem !important;
+  /* CORREÇÃO CRÍTICA: Mensagens de Alerta (Sucesso, Erro, Aviso) */
+  [data-testid="stNotification"] p {
+      color: #1a1a2e !important; /* Força o texto para azul escuro */
       font-weight: 600 !important;
-      width: 100% !important;
-      transition: background-color 0.2s ease !important;
-  }
-  .stApp .stButton > button:hover,
-  .stApp .stButton > button:active,
-  .stApp .stButton > button:focus {
-      background-color: #4a90d9 !important;
-      color: #ffffff !important;
-      border: none !important;
-  }
-  /* Botão tipo "primary" (Resetar BD) */
-  .stApp .stButton > button[kind="primary"],
-  .stApp .stButton > button[data-testid="baseButton-primary"] {
-      background-color: #c0392b !important;
-      color: #ffffff !important;
-  }
-  .stApp .stButton > button[kind="primary"]:hover {
-      background-color: #922b21 !important;
-      color: #ffffff !important;
-  }
-
-  /* ── Form submit buttons ── */
-  .stApp [data-testid="stFormSubmitButton"] > button {
-      background-color: #2c3e50 !important;
-      color: #ffffff !important;
-      border: none !important;
-      border-radius: 8px !important;
-      font-weight: 600 !important;
-      width: 100% !important;
-  }
-  .stApp [data-testid="stFormSubmitButton"] > button:hover,
-  .stApp [data-testid="stFormSubmitButton"] > button:active,
-  .stApp [data-testid="stFormSubmitButton"] > button:focus {
-      background-color: #4a90d9 !important;
-      color: #ffffff !important;
-  }
-
-  /* ── Tabs ── */
-  .stApp button[data-baseweb="tab"] {
-      color: #1a1a2e !important;
-      background-color: transparent !important;
-  }
-  .stApp button[data-baseweb="tab"][aria-selected="true"] {
-      color: #2c3e50 !important;
-      border-bottom: 3px solid #2c3e50 !important;
-  }
-
-  /* ── Métricas ── */
-  .stApp [data-testid="stMetricLabel"] p,
-  .stApp [data-testid="stMetricValue"] {
-      color: #1a1a2e !important;
-  }
-
-  /* ── Caption e texto auxiliar ── */
-  .stApp .stCaption p,
-  .stApp [data-testid="stCaptionContainer"] p {
-      color: #555577 !important;
-  }
-
-  /* ── Download button ── */
-  .stApp .stDownloadButton > button {
-      background-color: #27ae60 !important;
-      color: #ffffff !important;
-      border-radius: 8px !important;
-      font-weight: 600 !important;
-      width: 100% !important;
-  }
-  .stApp .stDownloadButton > button:hover {
-      background-color: #1e8449 !important;
-      color: #ffffff !important;
-  }
-
-  /* ── Expanders — fundo e texto ── */
-  .stApp [data-testid="stExpander"] {
-      background-color: #ffffff !important;
-      border: 1px solid #d0d5e8 !important;
-      border-radius: 8px !important;
-  }
-  .stApp [data-testid="stExpander"] summary {
-      color: #1a1a2e !important;
-      background-color: #ffffff !important;
-  }
-  .stApp [data-testid="stExpander"] summary:hover {
-      background-color: #eef1f7 !important;
-  }
-  .stApp [data-testid="stExpander"] summary p,
-  .stApp [data-testid="stExpander"] summary span {
-      color: #1a1a2e !important;
-  }
-  .stApp [data-testid="stExpander"] > div {
-      background-color: #ffffff !important;
-      color: #1a1a2e !important;
   }
   
+  /* Inputs e Labels */
+  label, .stMarkdown p { color: #1a1a2e !important; font-weight: 500; }
+  
+  /* Botões e Tabs */
+  .stButton>button { border-radius: 8px; font-weight: 600; }
+  button[data-baseweb="tab"] { color: #1a1a2e !important; }
+  
+  /* Cards de métricas */
+  [data-testid="stMetricValue"] { color: #2e7d32 !important; }
 </style>
 """, unsafe_allow_html=True)
 
