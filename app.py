@@ -13,70 +13,61 @@ from dateutil.relativedelta import relativedelta
 # ─────────────────────────────────────────────
 
 # ─────────────────────────────────────────────
-#  REFINAMENTO LOGIN E TIPOGRAFIA DE CAMPOS
+#  AJUSTE DE ESCALA DO TÍTULO (PROPORÇÃO SOLICITADA)
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* 1. FUNDO UNIFICADO (Slate Gray) */
-    .stApp, [data-testid="stSidebar"] {
+    /* 1. FUNDO UNIFICADO */
+    .stApp {
         background-color: #CBD5E0 !important;
     }
 
-    /* 2. DESTAQUE DO TÍTULO E SUBTÍTULO (LOGIN) */
-    /* Nome do Sistema */
+    /* 2. TÍTULO FINANCEMASTER (Escala aumentada conforme imagem) */
     h1 {
         color: #1A202C !important;
-        font-size: 2.5rem !important;
-        font-weight: 800 !important;
-        margin-bottom: 0px !important;
+        font-size: 3.5rem !important; /* Tamanho proporcional ao 'Bem-vindo' */
+        font-weight: 850 !important; /* Negrito extra para impacto */
+        letter-spacing: -1px !important; /* Aproxima as letras para um look moderno */
+        padding-top: 1rem !important;
+        margin-bottom: 5px !important;
     }
     
-    /* Subtítulo (Corrigindo a sobreposição/contraste) */
+    /* Subtítulo logo abaixo do FinanceMaster */
     .stMarkdown p {
-        color: #2D3748 !important; /* Cinza escuro para leitura clara */
-        font-size: 1.1rem !important;
+        color: #2D3748 !important;
+        font-size: 1.2rem !important;
+        font-weight: 500 !important;
     }
 
-    /* 3. AUMENTO DE FONTE DOS LABELS (Usuário/Senha e outros) */
-    /* Aplicamos aos labels de todos os widgets para manter o padrão */
+    /* 3. LABELS DOS CAMPOS (Usuário/Senha) */
     [data-testid="stWidgetLabel"] p {
-        font-size: 1.2rem !important; /* Fonte maior e mais legível */
+        font-size: 1.25rem !important; /* Levemente maior para acompanhar o título */
         font-weight: 600 !important;
         color: #1A202C !important;
-        margin-bottom: 8px !important;
     }
 
-    /* 4. ABAS (TABS) - Minimalistas e Negrito quando selecionadas */
+    /* 4. ABAS (TABS) - Apenas Bold quando selecionadas */
     div[data-baseweb="tab-list"] {
         background-color: transparent !important;
         border-bottom: 2px solid #A0AEC0 !important;
     }
     button[data-baseweb="tab"] {
         background-color: transparent !important;
-        color: #4A5568 !important;
-    }
-    button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: transparent !important;
     }
     button[data-baseweb="tab"][aria-selected="true"] p {
         color: #1A202C !important;
         font-weight: 800 !important;
-        font-size: 1.1rem !important;
+        font-size: 1.15rem !important;
     }
 
-    /* 5. INPUTS E BOTÕES */
+    /* 5. CAMPOS DE INPUT */
     div[data-baseweb="input"] {
         background-color: #FFFFFF !important;
-        border: 1px solid #A0AEC0 !important;
-    }
-    .stButton > button {
-        background-color: #2D3748 !important;
-        color: #FFFFFF !important;
-        height: 3em !important;
-        width: 100% !important;
+        border-radius: 10px !important;
     }
 </style>
 """, unsafe_allow_html=True)
+
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
 # ─────────────────────────────────────────────
