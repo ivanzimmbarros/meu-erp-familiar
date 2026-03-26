@@ -12,44 +12,38 @@ from dateutil.relativedelta import relativedelta
 #  CONFIGURAÇÃO GLOBAL — DEVE SER A 1ª CHAMADA
 # ─────────────────────────────────────────────
 
+# --- SUBSTITUIÇÃO DA LINHA 23 À 60 ---
+st.markdown("""
 <style>
-  /* 1. RESET PARA CORES PADRÃO DE ALTO CONTRASTE */
-  .stApp { 
-      background-color: #ffffff !important; 
-  }
-  
-  /* Força todos os textos principais para preto absoluto */
-  h1, h2, h3, p, label, .stMarkdown, [data-testid="stWidgetLabel"] p {
-      color: #000000 !important;
-  }
+    /* 1. Reset visual para garantir que o fundo seja claro */
+    .stApp {
+        background-color: #FFFFFF !important;
+    }
 
-  /* 2. CORREÇÃO DAS ABAS (TABS) */
-  button[data-baseweb="tab"] p {
-      color: #000000 !important;
-  }
+    /* 2. Forçar todos os textos (Labels, Títulos, Parágrafos) para PRETO */
+    h1, h2, h3, h4, h5, h6, p, label, span, .stMarkdown {
+        color: #000000 !important;
+    }
 
-  /* 3. MENSAGENS DE SISTEMA (A CAUSA DO ERRO ANTERIOR) */
-  /* Forçamos o conteúdo das notificações a ser preto sobre fundo branco */
-  [data-testid="stNotificationContent"] {
-      color: #000000 !important;
-      background-color: #f0f2f6 !important;
-      border: 1px solid #000000 !important;
-      padding: 10px !important;
-  }
-  
-  /* Ícones e textos dentro do alerta */
-  [data-testid="stNotificationContent"] p, [data-testid="data-testid="stNotification"] svg {
-      color: #000000 !important;
-  }
+    /* 3. CORREÇÃO DAS MENSAGENS (Sucesso/Erro) */
+    /* Isso garante que a caixa de texto de sucesso tenha fundo cinza e letra preta */
+    div[data-testid="stNotification"] {
+        background-color: #f0f2f6 !important;
+        color: #000000 !important;
+        border: 2px solid #000000 !important;
+    }
+    
+    div[data-testid="stNotification"] p {
+        color: #000000 !important;
+        font-weight: bold !important;
+    }
 
-  /* 4. BARRA LATERAL PARA CONTRASTE */
-  [data-testid="stSidebar"] {
-      background-color: #1a1a2e !important;
-  }
-  [data-testid="stSidebar"] * {
-      color: #ffffff !important;
-  }
+    /* 4. Ajuste das Abas (Tabs) para leitura clara */
+    button[data-baseweb="tab"] p {
+        color: #000000 !important;
+    }
 </style>
+""", unsafe_allow_html=True)
     
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
