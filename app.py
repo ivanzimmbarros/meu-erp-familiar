@@ -15,28 +15,30 @@ from dateutil.relativedelta import relativedelta
 
 st.markdown("""
 <style>
-  /* Base e Fundo */
+  /* 1. FUNDO E TEXTO BASE */
   .stApp { background-color: #f5f7fa !important; color: #1a1a2e !important; }
 
-  /* Sidebar */
+  /* 2. BARRA LATERAL (SIDEBAR) */
   [data-testid="stSidebar"] { background-color: #1a1a2e !important; }
   [data-testid="stSidebar"] * { color: #ffffff !important; }
 
-  /* CORREÇÃO CRÍTICA: Mensagens de Alerta (Sucesso, Erro, Aviso) */
-  [data-testid="stNotification"] p {
-      color: #1a1a2e !important; /* Força o texto para azul escuro */
-      font-weight: 600 !important;
+  /* 3. CORREÇÃO DAS MENSAGENS (Sucesso, Erro, Info, Warning) */
+  /* Força o fundo das caixas a ter uma borda escura e o texto SEMPRE preto */
+  [data-testid="stNotification"], [data-testid="stNotificationContent"] {
+      background-color: #ffffff !important;
+      border: 2px solid #1a1a2e !important;
+      border-radius: 8px !important;
   }
   
-  /* Inputs e Labels */
-  label, .stMarkdown p { color: #1a1a2e !important; font-weight: 500; }
-  
-  /* Botões e Tabs */
-  .stButton>button { border-radius: 8px; font-weight: 600; }
+  [data-testid="stNotification"] p, [data-testid="stNotification"] div {
+      color: #000000 !important;
+      font-weight: 700 !important;
+      font-size: 16px !important;
+  }
+
+  /* 4. TABS E BOTÕES */
   button[data-baseweb="tab"] { color: #1a1a2e !important; }
-  
-  /* Cards de métricas */
-  [data-testid="stMetricValue"] { color: #2e7d32 !important; }
+  .stButton>button { background-color: #1a1a2e !important; color: white !important; }
 </style>
 """, unsafe_allow_html=True)
 
