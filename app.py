@@ -45,7 +45,7 @@ st.markdown("""
     /* 3. USUÁRIO E SENHA - AGORA DISCRETOS (FORMATO ORIGINAL) */
     [data-testid="stWidgetLabel"] p {
         font-size: 1rem !important; /* Tamanho padrão/menor */
-        font-weight: 400 !important; /* Sem negrito pesado */
+        font-weight: 1000 !important; /* Sem negrito pesado */
         color: #4A5568 !important;
         margin-top: 10px !important;
     }
