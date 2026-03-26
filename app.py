@@ -12,7 +12,29 @@ from dateutil.relativedelta import relativedelta
 #  CONFIGURAÇÃO GLOBAL — DEVE SER A 1ª CHAMADA
 # ─────────────────────────────────────────────
 
-st.set_page_config(page_title="FinanceMaster", layout="wide")
+# ─────────────────────────────────────────────
+#  AJUSTE DE CONTRASTE VISUAL
+# ─────────────────────────────────────────────
+st.markdown("""
+<style>
+    /* Fundo Geral do Sistema (Cinza mais escuro/fechado) */
+    .stApp {
+        background-color: #E2E8F0 !important;
+    }
+
+    /* Manter os cartões e áreas de conteúdo em branco para gerar o contraste */
+    [data-testid="stVerticalBlock"] > div > div > div[data-testid="stVerticalBlock"] {
+        background-color: transparent;
+    }
+
+    /* Opcional: Destacar as abas (Tabs) sobre o fundo cinza */
+    button[data-baseweb="tab"] {
+        background-color: #F8F9FB !important;
+        margin-right: 5px !important;
+        border-radius: 5px 5px 0 0 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
