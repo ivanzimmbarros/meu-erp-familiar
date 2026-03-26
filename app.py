@@ -12,75 +12,63 @@ from dateutil.relativedelta import relativedelta
 #  CONFIGURAÇÃO GLOBAL — DEVE SER A 1ª CHAMADA
 # ─────────────────────────────────────────────
 
-st.markdown("""
 <style>
-    /* 1. CONFIGURAÇÃO DE TEMA GLOBAL (SOFT & CLEAN) */
+    /* 1. FUNDO GERAL E TEXTOS */
     .stApp {
         background-color: #F0F2F6 !important;
-        color: #2C3E50 !important;
     }
-
-    /* 2. CABEÇALHOS, LABELS E TEXTOS (CONTRASTE ALTO) */
-    h1, h2, h3, h4, h5, h6, p, span, label, [data-testid="stWidgetLabel"] p {
+    h1, h2, h3, p, label, span, [data-testid="stWidgetLabel"] p {
         color: #1A1C23 !important;
-        font-family: 'Inter', sans-serif !important;
-        font-weight: 500 !important;
     }
 
-    /* 3. INPUTS E CAMPOS DE SELEÇÃO (FUNDOS CLAROS) */
-    /* Remove o fundo preto/escuro dos campos de entrada */
-    .stTextInput input, .stSelectbox div[data-baseweb="select"], 
-    .stNumberInput input, .stTextArea textarea {
+    /* 2. FORÇAR INPUTS BRANCOS (BLOQUEIA O FUNDO PRETO) */
+    /* Este seletor ataca a div interna dos inputs do Streamlit */
+    div[data-baseweb="input"], div[data-baseweb="select"], .stTextArea textarea, [data-testid="stMarkdownContainer"] input {
         background-color: #FFFFFF !important;
         color: #1A1C23 !important;
-        border: 1px solid #D1D5DB !important;
-        border-radius: 8px !important;
+    }
+    
+    /* Garante que o texto digitado seja preto */
+    input {
+        color: #1A1C23 !important;
+        -webkit-text-fill-color: #1A1C23 !important;
     }
 
-    /* 4. BOTÕES (AZUL PROFISSIONAL COM TEXTO BRANCO NITIDO) */
-    .stButton > button {
+    /* 3. BOTÕES (AZUL ESCURO COM TEXTO BRANCO FIXO) */
+    button[kind="primary"], button[kind="secondary"], .stButton > button {
         background-color: #243B55 !important;
-        color: #FFFFFF !important;
-        border-radius: 8px !important;
+        color: #FFFFFF !important; /* Branco Puro */
         border: none !important;
-        font-weight: 600 !important;
-        padding: 0.6rem 1rem !important;
-        width: 100% !important;
-        transition: all 0.2s ease-in-out !important;
+        opacity: 1 !important;
     }
 
-    /* Efeito de destaque ao passar o mouse */
+    /* Força a cor do texto do botão mesmo em hover ou active */
+    .stButton > button p, .stButton > button div, .stButton > button span {
+        color: #FFFFFF !important;
+    }
+
     .stButton > button:hover {
         background-color: #3A506B !important;
         color: #FFFFFF !important;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
     }
 
-    /* 5. CORREÇÃO ESPECÍFICA DA PÁGINA DE LOGIN (SIDEBAR) */
-    [data-testid="stSidebar"] {
-        background-color: #1A1C23 !important; /* Sidebar Escura para contraste */
+    /* 4. TABS (ABAS) MAIS CLARAS */
+    button[data-baseweb="tab"] p {
+        color: #4A5B6D !important;
     }
-    
-    [data-testid="stSidebar"] .login-title {
-        color: #FFFFFF !important;
-        font-size: 1.8rem;
-        font-weight: 700;
+    button[data-baseweb="tab"][aria-selected="true"] p {
+        color: #243B55 !important;
+        font-weight: bold !important;
     }
 
-    [data-testid="stSidebar"] label, [data-testid="stSidebar"] p {
-        color: #ECF0F1 !important; /* Labels do login em branco/cinza claro */
-    }
-
-    /* 6. MENSAGENS DE NOTIFICAÇÃO (SUCESSO/ERRO) */
+    /* 5. MENSAGENS DE ALERTA */
     div[data-testid="stNotification"] {
         background-color: #FFFFFF !important;
         color: #1A1C23 !important;
-        border-left: 5px solid #243B55 !important;
-        border-radius: 8px !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
+        border: 1px solid #243B55 !important;
     }
 </style>
-""", unsafe_allow_html=True)
+
 # ─────────────────────────────────────────────
 #  LOGGING E CONSTANTES
 # ─────────────────────────────────────────────
