@@ -176,6 +176,29 @@ st.markdown("""
       background-color: #1e8449 !important;
       color: #ffffff !important;
   }
+
+  /* ── Expanders — fundo e texto ── */
+  .stApp [data-testid="stExpander"] {
+      background-color: #ffffff !important;
+      border: 1px solid #d0d5e8 !important;
+      border-radius: 8px !important;
+  }
+  .stApp [data-testid="stExpander"] summary {
+      color: #1a1a2e !important;
+      background-color: #ffffff !important;
+  }
+  .stApp [data-testid="stExpander"] summary:hover {
+      background-color: #eef1f7 !important;
+  }
+  .stApp [data-testid="stExpander"] summary p,
+  .stApp [data-testid="stExpander"] summary span {
+      color: #1a1a2e !important;
+  }
+  .stApp [data-testid="stExpander"] > div {
+      background-color: #ffffff !important;
+      color: #1a1a2e !important;
+  }
+  
 </style>
 """, unsafe_allow_html=True)
 
@@ -1058,15 +1081,37 @@ with tab5:
         if st.button("🔄 Limpar Cache", use_container_width=True):
             st.cache_data.clear()
             st.cache_resource.clear()
-            st.success("Cache limpo!")
+            st.session_state["cache_limpo"] = True
             st.rerun()
+        if st.session_state.get("cache_limpo"):
+            st.success("✅ Cache limpo com sucesso!")
+            st.session_state["cache_limpo"] = False
+
     with col_md:
         if st.button("💣 Resetar Banco de Dados",
                      use_container_width=True,
                      type="primary"):
-            DBManager.execute("DELETE FROM transacoes")
-            DBManager.execute("DELETE FROM fontes")
-            DBManager.execute("DELETE FROM saldos_iniciais")
-            DBManager.execute("DELETE FROM metas_novo")
-            st.warning("⚠️ Banco de dados resetado.")
-            st.rerun()
+            st.session_state["confirmar_reset"] = True
+
+        if st.session_state.get("confirmar_reset"):
+            st.warning("⚠️ Tem a certeza? Esta acção é irreversível.")
+            col_sim, col_nao = st.columns(2)
+            with col_sim:
+                if st.button("✅ Sim, resetar", key="btn_sim_reset",
+                             use_container_width=True):
+                    DBManager.execute("DELETE FROM transacoes")
+                    DBManager.execute("DELETE FROM fontes")
+                    DBManager.execute("DELETE FROM saldos_iniciais")
+                    DBManager.execute("DELETE FROM metas_novo")
+                    st.session_state["confirmar_reset"] = False
+                    st.session_state["reset_feito"] = True
+                    st.rerun()
+            with col_nao:
+                if st.button("❌ Cancelar", key="btn_nao_reset",
+                             use_container_width=True):
+                    st.session_state["confirmar_reset"] = False
+                    st.rerun()
+
+        if st.session_state.get("reset_feito"):
+            st.success("✅ Banco de dados resetado com sucesso.")
+            st.session_state["reset_feito"] = False
