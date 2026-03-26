@@ -12,55 +12,72 @@ from dateutil.relativedelta import relativedelta
 #  CONFIGURAÇÃO GLOBAL — DEVE SER A 1ª CHAMADA
 # ─────────────────────────────────────────────
 
-# --- SUBSTITUIÇÃO DA LINHA 23 À 60 ---
-# --- SUBSTITUA O BLOCO DE CSS (LINHAS 23-60) POR ESTE ---
 st.markdown("""
 <style>
-    /* 1. FUNDO E TEXTO PRINCIPAL */
+    /* 1. CONFIGURAÇÃO DE TEMA GLOBAL (SOFT & CLEAN) */
     .stApp {
-        background-color: #F8F9FB !important;
-    }
-    
-    /* Força Labels, Textos e Títulos para Preto (Contraste Máximo) */
-    h1, h2, h3, p, label, span, [data-testid="stWidgetLabel"] p {
-        color: #1A1C23 !important;
+        background-color: #F0F2F6 !important;
+        color: #2C3E50 !important;
     }
 
-    /* 2. INPUTS (REMOÇÃO DO FUNDO PRETO) */
-    /* Garante que campos de texto e seleção sejam Brancos com borda Cinza */
-    .stTextInput input, .stSelectbox div[data-baseweb="select"], .stNumberInput input {
+    /* 2. CABEÇALHOS, LABELS E TEXTOS (CONTRASTE ALTO) */
+    h1, h2, h3, h4, h5, h6, p, span, label, [data-testid="stWidgetLabel"] p {
+        color: #1A1C23 !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 500 !important;
+    }
+
+    /* 3. INPUTS E CAMPOS DE SELEÇÃO (FUNDOS CLAROS) */
+    /* Remove o fundo preto/escuro dos campos de entrada */
+    .stTextInput input, .stSelectbox div[data-baseweb="select"], 
+    .stNumberInput input, .stTextArea textarea {
         background-color: #FFFFFF !important;
         color: #1A1C23 !important;
         border: 1px solid #D1D5DB !important;
+        border-radius: 8px !important;
     }
 
-    /* 3. BOTÕES (AZUL MARINHO COM TEXTO BRANCO) */
-    /* Resolve o problema de botões "invisíveis" */
+    /* 4. BOTÕES (AZUL PROFISSIONAL COM TEXTO BRANCO NITIDO) */
     .stButton > button {
         background-color: #243B55 !important;
         color: #FFFFFF !important;
-        border-radius: 6px !important;
+        border-radius: 8px !important;
         border: none !important;
         font-weight: 600 !important;
-        height: 3em !important;
+        padding: 0.6rem 1rem !important;
         width: 100% !important;
+        transition: all 0.2s ease-in-out !important;
     }
-    
-    /* Efeito ao passar o mouse */
+
+    /* Efeito de destaque ao passar o mouse */
     .stButton > button:hover {
         background-color: #3A506B !important;
         color: #FFFFFF !important;
-        border: none !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
     }
 
-    /* 4. MENSAGENS DE SUCESSO/ERRO */
+    /* 5. CORREÇÃO ESPECÍFICA DA PÁGINA DE LOGIN (SIDEBAR) */
+    [data-testid="stSidebar"] {
+        background-color: #1A1C23 !important; /* Sidebar Escura para contraste */
+    }
+    
+    [data-testid="stSidebar"] .login-title {
+        color: #FFFFFF !important;
+        font-size: 1.8rem;
+        font-weight: 700;
+    }
+
+    [data-testid="stSidebar"] label, [data-testid="stSidebar"] p {
+        color: #ECF0F1 !important; /* Labels do login em branco/cinza claro */
+    }
+
+    /* 6. MENSAGENS DE NOTIFICAÇÃO (SUCESSO/ERRO) */
     div[data-testid="stNotification"] {
         background-color: #FFFFFF !important;
-        border: 1px solid #243B55 !important;
-        border-radius: 8px !important;
-    }
-    div[data-testid="stNotification"] p {
         color: #1A1C23 !important;
+        border-left: 5px solid #243B55 !important;
+        border-radius: 8px !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05) !important;
     }
 </style>
 """, unsafe_allow_html=True)
