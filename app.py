@@ -14,64 +14,56 @@ from dateutil.relativedelta import relativedelta
 
 
 # ─────────────────────────────────────────────
-#  DESIGN DE ALTO IMPACTO - TELA DE LOGIN
+#  INVERSÃO DE ESCALA - FOCO NO NOME DO SISTEMA
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* 1. FUNDO GERAL (SLATE GRAY) */
+    /* 1. FUNDO GERAL */
     .stApp {
         background-color: #CBD5E0 !important;
     }
 
-    /* 2. TÍTULO FINANCEMASTER - IMPACTO MÁXIMO */
-    /* Usamos o seletor de ID do Streamlit para forçar o tamanho */
+    /* 2. FINANCEMASTER - AGORA COM ENFASE TOTAL (ESTILO ANTERIOR DOS LABELS) */
     [data-testid="stHeaderElement"], h1, #financemaster {
         color: #1A202C !important;
-        font-size: 5.5rem !important; /* Aumento massivo para dar a ênfase solicitada */
+        font-size: 5.5rem !important; /* Tamanho massivo */
         font-weight: 900 !important;
         line-height: 1.1 !important;
         letter-spacing: -2px !important;
+        padding-top: 40px !important;
         margin-bottom: 0px !important;
-        padding-top: 50px !important;
-        text-align: left !important;
     }
     
-    /* Mensagem abaixo do título (Subtítulo) */
+    /* Subtítulo acompanhando o impacto */
     .stMarkdown p {
         color: #2D3748 !important;
-        font-size: 1.5rem !important; /* Subiu para 24px */
-        font-weight: 500 !important;
-        margin-top: -10px !important;
+        font-size: 1.6rem !important;
+        font-weight: 600 !important;
+        margin-top: -5px !important;
     }
 
-    /* 3. LABELS DE USUÁRIO E SENHA (GRANDE E NEGRITO) */
+    /* 3. USUÁRIO E SENHA - AGORA DISCRETOS (FORMATO ORIGINAL) */
     [data-testid="stWidgetLabel"] p {
-        font-size: 1.8rem !important; /* Fonte muito maior para os rótulos */
-        font-weight: 700 !important;
-        color: #1A202C !important;
-        margin-top: 20px !important;
+        font-size: 1rem !important; /* Tamanho padrão/menor */
+        font-weight: 400 !important; /* Sem negrito pesado */
+        color: #4A5568 !important;
+        margin-top: 10px !important;
     }
 
-    /* 4. INPUTS E BOTÃO ENTRAR */
+    /* 4. AJUSTE DE INPUTS E BOTÃO */
     div[data-baseweb="input"] {
         background-color: #FFFFFF !important;
-        height: 60px !important; /* Inputs mais altos e robustos */
-        border-radius: 12px !important;
+        height: 45px !important; /* Altura padrão para equilibrar com labels menores */
+        border-radius: 8px !important;
     }
     
     .stButton > button {
         background-color: #2D3748 !important;
         color: #FFFFFF !important;
-        font-size: 1.4rem !important;
-        font-weight: 700 !important;
-        height: 60px !important;
-        border-radius: 12px !important;
-        margin-top: 20px !important;
-    }
-
-    /* 5. RODAPÉ (v2.0 Acesso Restrito) */
-    span[data-testid="stMarkdownContainer"] p {
-        font-size: 1rem !important;
+        font-weight: 600 !important;
+        height: 50px !important;
+        border-radius: 8px !important;
+        margin-top: 15px !important;
     }
 </style>
 """, unsafe_allow_html=True)
