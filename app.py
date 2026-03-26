@@ -12,58 +12,66 @@ from dateutil.relativedelta import relativedelta
 #  CONFIGURAÇÃO GLOBAL — DEVE SER A 1ª CHAMADA
 # ─────────────────────────────────────────────
 
+
 # ─────────────────────────────────────────────
-#  AJUSTE DE ESCALA DO TÍTULO (PROPORÇÃO SOLICITADA)
+#  DESIGN DE ALTO IMPACTO - TELA DE LOGIN
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* 1. FUNDO UNIFICADO */
+    /* 1. FUNDO GERAL (SLATE GRAY) */
     .stApp {
         background-color: #CBD5E0 !important;
     }
 
-    /* 2. TÍTULO FINANCEMASTER (Escala aumentada conforme imagem) */
-    h1 {
+    /* 2. TÍTULO FINANCEMASTER - IMPACTO MÁXIMO */
+    /* Usamos o seletor de ID do Streamlit para forçar o tamanho */
+    [data-testid="stHeaderElement"], h1, #financemaster {
         color: #1A202C !important;
-        font-size: 3.5rem !important; /* Tamanho proporcional ao 'Bem-vindo' */
-        font-weight: 850 !important; /* Negrito extra para impacto */
-        letter-spacing: -1px !important; /* Aproxima as letras para um look moderno */
-        padding-top: 1rem !important;
-        margin-bottom: 5px !important;
+        font-size: 5.5rem !important; /* Aumento massivo para dar a ênfase solicitada */
+        font-weight: 900 !important;
+        line-height: 1.1 !important;
+        letter-spacing: -2px !important;
+        margin-bottom: 0px !important;
+        padding-top: 50px !important;
+        text-align: left !important;
     }
     
-    /* Subtítulo logo abaixo do FinanceMaster */
+    /* Mensagem abaixo do título (Subtítulo) */
     .stMarkdown p {
         color: #2D3748 !important;
-        font-size: 1.2rem !important;
+        font-size: 1.5rem !important; /* Subiu para 24px */
         font-weight: 500 !important;
+        margin-top: -10px !important;
     }
 
-    /* 3. LABELS DOS CAMPOS (Usuário/Senha) */
+    /* 3. LABELS DE USUÁRIO E SENHA (GRANDE E NEGRITO) */
     [data-testid="stWidgetLabel"] p {
-        font-size: 1.25rem !important; /* Levemente maior para acompanhar o título */
-        font-weight: 600 !important;
+        font-size: 1.8rem !important; /* Fonte muito maior para os rótulos */
+        font-weight: 700 !important;
         color: #1A202C !important;
+        margin-top: 20px !important;
     }
 
-    /* 4. ABAS (TABS) - Apenas Bold quando selecionadas */
-    div[data-baseweb="tab-list"] {
-        background-color: transparent !important;
-        border-bottom: 2px solid #A0AEC0 !important;
-    }
-    button[data-baseweb="tab"] {
-        background-color: transparent !important;
-    }
-    button[data-baseweb="tab"][aria-selected="true"] p {
-        color: #1A202C !important;
-        font-weight: 800 !important;
-        font-size: 1.15rem !important;
-    }
-
-    /* 5. CAMPOS DE INPUT */
+    /* 4. INPUTS E BOTÃO ENTRAR */
     div[data-baseweb="input"] {
         background-color: #FFFFFF !important;
-        border-radius: 10px !important;
+        height: 60px !important; /* Inputs mais altos e robustos */
+        border-radius: 12px !important;
+    }
+    
+    .stButton > button {
+        background-color: #2D3748 !important;
+        color: #FFFFFF !important;
+        font-size: 1.4rem !important;
+        font-weight: 700 !important;
+        height: 60px !important;
+        border-radius: 12px !important;
+        margin-top: 20px !important;
+    }
+
+    /* 5. RODAPÉ (v2.0 Acesso Restrito) */
+    span[data-testid="stMarkdownContainer"] p {
+        font-size: 1rem !important;
     }
 </style>
 """, unsafe_allow_html=True)
