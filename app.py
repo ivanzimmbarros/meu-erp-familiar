@@ -13,30 +13,40 @@ st.set_page_config(page_title="ERP Familiar", page_icon="🏠", layout="wide")
 
 st.markdown("""
 <style>
-    /* Usa as cores nativas do Streamlit para garantir contraste perfeito nas text boxes */
-    .stApp { max-width: 100%; margin: 0 auto; background-color: var(--secondary-background-color); }
+    /* FORÇA O FUNDO ESCURO DO STREAMLIT PARA CONTRASTE TOTAL */
+    .stApp { 
+        background-color: #0e1117; 
+    }
     
+    /* CARDS COM FUNDO CLARO PARA DESTACAR DO FUNDO ESCURO */
     .card { 
-        background: var(--background-color); 
+        background-color: #ffffff; 
+        color: #1a1a1a;
         padding: 18px; border-radius: 12px; 
         border: 1px solid rgba(128,128,128,0.2); 
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3); 
         margin-bottom: 12px; 
     }
+    
     .liquidar-row { 
-        background: var(--background-color); 
+        background-color: #ffffff; 
+        color: #1a1a1a;
         padding: 12px; border-radius: 8px; 
         border: 1px solid rgba(128,128,128,0.2); 
         margin-bottom: 6px; 
         display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; 
     }
+
+    /* Labels e Textos fora dos cards precisam ser brancos para ler no fundo escuro */
+    .stMarkdown, p, h1, h2, h3, span {
+        color: #ffffff !important;
+    }
     
-    .badge-pendente { background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
-    .badge-recebido { background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
-    .badge-pago { background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
-    .badge-previsto { background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
-    
-    @media (max-width: 600px) { .liquidar-row { flex-direction: column; align-items: flex-start; } .stButton>button { width: 100% !important; } }
+    /* Corrigindo visibilidade dos inputs dentro de colunas */
+    div[data-baseweb="select"] > div {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -471,11 +481,44 @@ with tab7:
 # --- TAB 8: TRANSFERÊNCIAS (SOMA ZERO) ---
 with tab8:
     st.subheader("🔄 Transferência Soma Zero")
-    flist = [f[0] for f in db_query("SELECT nome FROM fontes ORDER BY nome")]
-    if len(flist) >= 2:
-        with st.form("ft"):
-            co = st.selectbox("Origem", flist); cd = st.selectbox("Destino", [f for f in flist if f != co])
-            vt = st.number_input("Valor (€)", 0.01)
-            if st.form_submit_button("Transferir"):
-                realizar_transferencia(co, cd, vt, hoje_iso, st.session_state.user, "Transferência Manual")
-                st.success("Concluído!"); st.rerun()
+    st.markdown("##### Movimentação entre Contas Bancárias")
+    st.caption("Esta operação retira de uma conta e insere em outra. O patrimônio total não muda.")
+
+    # Busca contas cadastradas na aba Gestão
+    fontes_transf = [f[0] for f in db_query("SELECT nome FROM fontes ORDER BY nome")]
+
+    if len(fontes_transf) < 2:
+        st.error("🚨 **Aba Bloqueada:** Você precisa cadastrar pelo menos **DUAS CONTAS** bancárias na aba **⚙️ Gestão** para habilitar transferências.")
+        st.info("Exemplo: Conta Corrente e Poupança, ou Carteira e Banco.")
+    else:
+        with st.form("form_transferencia_soma_zero", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                c_origem = st.selectbox("Sair da conta (Origem)", fontes_transf, key="trans_orig")
+            
+            with col2:
+                # Filtra para não permitir transferir para a mesma conta
+                destinos_possiveis = [f for f in fontes_transf if f != c_origem]
+                c_destino = st.selectbox("Entrar na conta (Destino)", destinos_possiveis, key="trans_dest")
+
+            col_v, col_d = st.columns(2)
+            valor_t = col_v.number_input("Valor da Transferência (€)", min_value=0.01, step=10.0, format="%.2f")
+            data_t = col_d.date_input("Data da Operação", date.today())
+            
+            obs_t = st.text_input("Observação / Motivo")
+
+            if st.form_submit_button("🔁 Confirmar Transferência", use_container_width=True, type="primary"):
+                try:
+                    realizar_transferencia(
+                        c_origem, 
+                        c_destino, 
+                        valor_t, 
+                        data_t.strftime("%Y-%m-%d"), 
+                        st.session_state.user, 
+                        obs_t
+                    )
+                    st.success(f"✅ Sucesso! €{valor_t:,.2f} transferidos de {c_origem} para {c_destino}.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao realizar transferência: {e}")
