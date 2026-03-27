@@ -524,28 +524,47 @@ with tab5:
         st.write(f"**{r['categoria_pai']}** ({r['tipo_meta']})"); st.progress(p, text=f"€{real:,.2f} / €{r['valor_previsto']:,.2f}")
 
 # --- TAB 6: DASHBOARD E EXCEL (COMPLETA) ---
+# --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI EDITION) ---
 with tab6:
-    st.subheader("📊 Saúde Financeira")
-    m_ref_dash = st.selectbox("Mês de Referência", m_ref_list, key="m_ref_dash")
-    df_d = db_df("SELECT valor_eur, tipo, categoria_pai FROM transacoes WHERE data LIKE ?", (f"{m_ref_dash}%",))
+    st.subheader("📊 Business Intelligence: Saúde e Tendências")
     
-    if df_d.empty: st.info("Lance transações para visualizar os gráficos do mês.")
+    # 1. MOTOR DE FILTROS AVANÇADOS (SIDEBAR ANALYTICS)
+    with st.expander("🔍 Filtros Avançados de BI", expanded=False):
+        c_an1, c_an2, c_an3 = st.columns(3)
+        # Range de datas para análise de tendência (não limitado a um mês)
+        df_all = db_df("SELECT * FROM transacoes")
+        df_all['dt'] = pd.to_datetime(df_all['data'])
+        
+        min_date = df_all['dt'].min() if not df_all.empty else date.today()
+        max_date = df_all['dt'].max() if not df_all.empty else date.today()
+        
+        data_range = c_an1.date_input("Período de Análise", [min_date, max_date])
+        f_contas = c_an2.multiselect("Filtrar Contas/Cartões", df_all['fonte'].unique())
+        f_cats = c_an3.multiselect("Filtrar Categorias", df_all['categoria_pai'].unique())
+
+    # Processamento de Dados para BI
+    df_bi = df_all.copy()
+    if len(data_range) == 2:
+        df_bi = df_bi[(df_bi['dt'].date() >= data_range[0]) & (df_bi['dt'].date() <= data_range[1])]
+    if f_contas: df_bi = df_bi[df_bi['fonte'].isin(f_contas)]
+    if f_cats: df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
+
+    if df_bi.empty:
+        st.info("Ajuste os filtros para visualizar a análise.")
     else:
-        c1, c2 = st.columns(2)
-        with c1: 
-            df_pie = df_d[df_d['tipo']=='Despesa']
-            if not df_pie.empty: st.plotly_chart(px.pie(df_pie, values='valor_eur', names='categoria_pai', hole=0.4, title="Gastos por Categoria"), use_container_width=True)
-        with c2: 
-            st.plotly_chart(px.bar(df_d.groupby('tipo')['valor_eur'].sum().reset_index(), x='tipo', y='valor_eur', color='tipo', title="Balanço Receita x Despesa"), use_container_width=True)
-    
-    st.divider()
-    if st.button("📊 Gerar Relatório Excel (3 Abas)", use_container_width=True, type="primary"):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            db_df("SELECT * FROM transacoes WHERE data LIKE ?", (f"{m_ref_dash}%",)).to_excel(writer, index=False, sheet_name='Transações')
-            db_df("SELECT tipo, categoria_pai, SUM(valor_eur) as Total FROM transacoes WHERE data LIKE ? GROUP BY tipo, categoria_pai", (f"{m_ref_dash}%",)).to_excel(writer, index=False, sheet_name='Resumo')
-            db_df("SELECT * FROM orcamentos WHERE mes_ano=?", (m_ref_dash,)).to_excel(writer, index=False, sheet_name='Metas')
-        st.download_button("⬇️ Baixar Relatório", output.getvalue(), f"Relatorio_{m_ref_dash}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        # 2. KPIs EXECUTIVOS (REALIZADO vs COMPROMETIDO)
+        st.markdown("---")
+        # Realizado: Tudo que já foi pago/recebido
+        # Comprometido: Tudo que é pendente/previsto
+        rec_real = df_bi[(df_bi['tipo'] == 'Receita') & (df_bi['status_liquidacao'] == 'RECEBIDO')]['valor_eur'].sum()
+        des_real = df_bi[(df_bi['tipo'] == 'Despesa') & (df_bi['status_liquidacao'] == 'PAGO')]['valor_eur'].sum()
+        pendente = df_bi[df_bi['status_liquidacao'].isin(['PENDENTE', 'PREVISTO'])]['valor_eur'].sum()
+        
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("💰 Receita Realizada", f"€{rec_real:,.2f}")
+        k2.metric("💸 Despesa Realizada", f"€{des_real:,.2f}")
+        k3.metric("⚠️ Total Comprometido", f"€{pendente:,.2f}")
+        balanco = rec_
 
 # --- TAB 7: GESTÃO (TOTALMENTE CORRIGIDA E FUNCIONAL) ---
 with tab7:
