@@ -13,13 +13,17 @@ st.set_page_config(page_title="ERP Familiar", page_icon="🏠", layout="wide")
 
 st.markdown("""
 <style>
-    .stApp { max-width: 100%; margin: 0 auto; background-color: #fcfcfc; }
-    .card { background: #ffffff; padding: 18px; border-radius: 12px; border: 1px solid #eaeaea; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 12px; }
-    .liquidar-row { background: #ffffff; padding: 12px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 6px; color: #1a1a1a; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
-    .badge-pendente { background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
-    .badge-recebido { background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
-    .badge-pago { background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
-    .badge-previsto { background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
+    /* Fundo dinâmico respeitando o tema do Streamlit */
+    .stApp { max-width: 100%; margin: 0 auto; }
+    
+    /* Cards com bordas sutis e fundo adaptável */
+    .card { padding: 18px; border-radius: 12px; border: 1px solid rgba(128,128,128,0.2); box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 12px; }
+    .liquidar-row { padding: 12px; border-radius: 8px; border: 1px solid rgba(128,128,128,0.2); margin-bottom: 6px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+    
+    /* Badges com cores sólidas e legíveis */
+    .badge-pendente { background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; }
+    .badge-recebido { background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; }
+    .badge-pago { background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; }
     @media (max-width: 600px) { .liquidar-row { flex-direction: column; align-items: flex-start; } .stButton>button { width: 100% !important; } }
 </style>
 """, unsafe_allow_html=True)
@@ -218,21 +222,68 @@ with tab2:
                                 st.rerun()
 
 # --- TAB 3 E 4: SALDOS E CARTÕES ---
+# --- TAB 3: SALDOS (COMPLETA) ---
 with tab3:
     st.subheader("💰 Patrimônio e Liquidez")
     fnts = [f[0] for f in db_query("SELECT nome FROM fontes ORDER BY nome")]
-    tr, tl = 0.0, 0.0
-    cols = st.columns(3)
-    for i, f in enumerate(fnts):
-        sr = calcular_saldo_real(f); sc = calcular_comprometido(f); sl = sr - sc
-        tr += sr; tl += sl
-        with cols[i%3]: st.markdown(f'<div class="card"><b>🏦 {f}</b><br>Real: €{sr:,.2f}<br>Livre: <b style="color:{"#10b981" if sl>=0 else "#ef4444"};">€{sl:,.2f}</b></div>', unsafe_allow_html=True)
-    st.divider(); c_t1, c_t2 = st.columns(2); c_t1.metric("SALDO REAL TOTAL", f"€ {tr:,.2f}"); c_t2.metric("DISPONIBILIDADE REAL", f"€ {tl:,.2f}", delta_color="normal" if tl>=0 else "inverse")
-    if tl < 0: st.error("🚨 RISCO DE INSOLVÊNCIA PATRIMONIAL!")
+    if not fnts:
+        st.info("💡 Vá até a aba ⚙️ Gestão e cadastre suas Contas Bancárias.")
+    else:
+        tr, tl = 0.0, 0.0
+        cols = st.columns(3)
+        for i, f in enumerate(fnts):
+            sr = calcular_saldo_real(f); sc = calcular_comprometido(f); sl = sr - sc
+            tr += sr; tl += sl
+            with cols[i%3]: 
+                st.markdown(f'<div class="card"><b>🏦 {f}</b><br>Real: €{sr:,.2f}<br>Livre: <b style="color:{"#10b981" if sl>=0 else "#ef4444"};">€{sl:,.2f}</b></div>', unsafe_allow_html=True)
+        st.divider()
+        c_t1, c_t2 = st.columns(2)
+        c_t1.metric("SALDO REAL TOTAL", f"€ {tr:,.2f}")
+        c_t2.metric("DISPONIBILIDADE REAL", f"€ {tl:,.2f}", delta_color="normal" if tl>=0 else "inverse")
+        if tl < 0: st.error("🚨 RISCO DE INSOLVÊNCIA PATRIMONIAL!")
+        
+        st.divider()
+        col_aj, col_ini = st.columns(2)
+        with col_aj:
+            st.markdown("#### ⚖️ Bater Saldo (Ajuste)")
+            f_aj = st.selectbox("Conta", fnts, key="f_aj")
+            v_banco = st.number_input("Valor no Extrato (€)", step=0.01, format="%.2f")
+            if st.button("Sincronizar Banco"):
+                sr_atual = calcular_saldo_real(f_aj)
+                diff = round(v_banco - sr_atual, 2)
+                if abs(diff) > 0.01:
+                    t_aj, st_aj = ("Receita", "RECEBIDO") if diff > 0 else ("Despesa", "PAGO")
+                    db_execute("INSERT INTO transacoes (data, categoria_pai, fonte, valor_eur, tipo, nota, status_liquidacao, usuario) VALUES (?,?,?,?,?,?,?,?)",
+                               (date.today().strftime("%Y-%m-%d"), "Ajuste de Saldo", f_aj, abs(diff), t_aj, f"Ajuste automático (diff {diff})", st_aj, st.session_state.user))
+                    st.success("Ajuste realizado!"); st.rerun()
+                else: st.info("Saldo já coincide.")
+        with col_ini:
+            st.markdown("#### 🔧 Configurar Saldo Inicial")
+            f_ini = st.selectbox("Conta Inicial", fnts, key="f_ini")
+            n_ini = st.number_input("Valor Inicial (€)", step=10.0, format="%.2f")
+            if st.button("Salvar Inicial"):
+                db_execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_ini, n_ini))
+                st.success("Salvo!"); st.rerun()
 
+# --- TAB 4: CARTÕES (COMPLETA) ---
 with tab4:
     st.subheader("💳 Gestão de Crédito")
+    
+    with st.expander("➕ Cadastrar Novo Cartão"):
+        fnts_c = [f[0] for f in db_query("SELECT nome FROM fontes")]
+        with st.form("f_cartao"):
+            c_nc = st.text_input("Nome do Cartão")
+            c_lim = st.number_input("Limite Total (€)", min_value=0.0, step=100.0)
+            c_cnt = st.selectbox("Conta para Pagamento", fnts_c if fnts_c else ["Sem contas cadastradas"])
+            c_df = st.number_input("Dia Fechamento", 1, 31, 25)
+            c_dv = st.number_input("Dia Vencimento", 1, 31, 10)
+            if st.form_submit_button("Salvar Cartão") and c_nc and fnts_c:
+                db_execute("INSERT INTO cartoes (nome, limite, conta_pagamento, dia_fechamento, dia_vencimento) VALUES (?,?,?,?,?)", (c_nc, c_lim, c_cnt, c_df, c_dv))
+                st.rerun()
+
+    st.divider()
     cts = db_df("SELECT * FROM cartoes ORDER BY nome")
+    if cts.empty: st.info("Nenhum cartão cadastrado.")
     for _, c in cts.iterrows():
         usd = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE cartao_id=? AND status_cartao='pendente'", (c['id'],))[0][0] or 0.0
         st.markdown(f'<div class="card"><b>💳 {c["nome"]}</b><br>Limite: €{c["limite"]:,.2f} | Usado: €{usd:,.2f}</div>', unsafe_allow_html=True)
@@ -249,43 +300,70 @@ with tab4:
                             db_execute_many(ops); st.rerun()
                         else: st.error("Saldo insuficiente na conta de débito.")
 
-# --- TAB 5 E 6: METAS E DASHBOARD (COM PATCH EXCEL) ---
+# --- TAB 5: METAS (COMPLETA) ---
 with tab5:
     st.subheader("🎯 Orçamento e Metas")
-    m_ref = date.today().strftime("%Y-%m")
+    m_ref_list = sorted(list(set([d[0][:7] for d in db_query("SELECT data FROM transacoes")] + [date.today().strftime("%Y-%m")])), reverse=True)
+    m_ref = st.selectbox("Mês de Referência", m_ref_list, key="m_ref_metas")
+    
+    with st.expander("➕ Definir Nova Meta / Teto"):
+        with st.form("f_metas"):
+            t_m = st.radio("Tipo de Meta", ["Despesa", "Receita"], horizontal=True)
+            cats_p = db_query("SELECT nome FROM categorias WHERE pai_id IS NULL AND tipo_categoria=?", (t_m,))
+            c_m = st.selectbox("Categoria Principal", [c[0] for c in cats_p] if cats_p else ["Sem categorias"])
+            v_m = st.number_input("Valor Planejado (€)", min_value=0.0, step=50.0)
+            if st.form_submit_button("Salvar Planejamento") and cats_p:
+                db_execute("INSERT OR REPLACE INTO orcamentos (mes_ano, categoria_pai, valor_previsto, tipo_meta) VALUES (?,?,?,?)", (m_ref, c_m, v_m, t_m)); st.rerun()
+
+    st.divider()
     metas = db_df("SELECT * FROM orcamentos WHERE mes_ano=?", (m_ref,))
+    if metas.empty: st.info("Nenhuma meta para este mês.")
     for _, r in metas.iterrows():
         real = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE categoria_pai=? AND data LIKE ? AND tipo=?", (r['categoria_pai'], f"{m_ref}%", r['tipo_meta']))[0][0] or 0.0
         p = min(real / r['valor_previsto'], 1.0) if r['valor_previsto'] > 0 else 0.0
         st.write(f"**{r['categoria_pai']}** ({r['tipo_meta']})"); st.progress(p, text=f"€{real:,.2f} / €{r['valor_previsto']:,.2f}")
 
+# --- TAB 6: DASHBOARD E EXCEL (COMPLETA) ---
 with tab6:
     st.subheader("📊 Saúde Financeira")
-    df_d = db_df("SELECT valor_eur, tipo, categoria_pai FROM transacoes WHERE data LIKE ?", (f"{m_ref}%",))
-    if not df_d.empty:
+    m_ref_dash = st.selectbox("Mês de Referência", m_ref_list, key="m_ref_dash")
+    df_d = db_df("SELECT valor_eur, tipo, categoria_pai FROM transacoes WHERE data LIKE ?", (f"{m_ref_dash}%",))
+    
+    if df_d.empty: st.info("Lance transações para visualizar os gráficos do mês.")
+    else:
         c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(px.pie(df_d[df_d['tipo']=='Despesa'], values='valor_eur', names='categoria_pai', hole=0.4, title="Gastos"), use_container_width=True)
-        with c2: st.plotly_chart(px.bar(df_d.groupby('tipo')['valor_eur'].sum().reset_index(), x='tipo', y='valor_eur', color='tipo', title="Balanço"), use_container_width=True)
+        with c1: 
+            df_pie = df_d[df_d['tipo']=='Despesa']
+            if not df_pie.empty: st.plotly_chart(px.pie(df_pie, values='valor_eur', names='categoria_pai', hole=0.4, title="Gastos por Categoria"), use_container_width=True)
+        with c2: 
+            st.plotly_chart(px.bar(df_d.groupby('tipo')['valor_eur'].sum().reset_index(), x='tipo', y='valor_eur', color='tipo', title="Balanço Receita x Despesa"), use_container_width=True)
     
     st.divider()
     if st.button("📊 Gerar Relatório Excel (3 Abas)", use_container_width=True, type="primary"):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            db_df("SELECT * FROM transacoes WHERE data LIKE ?", (f"{m_ref}%",)).to_excel(writer, index=False, sheet_name='Transações')
-            db_df("SELECT tipo, categoria_pai, SUM(valor_eur) as Total FROM transacoes WHERE data LIKE ? GROUP BY tipo, categoria_pai", (f"{m_ref}%",)).to_excel(writer, index=False, sheet_name='Resumo')
-            db_df("SELECT * FROM orcamentos WHERE mes_ano=?", (m_ref,)).to_excel(writer, index=False, sheet_name='Metas')
-        st.download_button("⬇️ Baixar Relatório Completo", output.getvalue(), f"Relatorio_{m_ref}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            db_df("SELECT * FROM transacoes WHERE data LIKE ?", (f"{m_ref_dash}%",)).to_excel(writer, index=False, sheet_name='Transações')
+            db_df("SELECT tipo, categoria_pai, SUM(valor_eur) as Total FROM transacoes WHERE data LIKE ? GROUP BY tipo, categoria_pai", (f"{m_ref_dash}%",)).to_excel(writer, index=False, sheet_name='Resumo')
+            db_df("SELECT * FROM orcamentos WHERE mes_ano=?", (m_ref_dash,)).to_excel(writer, index=False, sheet_name='Metas')
+        st.download_button("⬇️ Baixar Relatório", output.getvalue(), f"Relatorio_{m_ref_dash}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# --- TAB 7: GESTÃO (FINALIZADA) ---
-# --- SUBSTITUIÇÃO OBRIGATÓRIA NA TAB 7 ---
+# --- TAB 7: GESTÃO (TOTALMENTE CORRIGIDA E FUNCIONAL) ---
 with tab7:
-    st.markdown("#### 💱 Seção 0 - Câmbio")
-    ntax = st.number_input("Taxa BRL/EUR", value=st.session_state.taxa, format="%.4f")
-    if st.button("💾 Salvar Câmbio"):
-        db_execute("UPDATE configuracoes SET valor=? WHERE chave='taxa_brl_eur'", (str(ntax),))
-        st.session_state.taxa = ntax; st.rerun()
+    st.markdown("#### 🏦 Seção 1 - Contas Bancárias (Fontes)")
+    n_font = st.text_input("Nome da Nova Conta")
+    if st.button("➕ Adicionar Conta"):
+        if n_font: db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_font,)); st.rerun()
+    df_f = db_df("SELECT id, nome FROM fontes")
+    if not df_f.empty:
+        df_f.insert(0, "Remover", False) # Coluna booleana explícita para o checkbox
+        ed_f = st.data_editor(df_f, hide_index=True, use_container_width=True, key="ed_font")
+        if st.button("🗑️ Excluir Conta Selecionada"):
+            for _, r in df_f[ed_f["Remover"] == True].iterrows():
+                if not verificar_bloqueio_delecao("fontes", r['id']): db_execute("DELETE FROM fontes WHERE id=?", (r['id'],)); st.rerun()
+                else: st.error(f"Bloqueado: Conta {r['nome']} possui lançamentos.")
 
-    st.divider(); st.markdown("#### 📂 Seção 1 - Categorias")
+    st.divider()
+    st.markdown("#### 📂 Seção 2 - Categorias")
     c1, c2 = st.columns(2)
     with c1:
         st.caption("Adicionar Categoria Principal")
@@ -296,32 +374,42 @@ with tab7:
     with c2:
         st.caption("Adicionar Detalhamento (Filho)")
         pais_list = db_query("SELECT id, nome FROM categorias WHERE pai_id IS NULL")
-        p_sel_g = st.selectbox("Vincular ao Pai", [p[1] for p in pais_list])
-        ns = st.text_input("Nome do Detalhe")
-        if st.button("➕ Adicionar Filho"):
-            id_p_g = [p[0] for p in pais_list if p[1] == p_sel_g][0]
-            db_execute("INSERT INTO categorias (nome, pai_id) VALUES (?,?)", (ns, id_p_g)); st.rerun()
+        if pais_list:
+            p_sel_g = st.selectbox("Vincular ao Pai", [p[1] for p in pais_list])
+            ns = st.text_input("Nome do Detalhe")
+            if st.button("➕ Adicionar Filho"):
+                id_p_g = [p[0] for p in pais_list if p[1] == p_sel_g][0]
+                db_execute("INSERT INTO categorias (nome, pai_id) VALUES (?,?)", (ns, id_p_g)); st.rerun()
 
-    dfc = db_df("SELECT id, nome, tipo_categoria FROM categorias")
-    edc = st.data_editor(dfc, hide_index=True, use_container_width=True)
-    if st.button("🗑️ Remover Categoria Selecionada"):
-        for _, r in dfc[edc.iloc[:, 0] == True].iterrows(): # Ajuste se usar checkbox lateral
-            if not verificar_bloqueio_delecao("categorias", r['id']): db_execute("DELETE FROM categorias WHERE id=?", (r['id'],)); st.rerun()
+    df_c = db_df("SELECT id, nome, tipo_categoria FROM categorias")
+    if not df_c.empty:
+        df_c.insert(0, "Remover", False)
+        ed_c = st.data_editor(df_c, hide_index=True, use_container_width=True, key="ed_cat")
+        if st.button("🗑️ Excluir Categoria Selecionada"):
+            for _, r in df_c[ed_c["Remover"] == True].iterrows():
+                if not verificar_bloqueio_delecao("categorias", r['id']): db_execute("DELETE FROM categorias WHERE id=?", (r['id'],)); st.rerun()
+                else: st.error(f"Bloqueado: Categoria {r['nome']} possui lançamentos.")
 
-    st.divider(); st.markdown("#### 👤 Seção 3 - Beneficiários")
+    st.divider()
+    st.markdown("#### 👤 Seção 3 - Beneficiários")
     nb = st.text_input("Novo Beneficiário")
-    if st.button("➕ Adicionar Benef."):
+    if st.button("➕ Adicionar Beneficiário"):
         if nb: db_execute("INSERT OR IGNORE INTO beneficiarios (nome) VALUES (?)", (nb,)); st.rerun()
-    dfb = db_df("SELECT * FROM beneficiarios")
-    edb = st.data_editor(dfb, hide_index=True, use_container_width=True)
-    if st.button("🗑️ Remover Benef."):
-        for _, r in dfb.iterrows():
-            if not verificar_bloqueio_delecao("beneficiarios", r['id']): db_execute("DELETE FROM beneficiarios WHERE id=?", (r['id'],)); st.rerun()
+    df_b = db_df("SELECT id, nome FROM beneficiarios")
+    if not df_b.empty:
+        df_b.insert(0, "Remover", False)
+        ed_b = st.data_editor(df_b, hide_index=True, use_container_width=True, key="ed_ben")
+        if st.button("🗑️ Excluir Beneficiário"):
+            for _, r in df_b[ed_b["Remover"] == True].iterrows():
+                if not verificar_bloqueio_delecao("beneficiarios", r['id']): db_execute("DELETE FROM beneficiarios WHERE id=?", (r['id'],)); st.rerun()
 
-    st.divider(); st.markdown("#### 👥 Seção 4 - Usuários (SHA-256)")
+    st.divider()
+    st.markdown("#### 👥 Seção 4 - Acesso e Usuários")
     u1, u2, u3 = st.columns(3)
-    unome = u1.text_input("Nome Exibição"); ulog = u2.text_input("Login"); usenh = u3.text_input("Senha", type="password")
-    if st.button("👤 Criar Novo Usuário"):
+    unome = u1.text_input("Nome de Exibição")
+    ulog = u2.text_input("Login")
+    usenh = u3.text_input("Senha", type="password")
+    if st.button("👤 Criar Novo Usuário", type="primary"):
         if unome and ulog and usenh:
             db_execute("INSERT INTO usuarios (username, password, nome_exibicao) VALUES (?,?,?)", 
                        (ulog, hashlib.sha256(usenh.encode()).hexdigest(), unome)); st.success("Usuário Criado!")
