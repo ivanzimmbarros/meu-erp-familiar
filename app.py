@@ -316,17 +316,16 @@ with tab1:
 
 # --- TAB 2: HISTÓRICO ---
 
+# --- TAB 2: HISTÓRICO (LÓGICA ORIGINAL RESTAURADA E BLINDADA CONTRA ERROS) ---
 with tab2:
     st.subheader("📋 Auditoria de Lançamentos")
 
-    # 1. Recuperação e Consolidação de Dados (Query Híbrida)
-    # Parte A: Transações Comuns (Individualizadas)
+    # 1. Recuperação e Consolidação de Dados
     df_comuns = db_df("""
         SELECT id, data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, status_liquidacao, forma_pagamento
         FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'
     """)
 
-    # Parte B: Transações de Cartão (Agrupadas por Fatura conforme o ORIGINAL)
     df_faturas = db_df("""
         SELECT 
             MIN(t.id) as id, 
@@ -345,15 +344,18 @@ with tab2:
         GROUP BY t.fatura_ref, c.nome
     """)
 
-    # Une os dois mundos
     df_raw = pd.concat([df_comuns, df_faturas], ignore_index=True)
     
     if not df_raw.empty:
-        # Filtros Superiores (Mantidos para a nova estrutura)
+        # TRATAMENTO ANTI-ERRO (TypeError): Garante que todas as fontes sejam strings e não nulas
+        df_raw['fonte'] = df_raw['fonte'].fillna("Não Especificado").astype(str)
+        lista_fontes = sorted(df_raw['fonte'].unique().tolist())
+
+        # Filtros Superiores
         c_f1, c_f2, c_f3 = st.columns([1, 1, 2])
-        f_tipo = c_f1.selectbox("Tipo", ["Todos", "Despesa", "Receita"], key="f_tipo_v2")
-        f_fonte = c_f2.selectbox("Conta/Cartão", ["Todas"] + sorted(df_raw['fonte'].unique().tolist()))
-        f_busca = c_f3.text_input("🔍 Buscar no Histórico", placeholder="Nota, Categoria...")
+        f_tipo = c_f1.selectbox("Tipo", ["Todos", "Despesa", "Receita"], key="f_tipo_v3")
+        f_fonte = c_f2.selectbox("Conta/Cartão", ["Todas"] + lista_fontes)
+        f_busca = c_f3.text_input("🔍 Buscar no Histórico", placeholder="Nota, Categoria...", key="f_busca_v3")
 
         # Aplicação dos Filtros
         if f_tipo != "Todos": df_raw = df_raw[df_raw['tipo'] == f_tipo]
@@ -363,10 +365,13 @@ with tab2:
             df_raw = df_raw[mask]
 
         if not df_raw.empty:
-            df_raw['dt'] = pd.to_datetime(df_raw['data'])
+            # Tratamento de Data robusto para evitar erros de conversão
+            df_raw['dt'] = pd.to_datetime(df_raw['data'], errors='coerce')
+            df_raw = df_raw.dropna(subset=['dt']) # Remove linhas com datas corrompidas
             df_raw['mes_ref'] = df_raw['dt'].dt.strftime('%m/%Y - %B')
             meses_uniquos = df_raw.sort_values('dt', ascending=False)['mes_ref'].unique()
 
+            st.markdown("---")
             # 2. Listagem Agrupada em Expanders
             for m in meses_uniquos:
                 with st.expander(f"📅 {m}", expanded=(m == meses_uniquos[0])):
@@ -374,11 +379,10 @@ with tab2:
                     for _, r in itens.iterrows():
                         c_lin, c_btn = st.columns([5, 1])
                         with c_lin:
-                            # Semântica visual do Journal UI
                             st_map = {"RECEBIDO": "badge-recebido", "PAGO": "badge-pago", "PENDENTE": "badge-pendente"}
                             badge_class = st_map.get(r['status_liquidacao'], "badge-pendente")
-                            
                             icon = "💳" if r['forma_pagamento'] == "Cartão de Crédito" else "🏦"
+                            
                             st.markdown(f'''
                                 <div class="liquidar-row">
                                     <div>
@@ -389,27 +393,29 @@ with tab2:
                                 </div>
                             ''', unsafe_allow_html=True)
                         with c_btn:
-                            # Só permite liquidar o que for individual e pendente (Faturas pagam na aba Cartões)
                             if r['status_liquidacao'] == 'PENDENTE' and r['forma_pagamento'] != 'Cartão de Crédito':
-                                if st.button("✅", key=f"liq_h_{r['id']}"):
+                                if st.button("✅", key=f"liq_h_v3_{r['id']}"):
                                     liquidar_transacao(r['id'], r['tipo'], st.session_state.user)
                                     st.rerun()
                             elif r['forma_pagamento'] == 'Cartão de Crédito':
-                                st.write("🔍") # Ícone indicando que detalhes estão na aba Cartões
+                                st.write("ℹ️") 
 
             # 3. Tabela Geral de Auditoria (Data Editor)
             st.divider()
             st.caption("🛠️ Auditoria Técnica (Remoção e Ajustes)")
             df_audit = df_raw.copy()
             df_audit.insert(0, "Remover", False)
-            editor = st.data_editor(df_audit[["Remover", "id", "data", "fonte", "valor_eur", "nota"]], 
-                                     hide_index=True, use_container_width=True, key=f"audit_ed_{st.session_state.ver}")
+            # Seleciona apenas colunas seguras para o editor
+            cols_ed = ["Remover", "id", "data", "fonte", "valor_eur", "nota"]
+            editor_df = st.data_editor(df_audit[cols_ed], hide_index=True, use_container_width=True, key=f"audit_ed_v3")
             
-            if st.button("🗑️ Excluir Selecionados", type="secondary"):
-                ids_rm = df_audit[editor["Remover"] == True]["id"].tolist()
+            if st.button("🗑️ Excluir Selecionados", type="secondary", key="btn_del_v3"):
+                # Captura os IDs marcados para remoção
+                ids_rm = df_audit.loc[editor_df["Remover"] == True, "id"].tolist()
                 if ids_rm:
                     ph = ",".join(["?"] * len(ids_rm))
                     db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
+                    st.success(f"{len(ids_rm)} itens removidos.")
                     st.rerun()
         else: st.info("Nenhum registro para os filtros aplicados.")
     else: st.info("O histórico está vazio.")
