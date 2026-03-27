@@ -317,18 +317,44 @@ with tab1:
 # --- TAB 2: HISTÓRICO ---
 
 with tab2:
-    st.subheader("📋 Histórico e Auditoria")
+    st.subheader("📋 Auditoria de Lançamentos")
 
-    # 1. Filtros Superiores
-    c_f1, c_f2, c_f3 = st.columns([1, 1, 2])
-    f_tipo = c_f1.selectbox("Tipo", ["Todos", "Despesa", "Receita"], key="f_tipo")
-    fontes_disp = [f[0] for f in db_query("SELECT nome FROM fontes")]
-    f_fonte = c_f2.selectbox("Conta/Fonte", ["Todas"] + fontes_disp)
-    f_busca = c_f3.text_input("🔍 Buscar", placeholder="Nota, Categoria ou Beneficiário...")
+    # 1. Recuperação e Consolidação de Dados (Query Híbrida)
+    # Parte A: Transações Comuns (Individualizadas)
+    df_comuns = db_df("""
+        SELECT id, data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, status_liquidacao, forma_pagamento
+        FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'
+    """)
 
-    df_raw = db_df("SELECT * FROM transacoes ORDER BY data DESC, id DESC")
+    # Parte B: Transações de Cartão (Agrupadas por Fatura conforme o ORIGINAL)
+    df_faturas = db_df("""
+        SELECT 
+            MIN(t.id) as id, 
+            t.fatura_ref || '-01' as data, 
+            'Cartão de Crédito' as categoria_pai, 
+            'Fatura' as beneficiario, 
+            c.nome as fonte, 
+            SUM(t.valor_eur) as valor_eur, 
+            'Despesa' as tipo, 
+            'Fatura Consolidada: ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
+            MAX(t.status_liquidacao) as status_liquidacao,
+            'Cartão de Crédito' as forma_pagamento
+        FROM transacoes t
+        JOIN cartoes c ON t.cartao_id = c.id
+        WHERE t.forma_pagamento = 'Cartão de Crédito'
+        GROUP BY t.fatura_ref, c.nome
+    """)
+
+    # Une os dois mundos
+    df_raw = pd.concat([df_comuns, df_faturas], ignore_index=True)
     
     if not df_raw.empty:
+        # Filtros Superiores (Mantidos para a nova estrutura)
+        c_f1, c_f2, c_f3 = st.columns([1, 1, 2])
+        f_tipo = c_f1.selectbox("Tipo", ["Todos", "Despesa", "Receita"], key="f_tipo_v2")
+        f_fonte = c_f2.selectbox("Conta/Cartão", ["Todas"] + sorted(df_raw['fonte'].unique().tolist()))
+        f_busca = c_f3.text_input("🔍 Buscar no Histórico", placeholder="Nota, Categoria...")
+
         # Aplicação dos Filtros
         if f_tipo != "Todos": df_raw = df_raw[df_raw['tipo'] == f_tipo]
         if f_fonte != "Todas": df_raw = df_raw[df_raw['fonte'] == f_fonte]
@@ -338,47 +364,56 @@ with tab2:
 
         if not df_raw.empty:
             df_raw['dt'] = pd.to_datetime(df_raw['data'])
-            df_raw['mes'] = df_raw['dt'].dt.strftime('%m/%Y - %B')
-            meses = df_raw['mes'].unique()
+            df_raw['mes_ref'] = df_raw['dt'].dt.strftime('%m/%Y - %B')
+            meses_uniquos = df_raw.sort_values('dt', ascending=False)['mes_ref'].unique()
 
-            st.markdown("---")
-            # 2. Agrupamento Temporal (Mês/Ano)
-            for m in meses:
-                with st.expander(f"📅 {m}", expanded=(m == meses[0])):
-                    itens = df_raw[df_raw['mes'] == m]
+            # 2. Listagem Agrupada em Expanders
+            for m in meses_uniquos:
+                with st.expander(f"📅 {m}", expanded=(m == meses_uniquos[0])):
+                    itens = df_raw[df_raw['mes_ref'] == m]
                     for _, r in itens.iterrows():
-                        c_l, c_b = st.columns([5, 1])
-                        with c_l:
-                            st_map = {"RECEBIDO": "badge-recebido", "PAGO": "badge-pago", "PENDENTE": "badge-pendente", "PREVISTO": "badge-previsto"}
-                            badge = st_map.get(r['status_liquidacao'], "badge-pendente")
-                            st.markdown(f'<div class="liquidar-row"><span class="{badge}">{r["status_liquidacao"]}</span> <b>{r["dt"].strftime("%d/%m")}</b> | {r["categoria_pai"]} | <b>€{r["valor_eur"]:,.2f}</b><br><small>{r["fonte"]} ➔ {r["beneficiario"] or "N/A"} | {r["nota"]}</small></div>', unsafe_allow_html=True)
-                        with c_b:
-                            if r['status_liquidacao'] in ['PENDENTE', 'PREVISTO']:
-                                if st.button("✅", key=f"liq_{r['id']}"):
-                                    status_novo = "RECEBIDO" if r['tipo'] == "Receita" else "PAGO"
-                                    db_execute("UPDATE transacoes SET status_liquidacao=?, data_liquidacao=? WHERE id=?", (status_novo, date.today().strftime("%Y-%m-%d"), r['id']))
+                        c_lin, c_btn = st.columns([5, 1])
+                        with c_lin:
+                            # Semântica visual do Journal UI
+                            st_map = {"RECEBIDO": "badge-recebido", "PAGO": "badge-pago", "PENDENTE": "badge-pendente"}
+                            badge_class = st_map.get(r['status_liquidacao'], "badge-pendente")
+                            
+                            icon = "💳" if r['forma_pagamento'] == "Cartão de Crédito" else "🏦"
+                            st.markdown(f'''
+                                <div class="liquidar-row">
+                                    <div>
+                                        <span class="{badge_class}">{r["status_liquidacao"]}</span> 
+                                        <b>{r["dt"].strftime("%d/%m")}</b> | {icon} {r["fonte"]} | <b>€{r["valor_eur"]:,.2f}</b><br>
+                                        <small>{r["categoria_pai"]} ➔ {r["nota"]}</small>
+                                    </div>
+                                </div>
+                            ''', unsafe_allow_html=True)
+                        with c_btn:
+                            # Só permite liquidar o que for individual e pendente (Faturas pagam na aba Cartões)
+                            if r['status_liquidacao'] == 'PENDENTE' and r['forma_pagamento'] != 'Cartão de Crédito':
+                                if st.button("✅", key=f"liq_h_{r['id']}"):
+                                    liquidar_transacao(r['id'], r['tipo'], st.session_state.user)
                                     st.rerun()
+                            elif r['forma_pagamento'] == 'Cartão de Crédito':
+                                st.write("🔍") # Ícone indicando que detalhes estão na aba Cartões
 
-            # 3. Tabela Geral de Auditoria e Remoção
-            st.markdown("---")
-            st.caption("🛠️ Edição e Remoção em Massa")
-            df_ed = df_raw.copy()
-            df_ed.insert(0, "Remover", False)
-            sel_cols = ["Remover", "id", "data", "categoria_pai", "valor_eur", "tipo", "status_liquidacao", "nota"]
-            editor = st.data_editor(df_ed[sel_cols], hide_index=True, use_container_width=True, key=f"ed_hist_{st.session_state.ver}")
+            # 3. Tabela Geral de Auditoria (Data Editor)
+            st.divider()
+            st.caption("🛠️ Auditoria Técnica (Remoção e Ajustes)")
+            df_audit = df_raw.copy()
+            df_audit.insert(0, "Remover", False)
+            editor = st.data_editor(df_audit[["Remover", "id", "data", "fonte", "valor_eur", "nota"]], 
+                                     hide_index=True, use_container_width=True, key=f"audit_ed_{st.session_state.ver}")
             
-            if st.button("🗑️ Confirmar Remoção Selecionados", type="secondary"):
-                ids_rm = df_ed[editor["Remover"] == True]["id"].tolist()
+            if st.button("🗑️ Excluir Selecionados", type="secondary"):
+                ids_rm = df_audit[editor["Remover"] == True]["id"].tolist()
                 if ids_rm:
                     ph = ",".join(["?"] * len(ids_rm))
                     db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
-                    if 'ver' in st.session_state: st.session_state.ver += 1
                     st.rerun()
-        else:
-            st.info("Nenhum lançamento encontrado para os filtros aplicados.")
-    else:
-        st.info("Nenhum lançamento registrado no sistema.")
-
+        else: st.info("Nenhum registro para os filtros aplicados.")
+    else: st.info("O histórico está vazio.")
+        
 # --- TAB 3 E 4: SALDOS E CARTÕES ---
 with tab3:
     st.subheader("💰 Patrimônio e Liquidez")
