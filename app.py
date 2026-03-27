@@ -13,43 +13,88 @@ st.set_page_config(page_title="ERP Familiar", page_icon="🏠", layout="wide")
 
 st.markdown("""
 <style>
-    /* FORÇA O FUNDO ESCURO DO STREAMLIT PARA CONTRASTE TOTAL */
-    .stApp { 
-        background-color: #0e1117; 
-    }
-    
-    /* CARDS COM FUNDO CLARO PARA DESTACAR DO FUNDO ESCURO */
-    .card { 
-        background-color: #ffffff; 
-        color: #1a1a1a;
-        padding: 18px; border-radius: 12px; 
-        border: 1px solid rgba(128,128,128,0.2); 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3); 
-        margin-bottom: 12px; 
-    }
-    
-    .liquidar-row { 
-        background-color: #ffffff; 
-        color: #1a1a1a;
-        padding: 12px; border-radius: 8px; 
-        border: 1px solid rgba(128,128,128,0.2); 
-        margin-bottom: 6px; 
-        display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; 
+    /* 1. UNIFICAÇÃO TOTAL DO FUNDO (SEM QUEBRA DE FRAMES) */
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+        background-color: #106EBE !important;
+        background-image: radial-gradient(circle at 2px 2px, rgba(255,255,255,0.05) 1px, transparent 0);
+        background-size: 40px 40px;
     }
 
-    /* Labels e Textos fora dos cards precisam ser brancos para ler no fundo escuro */
-    .stMarkdown, p, h1, h2, h3, span {
-        color: #ffffff !important;
+    /* 2. SIDEBAR UNIFICADA */
+    [data-testid="stSidebar"] {
+        background-color: #0d5aa0 !important; /* Azul levemente mais escuro para profundidade */
+        border-right: 2px solid #0FFCBE;
     }
-    
-    /* Corrigindo visibilidade dos inputs dentro de colunas */
-    div[data-baseweb="select"] > div {
-        background-color: #ffffff !important;
-        color: #000000 !important;
+
+    /* 3. TABS (ABAS) CUSTOMIZADAS */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+        background-color: rgba(0,0,0,0.2);
+        padding: 10px;
+        border-radius: 15px;
     }
+
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        background-color: transparent;
+        border-radius: 8px;
+        color: white !important;
+        font-weight: 600;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background-color: #0FFCBE !important;
+        color: #106EBE !important; /* Texto azul no fundo menta */
+    }
+
+    /* 4. CARDS E LINHAS DE LANÇAMENTO (GLASSMORPHISM) */
+    .card, .liquidar-row {
+        background: rgba(255, 255, 255, 0.1) !important;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-left: 5px solid #0FFCBE !important;
+        border-radius: 12px;
+        color: white !important;
+        padding: 15px;
+        margin-bottom: 10px;
+    }
+
+    /* 5. INPUTS E TEXT BOXES (VISIBILIDADE TOTAL) */
+    div[data-baseweb="input"], div[data-baseweb="select"], .stNumberInput input {
+        background-color: white !important;
+        color: #106EBE !important;
+        border-radius: 8px !important;
+        font-weight: 500;
+    }
+
+    /* 6. BOTÕES (COR MENTA AGÊNCIA PITO) */
+    .stButton>button {
+        background-color: #0FFCBE !important;
+        color: #106EBE !important;
+        font-weight: 900 !important;
+        border: none !important;
+        border-radius: 12px !important;
+        transition: 0.3s;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .stButton>button:hover {
+        box-shadow: 0 0 20px #0FFCBE;
+        transform: scale(1.02);
+    }
+
+    /* 7. TEXTOS GERAIS */
+    h1, h2, h3, p, label, .stMarkdown {
+        color: white !important;
+        font-family: 'Inter', sans-serif;
+    }
+
+    /* Badges */
+    .badge-recebido { background: #0FFCBE !important; color: #106EBE !important; padding: 4px 10px; border-radius: 6px; font-weight: bold; }
+    .badge-pendente { background: #ff4b4b !important; color: white !important; padding: 4px 10px; border-radius: 6px; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
-
 # --- 2. MOTOR DE BANCO DE DADOS E ESTADO DA SESSÃO ---
 DB_PATH = 'finance.db'
 
@@ -478,47 +523,45 @@ with tab7:
         if unome and ulog and usenh:
             db_execute("INSERT INTO usuarios (username, password, nome_exibicao) VALUES (?,?,?)", 
                        (ulog, hashlib.sha256(usenh.encode()).hexdigest(), unome)); st.success("Usuário Criado!")
-# --- TAB 8: TRANSFERÊNCIAS (SOMA ZERO) ---
+
+# --- TAB 8: TRANSFERÊNCIAS (IDENTIDADE VISUAL MENTA/AZUL) ---
 with tab8:
-    st.subheader("🔄 Transferência Soma Zero")
-    st.markdown("##### Movimentação entre Contas Bancárias")
-    st.caption("Esta operação retira de uma conta e insere em outra. O patrimônio total não muda.")
+    st.markdown("<h2 style='color:#0FFCBE;'>🔄 Transferência Soma Zero</h2>", unsafe_allow_html=True)
+    
+    # Busca contas cadastradas
+    res_fontes = db_query("SELECT nome FROM fontes ORDER BY nome")
+    fontes_t = [f[0] for f in res_fontes]
 
-    # Busca contas cadastradas na aba Gestão
-    fontes_transf = [f[0] for f in db_query("SELECT nome FROM fontes ORDER BY nome")]
-
-    if len(fontes_transf) < 2:
-        st.error("🚨 **Aba Bloqueada:** Você precisa cadastrar pelo menos **DUAS CONTAS** bancárias na aba **⚙️ Gestão** para habilitar transferências.")
-        st.info("Exemplo: Conta Corrente e Poupança, ou Carteira e Banco.")
+    if len(fontes_t) < 2:
+        st.error("❗ **Ação Necessária:** Você precisa de pelo menos **2 CONTAS** (ex: Banco e Carteira) para habilitar transferências.")
+        st.info("Vá na aba **⚙️ Gestão** para cadastrar suas contas bancárias.")
     else:
-        with st.form("form_transferencia_soma_zero", clear_on_submit=True):
-            col1, col2 = st.columns(2)
+        st.markdown('<div class="card">Mova valores entre suas contas mantendo a integridade do saldo geral.</div>', unsafe_allow_html=True)
+        
+        with st.form("form_transf_final"):
+            c1, c2 = st.columns(2)
+            c_origem = c1.selectbox("De onde sai o dinheiro?", fontes_t)
+            # Destinos excluindo a origem
+            c_destino = c2.selectbox("Para onde vai o dinheiro?", [f for f in fontes_t if f != c_origem])
             
-            with col1:
-                c_origem = st.selectbox("Sair da conta (Origem)", fontes_transf, key="trans_orig")
+            v_col, d_col = st.columns(2)
+            valor_transf = v_col.number_input("Valor (€)", min_value=0.01, step=10.0, format="%.2f")
+            data_transf = d_col.date_input("Data da Transferência", date.today())
             
-            with col2:
-                # Filtra para não permitir transferir para a mesma conta
-                destinos_possiveis = [f for f in fontes_transf if f != c_origem]
-                c_destino = st.selectbox("Entrar na conta (Destino)", destinos_possiveis, key="trans_dest")
-
-            col_v, col_d = st.columns(2)
-            valor_t = col_v.number_input("Valor da Transferência (€)", min_value=0.01, step=10.0, format="%.2f")
-            data_t = col_d.date_input("Data da Operação", date.today())
+            nota_transf = st.text_input("Nota / Observação")
             
-            obs_t = st.text_input("Observação / Motivo")
-
-            if st.form_submit_button("🔁 Confirmar Transferência", use_container_width=True, type="primary"):
+            if st.form_submit_button("🔁 EXECUTAR TRANSFERÊNCIA"):
                 try:
                     realizar_transferencia(
                         c_origem, 
                         c_destino, 
-                        valor_t, 
-                        data_t.strftime("%Y-%m-%d"), 
+                        valor_transf, 
+                        data_transf.strftime("%Y-%m-%d"), 
                         st.session_state.user, 
-                        obs_t
+                        nota_transf
                     )
-                    st.success(f"✅ Sucesso! €{valor_t:,.2f} transferidos de {c_origem} para {c_destino}.")
+                    st.balloons()
+                    st.success(f"Transferência de €{valor_transf} concluída com sucesso!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Erro ao realizar transferência: {e}")
+                    st.error(f"Erro no processamento: {e}")
