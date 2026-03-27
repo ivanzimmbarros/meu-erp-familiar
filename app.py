@@ -11,108 +11,60 @@ from dateutil.relativedelta import relativedelta
 # --- 1. CONFIGURAÇÃO GLOBAL E CSS MOBILE-FIRST ---
 st.set_page_config(page_title="ERP Familiar", page_icon="🏠", layout="wide")
 
+import streamlit as st
+
 st.markdown("""
 <style>
-    /* 1. FUNDO GERAL - COR PAPER (#D5D5D5) */
-    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
-        background-color: #D5D5D5 !important;
-        color: #2F2F2F !important;
+    /* 1. REDUÇÃO DE PADDING SUPERIOR NO CONTAINER PRINCIPAL */
+    /* Ajusta o gap deixado pelo header escondido e aproxima o conteúdo do topo */
+    .block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 0rem !important;
+        padding-left: 5rem !important;
+        padding-right: 5rem !important;
     }
 
-    /* 2. SIDEBAR - COR OVERCAST (#9099A2) */
-    [data-testid="stSidebar"] {
-        background-color: #9099A2 !important;
-        border-right: 1px solid rgba(0,0,0,0.1);
-    }
-    
-    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] p {
-        color: #FFFFFF !important; /* Texto branco na sidebar para contraste */
-    }
-
-    /* 3. ABAS (TABS) - EQUILÍBRIO LAVENDAR (#6D7993) */
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: #9099A2;
-        padding: 8px 8px 0px 8px;
-        border-radius: 10px 10px 0 0;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        background-color: transparent;
-        color: #F0F0F0 !important;
-        font-family: 'Inter', sans-serif;
-        font-weight: 500;
-        border: none !important;
-    }
-
-    .stTabs [aria-selected="true"] {
-        background-color: #6D7993 !important; /* LAVENDAR */
-        color: #FFFFFF !important;
-        border-radius: 5px 5px 0 0 !important;
-        border-bottom: 3px solid #96858F !important; /* Detalhe em DUSTY */
-    }
-
-    /* 4. CARDS E LINHAS - LIMPEZA VISUAL */
-    .card, .liquidar-row {
-        background-color: #FFFFFF !important; /* Fundo papel branco puro */
-        border: None !important;
-        border-left: 6px solid #6D7993 !important; /* Detalhe Lavendar */
+    /* 2. ESTILIZAÇÃO AVANÇADA DAS MÉTRICAS */
+    /* Personaliza o espaçamento interno das métricas para evitar quebras no mobile */
+    [data-testid="stMetric"] {
+        background-color: #FFFFFF;
+        padding: 15px;
         border-radius: 4px;
-        color: #2F2F2F !important;
-        padding: 20px;
-        margin-bottom: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        border-left: 4px solid #6D7993; /* Cor Lavendar */
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
 
-    /* 5. INPUTS E CAMPOS DE TEXTO - CONTRASTE MÁXIMO */
-    div[data-baseweb="input"], div[data-baseweb="select"], .stNumberInput input {
-        background-color: #FFFFFF !important;
-        color: #2F2F2F !important;
-        border: 1px solid #9099A2 !important;
-        border-radius: 4px !important;
-    }
-    
-    label, .stMarkdown p {
-        color: #2F2F2F !important; /* Labels escuros para leitura fácil */
-        font-weight: 600 !important;
-    }
-
-    /* 6. BOTÕES - COR DUSTY (#96858F) COM TEXTO BRANCO */
-    .stButton>button {
-        background-color: #96858F !important; /* DUSTY */
-        color: #FFFFFF !important;
-        font-weight: 600 !important;
-        border: none !important;
-        border-radius: 2px !important;
-        padding: 12px 24px !important;
-        transition: 0.3s ease;
+    /* Ajuste de cor do Label da métrica (mais suave) */
+    [data-testid="stMetricLabel"] p {
+        color: #9099A2 !important; /* Cor Overcast */
+        font-size: 0.9rem !important;
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 0.5px;
     }
 
-    .stButton>button:hover {
-        background-color: #6D7993 !important; /* Muda para LAVENDAR no hover */
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    /* 3. SCROLLBAR CUSTOMIZADA (Journal Style) */
+    /* Torna a experiência de navegação mais integrada ao tema */
+    ::-webkit-scrollbar {
+        width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: #D5D5D5; 
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #9099A2; 
+        border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #6D7993; 
     }
 
-    /* 7. MÉTRICAS E TÍTULOS */
-    [data-testid="stMetricValue"] {
-        color: #6D7993 !important;
-        font-weight: 700 !important;
+    /* Responsividade para tablets/mobile */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
     }
-    
-    h1, h2, h3 {
-        color: #4A4A4A !important;
-        font-family: 'Georgia', serif; /* Toque editorial */
-    }
-
-    /* Badges Semânticos */
-    .badge-recebido { background: #6D7993 !important; color: white !important; padding: 4px 10px; border-radius: 2px; }
-    .badge-pago { background: #96858F !important; color: white !important; padding: 4px 10px; border-radius: 2px; }
-    .badge-pendente { background: #B45F5F !important; color: white !important; padding: 4px 10px; border-radius: 2px; }
-
-    /* Esconde barra superior nativa */
-    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
