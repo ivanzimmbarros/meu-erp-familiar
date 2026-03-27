@@ -13,99 +13,105 @@ st.set_page_config(page_title="ERP Familiar", page_icon="🏠", layout="wide")
 
 st.markdown("""
 <style>
-    /* 1. FUNDO UNIFICADO - CONCEITO "SAND & STONE" */
-    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stSidebar"] {
-        background-color: #DDD0C8 !important;
-        color: #323232 !important;
+    /* 1. FUNDO GERAL - COR PAPER (#D5D5D5) */
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+        background-color: #D5D5D5 !important;
+        color: #2F2F2F !important;
     }
 
-    /* 2. SIDEBAR E NAVEGAÇÃO */
+    /* 2. SIDEBAR - COR OVERCAST (#9099A2) */
     [data-testid="stSidebar"] {
-        border-right: 1px solid rgba(50, 50, 50, 0.1);
-        background-color: #d6c7be !important; /* Leve variação para profundidade */
+        background-color: #9099A2 !important;
+        border-right: 1px solid rgba(0,0,0,0.1);
+    }
+    
+    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] p {
+        color: #FFFFFF !important; /* Texto branco na sidebar para contraste */
     }
 
-    /* 3. ABAS (TABS) MINIMALISTAS */
+    /* 3. ABAS (TABS) - EQUILÍBRIO LAVENDAR (#6D7993) */
     .stTabs [data-baseweb="tab-list"] {
-        background-color: transparent;
-        border-bottom: 2px solid #323232;
-        gap: 0px;
+        background-color: #9099A2;
+        padding: 8px 8px 0px 8px;
+        border-radius: 10px 10px 0 0;
     }
 
     .stTabs [data-baseweb="tab"] {
-        height: 60px;
+        height: 50px;
         background-color: transparent;
-        color: #323232 !important;
-        font-family: 'Helvetica Neue', sans-serif;
-        font-weight: 400;
-        letter-spacing: 1px;
-        text-transform: uppercase;
+        color: #F0F0F0 !important;
+        font-family: 'Inter', sans-serif;
+        font-weight: 500;
         border: none !important;
     }
 
     .stTabs [aria-selected="true"] {
-        background-color: #323232 !important;
-        color: #DDD0C8 !important;
-        border-radius: 0px !important;
+        background-color: #6D7993 !important; /* LAVENDAR */
+        color: #FFFFFF !important;
+        border-radius: 5px 5px 0 0 !important;
+        border-bottom: 3px solid #96858F !important; /* Detalhe em DUSTY */
     }
 
-    /* 4. CARDS E LINHAS (CLEAN LOOK) */
+    /* 4. CARDS E LINHAS - LIMPEZA VISUAL */
     .card, .liquidar-row {
-        background-color: rgba(255, 255, 255, 0.4) !important; /* Branco translúcido sobre o bege */
-        border: 1px solid rgba(50, 50, 50, 0.1) !important;
-        border-radius: 0px !important; /* Bordas retas para estilo premium */
-        color: #323232 !important;
+        background-color: #FFFFFF !important; /* Fundo papel branco puro */
+        border: None !important;
+        border-left: 6px solid #6D7993 !important; /* Detalhe Lavendar */
+        border-radius: 4px;
+        color: #2F2F2F !important;
         padding: 20px;
         margin-bottom: 15px;
-        box-shadow: none !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
     }
 
-    /* 5. INPUTS E CAMPOS DE TEXTO */
+    /* 5. INPUTS E CAMPOS DE TEXTO - CONTRASTE MÁXIMO */
     div[data-baseweb="input"], div[data-baseweb="select"], .stNumberInput input {
-        background-color: #fcfcfc !important;
-        color: #323232 !important;
-        border: 1px solid #323232 !important;
-        border-radius: 0px !important;
-        font-size: 1rem !important;
+        background-color: #FFFFFF !important;
+        color: #2F2F2F !important;
+        border: 1px solid #9099A2 !important;
+        border-radius: 4px !important;
+    }
+    
+    label, .stMarkdown p {
+        color: #2F2F2F !important; /* Labels escuros para leitura fácil */
+        font-weight: 600 !important;
     }
 
-    /* 6. BOTÕES (WELLS STYLE - "SHOP NOW") */
+    /* 6. BOTÕES - COR DUSTY (#96858F) COM TEXTO BRANCO */
     .stButton>button {
-        background-color: #323232 !important;
-        color: #DDD0C8 !important;
-        font-weight: 400 !important;
-        letter-spacing: 2px;
-        text-transform: uppercase;
+        background-color: #96858F !important; /* DUSTY */
+        color: #FFFFFF !important;
+        font-weight: 600 !important;
         border: none !important;
-        border-radius: 50px !important; /* Botão pílula como na imagem */
-        padding: 10px 30px !important;
-        transition: 0.4s ease;
+        border-radius: 2px !important;
+        padding: 12px 24px !important;
+        transition: 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 1px;
     }
 
     .stButton>button:hover {
-        background-color: #4a4a4a !important;
-        transform: translateY(-2px);
+        background-color: #6D7993 !important; /* Muda para LAVENDAR no hover */
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
     }
 
-    /* 7. TIPOGRAFIA GERAL */
-    h1, h2, h3, h4, h5, h6 {
-        color: #323232 !important;
-        font-family: 'Times New Roman', serif; /* Serif para títulos como no Wells */
-        font-weight: 300 !important;
-        letter-spacing: -1px;
+    /* 7. MÉTRICAS E TÍTULOS */
+    [data-testid="stMetricValue"] {
+        color: #6D7993 !important;
+        font-weight: 700 !important;
     }
-
-    p, label, .stMarkdown {
-        color: #323232 !important;
-        font-family: 'Inter', sans-serif;
-        font-weight: 400;
-    }
-
-    /* Badges de Status (Earthy Tones) */
-    .badge-recebido { background: #323232 !important; color: #DDD0C8 !important; padding: 4px 12px; border-radius: 0px; font-weight: bold; }
-    .badge-pendente { background: #b04a4a !important; color: white !important; padding: 4px 12px; border-radius: 0px; }
     
-    /* Remove a barra branca superior do Streamlit */
+    h1, h2, h3 {
+        color: #4A4A4A !important;
+        font-family: 'Georgia', serif; /* Toque editorial */
+    }
+
+    /* Badges Semânticos */
+    .badge-recebido { background: #6D7993 !important; color: white !important; padding: 4px 10px; border-radius: 2px; }
+    .badge-pago { background: #96858F !important; color: white !important; padding: 4px 10px; border-radius: 2px; }
+    .badge-pendente { background: #B45F5F !important; color: white !important; padding: 4px 10px; border-radius: 2px; }
+
+    /* Esconde barra superior nativa */
     header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
