@@ -13,17 +13,29 @@ st.set_page_config(page_title="ERP Familiar", page_icon="🏠", layout="wide")
 
 st.markdown("""
 <style>
-    /* Fundo dinâmico respeitando o tema do Streamlit */
-    .stApp { max-width: 100%; margin: 0 auto; }
+    /* Usa as cores nativas do Streamlit para garantir contraste perfeito nas text boxes */
+    .stApp { max-width: 100%; margin: 0 auto; background-color: var(--secondary-background-color); }
     
-    /* Cards com bordas sutis e fundo adaptável */
-    .card { padding: 18px; border-radius: 12px; border: 1px solid rgba(128,128,128,0.2); box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 12px; }
-    .liquidar-row { padding: 12px; border-radius: 8px; border: 1px solid rgba(128,128,128,0.2); margin-bottom: 6px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+    .card { 
+        background: var(--background-color); 
+        padding: 18px; border-radius: 12px; 
+        border: 1px solid rgba(128,128,128,0.2); 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+        margin-bottom: 12px; 
+    }
+    .liquidar-row { 
+        background: var(--background-color); 
+        padding: 12px; border-radius: 8px; 
+        border: 1px solid rgba(128,128,128,0.2); 
+        margin-bottom: 6px; 
+        display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; 
+    }
     
-    /* Badges com cores sólidas e legíveis */
-    .badge-pendente { background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; }
-    .badge-recebido { background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; }
-    .badge-pago { background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; }
+    .badge-pendente { background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
+    .badge-recebido { background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
+    .badge-pago { background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
+    .badge-previsto { background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }
+    
     @media (max-width: 600px) { .liquidar-row { flex-direction: column; align-items: flex-start; } .stButton>button { width: 100% !important; } }
 </style>
 """, unsafe_allow_html=True)
@@ -201,28 +213,71 @@ with tab1:
             except Exception as e: st.error(f"Erro: {e}")
 
 # --- TAB 2: HISTÓRICO ---
+# --- TAB 2: HISTÓRICO (TOTALMENTE RESTAURADA) ---
 with tab2:
-    st.subheader("📋 Auditoria de Lançamentos")
-    f_raw = db_df("SELECT * FROM transacoes ORDER BY data DESC")
-    if not f_raw.empty:
-        f_raw['dt'] = pd.to_datetime(f_raw['data'])
-        f_raw['mes'] = f_raw['dt'].dt.strftime('%m/%Y - %B')
-        for m in f_raw['mes'].unique():
-            with st.expander(f"📅 {m}"):
-                for _, r in f_raw[f_raw['mes'] == m].iterrows():
-                    c_l, c_b = st.columns([5,1])
-                    with c_l:
-                        badge = "badge-recebido" if r['status_liquidacao'] == "RECEBIDO" else "badge-pago" if r['status_liquidacao'] == "PAGO" else "badge-pendente"
-                        st.markdown(f'<div class="liquidar-row"><span class="{badge}">{r["status_liquidacao"]}</span> {r["dt"].strftime("%d/%m")} | {r["categoria_pai"]} | <b>€{r["valor_eur"]:,.2f}</b><br><small>{r["nota"]}</small></div>', unsafe_allow_html=True)
-                    with c_b:
-                        if r['status_liquidacao'] == 'PENDENTE':
-                            if st.button("✅", key=f"l_{r['id']}"):
-                                db_execute("UPDATE transacoes SET status_liquidacao=?, data_liquidacao=? WHERE id=?", 
-                                           ("RECEBIDO" if r['tipo']=="Receita" else "PAGO", date.today().strftime("%Y-%m-%d"), r['id']))
-                                st.rerun()
+    st.subheader("📋 Histórico e Auditoria")
+
+    # 1. Filtros Superiores
+    c_f1, c_f2, c_f3 = st.columns([1, 1, 2])
+    f_tipo = c_f1.selectbox("Tipo", ["Todos", "Despesa", "Receita"], key="f_tipo")
+    fontes_disp = [f[0] for f in db_query("SELECT nome FROM fontes")]
+    f_fonte = c_f2.selectbox("Conta/Fonte", ["Todas"] + fontes_disp)
+    f_busca = c_f3.text_input("🔍 Buscar", placeholder="Nota, Categoria ou Beneficiário...")
+
+    df_raw = db_df("SELECT * FROM transacoes ORDER BY data DESC, id DESC")
+    
+    if not df_raw.empty:
+        # Aplicação dos Filtros
+        if f_tipo != "Todos": df_raw = df_raw[df_raw['tipo'] == f_tipo]
+        if f_fonte != "Todas": df_raw = df_raw[df_raw['fonte'] == f_fonte]
+        if f_busca: 
+            mask = df_raw.apply(lambda r: f_busca.lower() in str(r).lower(), axis=1)
+            df_raw = df_raw[mask]
+
+        if not df_raw.empty:
+            df_raw['dt'] = pd.to_datetime(df_raw['data'])
+            df_raw['mes'] = df_raw['dt'].dt.strftime('%m/%Y - %B')
+            meses = df_raw['mes'].unique()
+
+            st.markdown("---")
+            # 2. Agrupamento Temporal (Mês/Ano)
+            for m in meses:
+                with st.expander(f"📅 {m}", expanded=(m == meses[0])):
+                    itens = df_raw[df_raw['mes'] == m]
+                    for _, r in itens.iterrows():
+                        c_l, c_b = st.columns([5, 1])
+                        with c_l:
+                            st_map = {"RECEBIDO": "badge-recebido", "PAGO": "badge-pago", "PENDENTE": "badge-pendente", "PREVISTO": "badge-previsto"}
+                            badge = st_map.get(r['status_liquidacao'], "badge-pendente")
+                            st.markdown(f'<div class="liquidar-row"><span class="{badge}">{r["status_liquidacao"]}</span> <b>{r["dt"].strftime("%d/%m")}</b> | {r["categoria_pai"]} | <b>€{r["valor_eur"]:,.2f}</b><br><small>{r["fonte"]} ➔ {r["beneficiario"] or "N/A"} | {r["nota"]}</small></div>', unsafe_allow_html=True)
+                        with c_b:
+                            if r['status_liquidacao'] in ['PENDENTE', 'PREVISTO']:
+                                if st.button("✅", key=f"liq_{r['id']}"):
+                                    status_novo = "RECEBIDO" if r['tipo'] == "Receita" else "PAGO"
+                                    db_execute("UPDATE transacoes SET status_liquidacao=?, data_liquidacao=? WHERE id=?", (status_novo, date.today().strftime("%Y-%m-%d"), r['id']))
+                                    st.rerun()
+
+            # 3. Tabela Geral de Auditoria e Remoção
+            st.markdown("---")
+            st.caption("🛠️ Edição e Remoção em Massa")
+            df_ed = df_raw.copy()
+            df_ed.insert(0, "Remover", False)
+            sel_cols = ["Remover", "id", "data", "categoria_pai", "valor_eur", "tipo", "status_liquidacao", "nota"]
+            editor = st.data_editor(df_ed[sel_cols], hide_index=True, use_container_width=True, key=f"ed_hist_{st.session_state.ver}")
+            
+            if st.button("🗑️ Confirmar Remoção Selecionados", type="secondary"):
+                ids_rm = df_ed[editor["Remover"] == True]["id"].tolist()
+                if ids_rm:
+                    ph = ",".join(["?"] * len(ids_rm))
+                    db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
+                    if 'ver' in st.session_state: st.session_state.ver += 1
+                    st.rerun()
+        else:
+            st.info("Nenhum lançamento encontrado para os filtros aplicados.")
+    else:
+        st.info("Nenhum lançamento registrado no sistema.")
 
 # --- TAB 3 E 4: SALDOS E CARTÕES ---
-# --- TAB 3: SALDOS (COMPLETA) ---
 with tab3:
     st.subheader("💰 Patrimônio e Liquidez")
     fnts = [f[0] for f in db_query("SELECT nome FROM fontes ORDER BY nome")]
