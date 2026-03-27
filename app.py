@@ -203,7 +203,7 @@ with st.sidebar:
     st.caption(f"💱 Câmbio BRL/EUR: **{st.session_state.taxa:.4f}**")
     if st.button("🚪 Sair", use_container_width=True): st.session_state.clear(); st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["➕ Lançar", "📋 Histórico", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dash", "⚙️ Gestão", "🔄 Transf"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["➕ Novos Lançamentos", "📋 Histórico de Lançamentos", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dashboards", "⚙️ Gestão Geral", "🔄 Transferencias"])
 
 # --- TAB 1: NOVO LANÇAMENTO ---
 
@@ -301,7 +301,7 @@ with tab2:
     
     pais_filt = db_query(sql_pai)
     lista_pais = ["Todas"] + [p[1] for p in pais_filt]
-    f_pai = c_f4.selectbox("Filtrar Categoria Pai", lista_pais, key="f_pai_hist")
+    f_pai = c_f4.selectbox("Filtrar Categoria Principal", lista_pais, key="f_pai_hist")
 
     # Lógica de Categorias Filho dependente da Pai selecionada
     if f_pai != "Todas":
@@ -608,14 +608,14 @@ with tab7:
     with c1:
         st.caption("Adicionar Categoria Principal")
         tc = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True, key="tc_gest")
-        nc = st.text_input("Nome da Categoria Pai")
+        nc = st.text_input("Nome da Categoria Principal")
         if st.button("➕ Adicionar Pai"):
             if nc: db_execute("INSERT INTO categorias (nome, tipo_categoria) VALUES (?,?)", (nc, tc)); st.rerun()
     with c2:
         st.caption("Adicionar Detalhamento (Filho)")
         pais_list = db_query("SELECT id, nome FROM categorias WHERE pai_id IS NULL")
         if pais_list:
-            p_sel_g = st.selectbox("Vincular ao Pai", [p[1] for p in pais_list])
+            p_sel_g = st.selectbox("Vincular com a Categoria Principal", [p[1] for p in pais_list])
             ns = st.text_input("Nome do Detalhe")
             if st.button("➕ Adicionar Filho"):
                 id_p_g = [p[0] for p in pais_list if p[1] == p_sel_g][0]
@@ -656,7 +656,7 @@ with tab7:
 
 # --- TAB 8: TRANSFERÊNCIAS (IDENTIDADE VISUAL MENTA/AZUL) ---
 with tab8:
-    st.markdown("<h2 style='color:#0FFCBE;'>🔄 Transferência Soma Zero</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#0FFCBE;'>🔄 Transferência Entre Bancos</h2>", unsafe_allow_html=True)
     
     # Busca contas cadastradas
     res_fontes = db_query("SELECT nome FROM fontes ORDER BY nome")
