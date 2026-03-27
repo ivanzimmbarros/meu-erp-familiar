@@ -203,7 +203,7 @@ with st.sidebar:
     st.caption(f"💱 Câmbio BRL/EUR: **{st.session_state.taxa:.4f}**")
     if st.button("🚪 Sair", use_container_width=True): st.session_state.clear(); st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["➕ Novos Lançamentos", "📋 Histórico de Lançamentos", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dashboards", "⚙️ Gestão Geral", "🔄 Transferencias"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["➕ Novos Lançamentos", "📋 Histórico de Lançamentos", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dashboards", "⚙️ Gestão Geral", "🔄 Transferências"])
 
 # --- TAB 1: NOVO LANÇAMENTO ---
 
