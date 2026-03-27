@@ -316,109 +316,111 @@ with tab1:
 
 # --- TAB 2: HISTÓRICO ---
 
-# --- TAB 2: HISTÓRICO (LÓGICA ORIGINAL RESTAURADA E BLINDADA CONTRA ERROS) ---
 with tab2:
     st.subheader("📋 Auditoria de Lançamentos")
 
-    # 1. Recuperação e Consolidação de Dados
-    df_comuns = db_df("""
-        SELECT id, data, categoria_pai, beneficiario, fonte, valor_eur, tipo, nota, status_liquidacao, forma_pagamento
-        FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'
-    """)
-
+    # 1. Recuperação da Base de Dados (Híbrida)
+    df_comuns = db_df("SELECT * FROM transacoes WHERE forma_pagamento != 'Cartão de Crédito'")
     df_faturas = db_df("""
-        SELECT 
-            MIN(t.id) as id, 
-            t.fatura_ref || '-01' as data, 
-            'Cartão de Crédito' as categoria_pai, 
-            'Fatura' as beneficiario, 
-            c.nome as fonte, 
-            SUM(t.valor_eur) as valor_eur, 
-            'Despesa' as tipo, 
-            'Fatura Consolidada: ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
-            MAX(t.status_liquidacao) as status_liquidacao,
-            'Cartão de Crédito' as forma_pagamento
-        FROM transacoes t
-        JOIN cartoes c ON t.cartao_id = c.id
-        WHERE t.forma_pagamento = 'Cartão de Crédito'
-        GROUP BY t.fatura_ref, c.nome
+        SELECT MIN(t.id) as id, t.fatura_ref || '-01' as data, 'Cartão de Crédito' as categoria_pai, 
+               'Geral' as categoria_filho, 'Fatura' as beneficiario, c.nome as fonte, 
+               SUM(t.valor_eur) as valor_eur, 'Despesa' as tipo, 
+               'Fatura Consolidada: ' || c.nome || ' (Ref: ' || t.fatura_ref || ')' as nota, 
+               MAX(t.status_liquidacao) as status_liquidacao, 'Cartão de Crédito' as forma_pagamento
+        FROM transacoes t JOIN cartoes c ON t.cartao_id = c.id
+        WHERE t.forma_pagamento = 'Cartão de Crédito' GROUP BY t.fatura_ref, c.nome
     """)
-
     df_raw = pd.concat([df_comuns, df_faturas], ignore_index=True)
+    df_raw['fonte'] = df_raw['fonte'].fillna("Não Especificado").astype(str)
+
+    # ---------------------------------------------------------
+    # 2. MATRIZ DE FILTROS (REATIVIDADE DE CATEGORIAS)
+    # ---------------------------------------------------------
+    c_f1, c_f2, c_f3 = st.columns([1, 1, 2])
+    f_tipo = c_f1.selectbox("Tipo de Lançamento", ["Todos", "Despesa", "Receita"], key="f_tipo_final")
+    f_fonte = c_f2.selectbox("Conta/Cartão", ["Todas"] + sorted(df_raw['fonte'].unique().tolist()))
+    f_busca = c_f3.text_input("🔍 Busca Livre", placeholder="Nota ou Beneficiário...", key="f_busca_final")
+
+    c_f4, f_f5 = st.columns(2)
+    # Lógica de Categorias Pai dependente do Tipo
+    sql_pai = "SELECT id, nome FROM categorias WHERE pai_id IS NULL"
+    if f_tipo != "Todos":
+        sql_pai += f" AND tipo_categoria = '{f_tipo}'"
     
+    pais_filt = db_query(sql_pai)
+    lista_pais = ["Todas"] + [p[1] for p in pais_filt]
+    f_pai = c_f4.selectbox("Filtrar Categoria Pai", lista_pais, key="f_pai_hist")
+
+    # Lógica de Categorias Filho dependente da Pai selecionada
+    if f_pai != "Todas":
+        id_p_filt = [p[0] for p in pais_filt if p[1] == f_pai][0]
+        filhos_filt = db_query("SELECT nome FROM categorias WHERE pai_id = ?", (id_p_filt,))
+        lista_filhos = ["Todos"] + [f[0] for f in filhos_filt]
+    else:
+        lista_filhos = ["Todos"]
+    f_filho = f_f5.selectbox("Filtrar Subcategoria", lista_filhos, key="f_filho_hist")
+
+    # ---------------------------------------------------------
+    # 3. APLICAÇÃO DOS FILTROS NO DATAFRAME
+    # ---------------------------------------------------------
+    if f_tipo != "Todos": df_raw = df_raw[df_raw['tipo'] == f_tipo]
+    if f_fonte != "Todas": df_raw = df_raw[df_raw['fonte'] == f_fonte]
+    if f_pai != "Todas": df_raw = df_raw[df_raw['categoria_pai'] == f_pai]
+    if f_filho != "Todos": df_raw = df_raw[df_raw['categoria_filho'] == f_filho]
+    if f_busca: 
+        mask = df_raw.apply(lambda r: f_busca.lower() in str(r).lower(), axis=1)
+        df_raw = df_raw[mask]
+
+    # ---------------------------------------------------------
+    # 4. RENDERIZAÇÃO DOS RESULTADOS (EXPANDERS)
+    # ---------------------------------------------------------
     if not df_raw.empty:
-        # TRATAMENTO ANTI-ERRO (TypeError): Garante que todas as fontes sejam strings e não nulas
-        df_raw['fonte'] = df_raw['fonte'].fillna("Não Especificado").astype(str)
-        lista_fontes = sorted(df_raw['fonte'].unique().tolist())
+        df_raw['dt'] = pd.to_datetime(df_raw['data'], errors='coerce')
+        df_raw = df_raw.dropna(subset=['dt'])
+        df_raw['mes_ref'] = df_raw['dt'].dt.strftime('%m/%Y - %B')
+        meses_uniquos = df_raw.sort_values('dt', ascending=False)['mes_ref'].unique()
 
-        # Filtros Superiores
-        c_f1, c_f2, c_f3 = st.columns([1, 1, 2])
-        f_tipo = c_f1.selectbox("Tipo", ["Todos", "Despesa", "Receita"], key="f_tipo_v3")
-        f_fonte = c_f2.selectbox("Conta/Cartão", ["Todas"] + lista_fontes)
-        f_busca = c_f3.text_input("🔍 Buscar no Histórico", placeholder="Nota, Categoria...", key="f_busca_v3")
-
-        # Aplicação dos Filtros
-        if f_tipo != "Todos": df_raw = df_raw[df_raw['tipo'] == f_tipo]
-        if f_fonte != "Todas": df_raw = df_raw[df_raw['fonte'] == f_fonte]
-        if f_busca: 
-            mask = df_raw.apply(lambda r: f_busca.lower() in str(r).lower(), axis=1)
-            df_raw = df_raw[mask]
-
-        if not df_raw.empty:
-            # Tratamento de Data robusto para evitar erros de conversão
-            df_raw['dt'] = pd.to_datetime(df_raw['data'], errors='coerce')
-            df_raw = df_raw.dropna(subset=['dt']) # Remove linhas com datas corrompidas
-            df_raw['mes_ref'] = df_raw['dt'].dt.strftime('%m/%Y - %B')
-            meses_uniquos = df_raw.sort_values('dt', ascending=False)['mes_ref'].unique()
-
-            st.markdown("---")
-            # 2. Listagem Agrupada em Expanders
-            for m in meses_uniquos:
-                with st.expander(f"📅 {m}", expanded=(m == meses_uniquos[0])):
-                    itens = df_raw[df_raw['mes_ref'] == m]
-                    for _, r in itens.iterrows():
-                        c_lin, c_btn = st.columns([5, 1])
-                        with c_lin:
-                            st_map = {"RECEBIDO": "badge-recebido", "PAGO": "badge-pago", "PENDENTE": "badge-pendente"}
-                            badge_class = st_map.get(r['status_liquidacao'], "badge-pendente")
-                            icon = "💳" if r['forma_pagamento'] == "Cartão de Crédito" else "🏦"
-                            
-                            st.markdown(f'''
-                                <div class="liquidar-row">
-                                    <div>
-                                        <span class="{badge_class}">{r["status_liquidacao"]}</span> 
-                                        <b>{r["dt"].strftime("%d/%m")}</b> | {icon} {r["fonte"]} | <b>€{r["valor_eur"]:,.2f}</b><br>
-                                        <small>{r["categoria_pai"]} ➔ {r["nota"]}</small>
-                                    </div>
+        st.markdown("---")
+        for m in meses_uniquos:
+            with st.expander(f"📅 {m}", expanded=(m == meses_uniquos[0])):
+                itens = df_raw[df_raw['mes_ref'] == m]
+                for _, r in itens.iterrows():
+                    c_lin, c_btn = st.columns([5, 1])
+                    with c_lin:
+                        st_map = {"RECEBIDO": "badge-recebido", "PAGO": "badge-pago", "PENDENTE": "badge-pendente"}
+                        badge = st_map.get(r['status_liquidacao'], "badge-pendente")
+                        icon = "💳" if r['forma_pagamento'] == "Cartão de Crédito" else "🏦"
+                        st.markdown(f'''
+                            <div class="liquidar-row">
+                                <div>
+                                    <span class="{badge}">{r["status_liquidacao"]}</span> 
+                                    <b>{r["dt"].strftime("%d/%m")}</b> | {icon} {r["fonte"]} | <b>€{r["valor_eur"]:,.2f}</b><br>
+                                    <small>{r["categoria_pai"]} / {r["categoria_filho"]} ➔ {r["nota"]}</small>
                                 </div>
-                            ''', unsafe_allow_html=True)
-                        with c_btn:
-                            if r['status_liquidacao'] == 'PENDENTE' and r['forma_pagamento'] != 'Cartão de Crédito':
-                                if st.button("✅", key=f"liq_h_v3_{r['id']}"):
-                                    liquidar_transacao(r['id'], r['tipo'], st.session_state.user)
-                                    st.rerun()
-                            elif r['forma_pagamento'] == 'Cartão de Crédito':
-                                st.write("ℹ️") 
+                            </div>
+                        ''', unsafe_allow_html=True)
+                    with c_btn:
+                        if r['status_liquidacao'] == 'PENDENTE' and r['forma_pagamento'] != 'Cartão de Crédito':
+                            if st.button("✅", key=f"liq_h_f_{r['id']}"):
+                                liquidar_transacao(r['id'], r['tipo'], st.session_state.user)
+                                st.rerun()
 
-            # 3. Tabela Geral de Auditoria (Data Editor)
-            st.divider()
-            st.caption("🛠️ Auditoria Técnica (Remoção e Ajustes)")
-            df_audit = df_raw.copy()
-            df_audit.insert(0, "Remover", False)
-            # Seleciona apenas colunas seguras para o editor
-            cols_ed = ["Remover", "id", "data", "fonte", "valor_eur", "nota"]
-            editor_df = st.data_editor(df_audit[cols_ed], hide_index=True, use_container_width=True, key=f"audit_ed_v3")
-            
-            if st.button("🗑️ Excluir Selecionados", type="secondary", key="btn_del_v3"):
-                # Captura os IDs marcados para remoção
-                ids_rm = df_audit.loc[editor_df["Remover"] == True, "id"].tolist()
-                if ids_rm:
-                    ph = ",".join(["?"] * len(ids_rm))
-                    db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
-                    st.success(f"{len(ids_rm)} itens removidos.")
-                    st.rerun()
-        else: st.info("Nenhum registro para os filtros aplicados.")
-    else: st.info("O histórico está vazio.")
+        # 5. TABELA TÉCNICA DE REMOÇÃO
+        st.divider()
+        st.caption("🛠️ Remoção e Auditoria Técnica")
+        df_audit = df_raw.copy()
+        df_audit.insert(0, "Remover", False)
+        editor_df = st.data_editor(df_audit[["Remover", "id", "data", "categoria_pai", "valor_eur", "nota"]], 
+                                     hide_index=True, use_container_width=True, key=f"ed_v_final")
+        
+        if st.button("🗑️ Excluir Selecionados", type="secondary"):
+            ids_rm = df_audit.loc[editor_df["Remover"] == True, "id"].tolist()
+            if ids_rm:
+                ph = ",".join(["?"] * len(ids_rm))
+                db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
+                st.rerun()
+    else:
+        st.info("Nenhum registro encontrado para os filtros aplicados.")
         
 # --- TAB 3 E 4: SALDOS E CARTÕES ---
 with tab3:
