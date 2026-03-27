@@ -254,42 +254,68 @@ with st.sidebar:
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["➕ Lançar", "📋 Histórico", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dash", "⚙️ Gestão", "🔄 Transf"])
 
 # --- TAB 1: NOVO LANÇAMENTO ---
+
 with tab1:
     st.subheader("➕ Registro de Movimentação")
+    
+    # Grid de Escolha Inicial
     c_t1, c_t2 = st.columns(2)
-    tipo_sel = c_t1.radio("Tipo", ["Despesa", "Receita"], horizontal=True, key="t_reg")
-    forma_sel = c_t2.radio("Forma", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
+    tipo_sel = c_t1.radio("Natureza", ["Despesa", "Receita"], horizontal=True, key="t_reg_final")
+    forma_sel = c_t2.radio("Meio de Pagamento", ["Dinheiro/Débito", "Cartão de Crédito"], horizontal=True)
+    
+    # Filtro Reativo de Categorias (DNA da Nova Funcionalidade)
     pais = db_query("SELECT id, nome FROM categorias WHERE pai_id IS NULL AND tipo_categoria=?", (tipo_sel,))
-    pai_sel = st.selectbox("Categoria", [p[1] for p in pais], key=f"p_{tipo_sel}")
+    pai_sel = st.selectbox("Categoria Principal", [p[1] for p in pais], key=f"p_{tipo_sel}_final")
+    
     id_p = next((p[0] for p in pais if p[1] == pai_sel), None)
     filhos = db_query("SELECT nome FROM categorias WHERE pai_id=?", (id_p,)) if id_p else []
-    filho_sel = st.selectbox("Subcategoria", ["Geral"] + [f[0] for f in filhos])
-    with st.form("f_novo", clear_on_submit=True):
+    filho_sel = st.selectbox("Subcategoria / Detalhe", ["Geral"] + [f[0] for f in filhos])
+
+    with st.form("f_novo_final", clear_on_submit=True):
+        # Seleção de Fonte (Cartões vs Contas)
         f_data = db_query("SELECT nome FROM cartoes") if forma_sel == "Cartão de Crédito" else db_query("SELECT nome FROM fontes")
-        fonte_sel = st.selectbox("Conta/Cartão", [f[0] for f in f_data])
+        fonte_sel = st.selectbox("Origem / Destino", [f[0] for f in f_data])
+        
         col_v, col_p = st.columns(2)
-        data_in = col_v.date_input("Data", date.today())
-        valor_in = col_v.number_input("Valor (€)", min_value=0.01, format="%.2f")
-        parc_in = col_p.number_input("Parcelas", 1, 48, 1)
+        data_in = col_v.date_input("Data da Compra/Recebimento", date.today())
+        valor_in = col_v.number_input("Valor Total (€)", min_value=0.01, format="%.2f")
+        parc_in = col_p.number_input("Quantidade de Parcelas", 1, 48, 1)
+        
         benef_list = [b[0] for b in db_query("SELECT nome FROM beneficiarios ORDER BY nome")]
         benef_sel = st.selectbox("Beneficiário", [""] + benef_list)
-        nota_in = st.text_input("Observação")
-        if st.form_submit_button("Salvar Registro", use_container_width=True, type="primary"):
+        nota_in = st.text_input("Observação Adicional")
+
+        if st.form_submit_button("💾 SALVAR REGISTRO"):
             try:
                 is_cc = (forma_sel == "Cartão de Crédito")
                 c_inf = db_query("SELECT id, dia_fechamento, dia_vencimento FROM cartoes WHERE nome=?", (fonte_sel,))[0] if is_cc else (None, 0, 0)
+                
+                # Gera o cronograma de parcelas
                 parcs = calcular_parcelas(data_in.strftime("%Y-%m-%d"), c_inf[1], c_inf[2], valor_in, parc_in, is_cc)
+                
                 ops = []
                 for i, (p_d, p_v, p_n) in enumerate(parcs):
-                    st_liq = determinar_status_operacao(tipo_sel, i==0)
+                    # --- APLICAÇÃO DA NOVA REGRA DE OURO ---
+                    if is_cc:
+                        # Se for cartão, NADA é pago agora. Tudo entra como PENDENTE.
+                        st_liq = "PENDENTE"
+                    else:
+                        # Se for Dinheiro/Débito, segue a regra: 1ª Paga, demais Pendentes.
+                        st_liq = determinar_status_operacao(tipo_sel, eh_primeira_parcela=(i==0))
+                    
                     f_ref = calcular_fatura_ref(p_d, c_inf[1]) if is_cc else None
+                    
                     ops.append(("INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, fatura_ref, status_liquidacao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                                 (p_d, pai_sel, filho_sel, benef_sel, fonte_sel, p_v, tipo_sel, f"{nota_in} ({p_n}/{parc_in})" if parc_in>1 else nota_in, st.session_state.user, forma_sel, c_inf[0], f_ref, st_liq)))
-                db_execute_many(ops); st.success("Registrado!"); st.rerun()
-            except Exception as e: st.error(f"Erro: {e}")
+                
+                db_execute_many(ops)
+                st.success(f"✅ Sucesso! {parc_in} lançamento(s) registrado(s) como {st_liq if not is_cc or i>0 else 'PENDENTE (Cartão)'}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro Crítico: {e}")
 
 # --- TAB 2: HISTÓRICO ---
-# --- TAB 2: HISTÓRICO (TOTALMENTE RESTAURADA) ---
+
 with tab2:
     st.subheader("📋 Histórico e Auditoria")
 
