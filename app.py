@@ -524,38 +524,54 @@ with tab5:
         st.write(f"**{r['categoria_pai']}** ({r['tipo_meta']})"); st.progress(p, text=f"€{real:,.2f} / €{r['valor_previsto']:,.2f}")
 
 # --- TAB 6: DASHBOARD E EXCEL (COMPLETA) ---
-# --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI EDITION) ---
+# --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI EDITION V2) ---
 with tab6:
     st.subheader("📊 Business Intelligence: Saúde e Tendências")
     
-    # 1. MOTOR DE FILTROS AVANÇADOS (SIDEBAR ANALYTICS)
+    # 1. MOTOR DE FILTROS AVANÇADOS (AGORA COM BENEFICIÁRIOS)
     with st.expander("🔍 Filtros Avançados de BI", expanded=False):
-        c_an1, c_an2, c_an3 = st.columns(3)
-        # Range de datas para análise de tendência (não limitado a um mês)
+        # Carregamento base para os filtros
         df_all = db_df("SELECT * FROM transacoes")
+        if df_all.empty:
+            st.warning("O banco de dados está vazio. Registre lançamentos para ativar o BI.")
+            st.stop()
+            
         df_all['dt'] = pd.to_datetime(df_all['data'])
+        df_all['beneficiario'] = df_all['beneficiario'].fillna("N/A").replace("", "N/A")
         
-        min_date = df_all['dt'].min() if not df_all.empty else date.today()
-        max_date = df_all['dt'].max() if not df_all.empty else date.today()
+        c_an1, c_an2 = st.columns(2)
+        c_an3, c_an4 = st.columns(2)
         
-        data_range = c_an1.date_input("Período de Análise", [min_date, max_date])
-        f_contas = c_an2.multiselect("Filtrar Contas/Cartões", df_all['fonte'].unique())
-        f_cats = c_an3.multiselect("Filtrar Categorias", df_all['categoria_pai'].unique())
+        # Filtro 1: Datas (Range)
+        min_d = df_all['dt'].min().date()
+        max_d = df_all['dt'].max().date()
+        data_range = c_an1.date_input("Período de Análise", [min_d, max_d])
+        
+        # Filtro 2: Contas/Cartões
+        f_contas = c_an2.multiselect("Filtrar Contas/Cartões", sorted(df_all['fonte'].unique()))
+        
+        # Filtro 3: Categorias
+        f_cats = c_an3.multiselect("Filtrar Categorias", sorted(df_all['categoria_pai'].unique()))
+        
+        # Filtro 4: Beneficiários (NOVO)
+        f_ben = c_an4.multiselect("Filtrar Beneficiários", sorted(df_all['beneficiario'].unique()))
 
-    # Processamento de Dados para BI
+    # --- PROCESSAMENTO DOS DADOS COM TRAVA DE SEGURANÇA ---
     df_bi = df_all.copy()
+    
+    # Correção do Erro de Atributo: Uso de .dt.date
     if len(data_range) == 2:
-        df_bi = df_bi[(df_bi['dt'].date() >= data_range[0]) & (df_bi['dt'].date() <= data_range[1])]
+        df_bi = df_bi[(df_bi['dt'].dt.date >= data_range[0]) & (df_bi['dt'].dt.date <= data_range[1])]
+    
     if f_contas: df_bi = df_bi[df_bi['fonte'].isin(f_contas)]
-    if f_cats: df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
+    if f_cats:   df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
+    if f_ben:    df_bi = df_bi[df_bi['beneficiario'].isin(f_ben)]
 
     if df_bi.empty:
-        st.info("Ajuste os filtros para visualizar a análise.")
+        st.info("Ajuste os filtros para visualizar a análise. Nenhum dado encontrado para esta seleção.")
     else:
-        # 2. KPIs EXECUTIVOS (REALIZADO vs COMPROMETIDO)
+        # 2. KPIs EXECUTIVOS
         st.markdown("---")
-        # Realizado: Tudo que já foi pago/recebido
-        # Comprometido: Tudo que é pendente/previsto
         rec_real = df_bi[(df_bi['tipo'] == 'Receita') & (df_bi['status_liquidacao'] == 'RECEBIDO')]['valor_eur'].sum()
         des_real = df_bi[(df_bi['tipo'] == 'Despesa') & (df_bi['status_liquidacao'] == 'PAGO')]['valor_eur'].sum()
         pendente = df_bi[df_bi['status_liquidacao'].isin(['PENDENTE', 'PREVISTO'])]['valor_eur'].sum()
@@ -564,7 +580,60 @@ with tab6:
         k1.metric("💰 Receita Realizada", f"€{rec_real:,.2f}")
         k2.metric("💸 Despesa Realizada", f"€{des_real:,.2f}")
         k3.metric("⚠️ Total Comprometido", f"€{pendente:,.2f}")
-        balanco = rec_
+        balanco = rec_real - des_real
+        k4.metric("⚖️ Balanço Líquido", f"€{balanco:,.2f}", delta=f"{((balanco/rec_real)*100 if rec_real > 0 else 0):.1f}% Margem")
+
+        # 3. GRÁFICOS ANALÍTICOS
+        st.markdown("---")
+        col_g1, col_g2 = st.columns([2, 1])
+
+        with col_g1:
+            # FLUXO DE CAIXA NO TEMPO
+            df_trend = df_bi.groupby(['dt', 'tipo'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
+            fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], 
+                                title="Tendência Temporal: Receita vs Despesa",
+                                color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'},
+                                markers=True, template="simple_white")
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+        with col_g2:
+            # COMPOSIÇÃO HIERÁRQUICA
+            fig_tree = px.treemap(df_bi[df_bi['tipo']=='Despesa'], 
+                                  path=['categoria_pai', 'beneficiario'], 
+                                  values='valor_eur',
+                                  title="Gastos: Categoria > Beneficiário",
+                                  color_discrete_sequence=['#6D7993', '#96858F', '#9099A2'])
+            st.plotly_chart(fig_tree, use_container_width=True)
+
+        st.markdown("---")
+        col_g3, col_g4 = st.columns(2)
+
+        with col_g3:
+            # ANÁLISE DE PARETO (RANKING)
+            df_pareto = df_bi[df_bi['tipo']=='Despesa'].groupby('beneficiario')['valor_eur'].sum().sort_values(ascending=False).head(10).reset_index()
+            fig_pareto = px.bar(df_pareto, x='valor_eur', y='beneficiario', orientation='h',
+                                title="Pareto: Top 10 Gastos por Beneficiário",
+                                color='valor_eur', color_continuous_scale='Blues')
+            fig_pareto.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_pareto, use_container_width=True)
+
+        with col_g4:
+            # CONCENTRAÇÃO POR FONTE
+            df_src = df_bi.groupby(['fonte', 'tipo'])['valor_eur'].sum().reset_index()
+            fig_sun = px.sunburst(df_src, path=['fonte', 'tipo'], values='valor_eur',
+                                  title="Onde o dinheiro está circulando?",
+                                  color='tipo', color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'})
+            st.plotly_chart(fig_sun, use_container_width=True)
+
+    # Botão de Exportação Gerencial
+    st.markdown("---")
+    if st.button("📊 Gerar Exportação para Auditoria Externa", use_container_width=True):
+        m_ref_backup = date.today().strftime("%Y-%m")
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_bi.to_excel(writer, index=False, sheet_name='Dados_Filtrados_BI')
+            db_df("SELECT * FROM transacoes").to_excel(writer, index=False, sheet_name='Backup_Completo')
+        st.download_button("⬇️ Baixar Dados Analíticos", output.getvalue(), f"BI_Audit_{m_ref_backup}.xlsx")
 
 # --- TAB 7: GESTÃO (TOTALMENTE CORRIGIDA E FUNCIONAL) ---
 with tab7:
