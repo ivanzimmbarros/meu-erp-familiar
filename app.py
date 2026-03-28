@@ -536,70 +536,72 @@ with tab4:
                         else: st.error("Saldo insuficiente na conta de débito.")
 
 # --- TAB 5: METAS (COMPLETA) ---
+
 with tab5:
     st.subheader("🎯 Orçamento e Metas")
     
-    # Busca meses com transações para o seletor
+    # 1. SELETOR DE MÊS
     meses_db = db_query("SELECT DISTINCT substr(data, 1, 7) FROM transacoes")
     lista_m = sorted(list(set([m[0] for m in meses_db] + [date.today().strftime("%Y-%m")])), reverse=True)
-    m_ref = st.selectbox("Mês de Referência", lista_m, key="sel_mes_metas_unique")
+    m_ref = st.selectbox("Mês de Referência", lista_m, key="sel_mes_metas_final")
     
     with st.expander("➕ Definir Nova Meta / Teto"):
-        # 1. ESCOLHA DA NATUREZA (Chave Única)
-        t_m_sel = st.radio("Natureza da Meta", ["Despesa", "Receita"], horizontal=True, key="natureza_meta_hier")
+        t_m_sel = st.radio("Natureza da Meta", ["Despesa", "Receita"], horizontal=True, key="hier_t_meta_final")
         
-        # 2. BUSCA DE CATEGORIAS PAI
+        # Busca Pais
         pais_db = db_query("SELECT id, nome FROM categorias WHERE pai_id IS NULL AND tipo_categoria=?", (t_m_sel,))
         dict_pais = {p[1]: p[0] for p in pais_db}
+        c_p_sel = st.selectbox("Categoria Principal", list(dict_pais.keys()) if dict_pais else ["Sem categorias"], key="p_meta_final")
         
-        c_p_sel = st.selectbox("Categoria Principal", list(dict_pais.keys()) if dict_pais else ["Sem categorias"], key="pai_meta_hier")
-        
-        # 3. BUSCA REATIVA DE FILHOS (Chave Única Corrigida)
+        # Busca Filhos reativamente
         id_p_sel = dict_pais.get(c_p_sel)
         filhos_db = db_query("SELECT nome FROM categorias WHERE pai_id = ?", (id_p_sel,)) if id_p_sel else []
         lista_f = ["Geral"] + [f[0] for f in filhos_db]
-        
-        # O ERRO OCORRIA AQUI: Adicionada a key exclusiva
-        c_f_sel = st.selectbox("Subcategoria / Detalhe", lista_f, key="filho_meta_hier")
+        c_f_sel = st.selectbox("Subcategoria / Detalhe", lista_f, key="f_meta_final")
 
-        with st.form("form_metas_hierarquico_v2", clear_on_submit=True):
-            v_m = st.number_input("Valor Planejado (€)", min_value=0.0, step=50.0, key="valor_meta_hier")
-            
+        with st.form("form_metas_hierarquico_v3", clear_on_submit=True):
+            v_m = st.number_input("Valor Planejado (€)", min_value=0.0, step=50.0)
             if st.form_submit_button("💾 SALVAR PLANEJAMENTO"):
-                if c_p_sel == "Sem categorias":
-                    st.error("Selecione uma categoria principal válida.")
-                else:
+                if c_p_sel != "Sem categorias":
                     db_execute("""
                         INSERT OR REPLACE INTO orcamentos (mes_ano, categoria_pai, categoria_filho, valor_previsto, tipo_meta) 
                         VALUES (?,?,?,?,?)""", (m_ref, c_p_sel, c_f_sel, v_m, t_m_sel))
-                    st.success(f"Meta salva: {c_p_sel} > {c_f_sel}")
+                    st.success("Meta salva com sucesso!")
                     st.rerun()
 
     st.divider()
-    # 4. LISTAGEM COMPARATIVA
-    metas_df = db_df("SELECT * FROM orcamentos WHERE mes_ano=?", (m_ref,))
+    # 2. RENDERIZAÇÃO HIERÁRQUICA (AGRUPADA POR PAI)
+    metas_df = db_df("SELECT * FROM orcamentos WHERE mes_ano=? ORDER BY categoria_pai ASC", (m_ref,))
+    
     if metas_df.empty:
         st.info("Nenhuma meta definida para este mês.")
     else:
-        for _, meta in metas_df.iterrows():
-            # Lógica de Realizado: Geral soma tudo do Pai, Específico soma apenas o Filho
-            if meta['categoria_filho'] == "Geral":
-                real_val = db_query("""
-                    SELECT SUM(valor_eur) FROM transacoes 
-                    WHERE categoria_pai=? AND data LIKE ? AND tipo=?
-                """, (meta['categoria_pai'], f"{m_ref}%", meta['tipo_meta']))[0][0] or 0.0
-            else:
-                real_val = db_query("""
-                    SELECT SUM(valor_eur) FROM transacoes 
-                    WHERE categoria_pai=? AND categoria_filho=? AND data LIKE ? AND tipo=?
-                """, (meta['categoria_pai'], meta['categoria_filho'], f"{m_ref}%", meta['tipo_meta']))[0][0] or 0.0
-
-            p_val = min(real_val / meta['valor_previsto'], 1.0) if meta['valor_previsto'] > 0 else 0.0
-            is_over = (meta['tipo_meta'] == "Despesa" and real_val > meta['valor_previsto'])
+        # Loop por Categoria Pai Única
+        for pai in metas_df['categoria_pai'].unique():
+            st.markdown(f"#### 📁 {pai}") # Título da Categoria Principal
             
-            label_icon = "🔴" if is_over else "🟢"
-            st.write(f"**{label_icon} {meta['categoria_pai']}** ➔ {meta['categoria_filho']} ({meta['tipo_meta']})")
-            st.progress(p_val, text=f"€{real_val:,.2f} / €{meta['valor_previsto']:,.2f}")
+            # Filtra os orçamentos que pertencem a este pai
+            filhos_da_categoria = metas_df[metas_df['categoria_pai'] == pai]
+            
+            for _, r in filhos_da_categoria.iterrows():
+                # Cálculo do Realizado
+                if r['categoria_filho'] == "Geral":
+                    real_val = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE categoria_pai=? AND data LIKE ? AND tipo=?", 
+                                        (r['categoria_pai'], f"{m_ref}%", r['tipo_meta']))[0][0] or 0.0
+                else:
+                    real_val = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE categoria_pai=? AND categoria_filho=? AND data LIKE ? AND tipo=?", 
+                                        (r['categoria_pai'], r['categoria_filho'], f"{m_ref}%", r['tipo_meta']))[0][0] or 0.0
+
+                p_val = min(real_val / r['valor_previsto'], 1.0) if r['valor_previsto'] > 0 else 0.0
+                is_over = (r['tipo_meta'] == "Despesa" and real_val > r['valor_previsto'])
+                cor_barra = "🔴" if is_over else "🟢"
+
+                # Layout de Indentação (Uso de container para separar visualmente)
+                with st.container():
+                    # Espaçamento HTML para criar o efeito de "árvore"
+                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{cor_barra} **{r['categoria_filho']}** <small>({r['tipo_meta']})</small>", unsafe_allow_html=True)
+                    st.progress(p_val, text=f"€{real_val:,.2f} de €{r['valor_previsto']:,.2f}")
+            st.markdown("<br>", unsafe_allow_html=True) # Espaço entre grupos
 
 # --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI EDITION V2) ---
 with tab6:
