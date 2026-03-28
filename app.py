@@ -548,7 +548,6 @@ with tab5:
         p = min(real / r['valor_previsto'], 1.0) if r['valor_previsto'] > 0 else 0.0
         st.write(f"**{r['categoria_pai']}** ({r['tipo_meta']})"); st.progress(p, text=f"€{real:,.2f} / €{r['valor_previsto']:,.2f}")
 
-# --- TAB 6: DASHBOARD E EXCEL (COMPLETA) ---
 # --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI EDITION V2) ---
 with tab6:
     st.subheader("📊 Business Intelligence: Saúde e Tendências")
@@ -597,16 +596,22 @@ with tab6:
     else:
         # 2. KPIs EXECUTIVOS
         st.markdown("---")
-        rec_real = df_bi[(df_bi['tipo'] == 'Receita') & (df_bi['status_liquidacao'] == 'RECEBIDO')]['valor_eur'].sum()
-        des_real = df_bi[(df_bi['tipo'] == 'Despesa') & (df_bi['status_liquidacao'] == 'PAGO')]['valor_eur'].sum()
-        pendente = df_bi[df_bi['status_liquidacao'].isin(['PENDENTE', 'PREVISTO'])]['valor_eur'].sum()
+        rec_total = df_bi[df_bi['tipo'] == 'Receita']['valor_eur'].sum()
+        des_total = df_bi[df_bi['tipo'] == 'Despesa']['valor_eur'].sum()
+        
+        # O Balanço Líquido agora registra o impacto do Comprometido
+        balanco_projetado = rec_total - des_total
         
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("💰 Receita Realizada", f"€{rec_real:,.2f}")
-        k2.metric("💸 Despesa Realizada", f"€{des_real:,.2f}")
-        k3.metric("⚠️ Total Comprometido", f"€{pendente:,.2f}")
-        balanco = rec_real - des_real
-        k4.metric("⚖️ Balanço Líquido", f"€{balanco:,.2f}", delta=f"{((balanco/rec_real)*100 if rec_real > 0 else 0):.1f}% Margem")
+        k1.metric("💰 Receita Total", f"€{rec_total:,.2f}")
+        k2.metric("💸 Despesa Realizada", f"€{df_bi[(df_bi['tipo'] == 'Despesa') & (df_bi['status_liquidacao'] == 'PAGO')]['valor_eur'].sum():,.2f}")
+        k3.metric("⚠️ Total Comprometido", f"€{df_bi[df_bi['status_liquidacao'].isin(['PENDENTE', 'PREVISTO'])]['valor_eur'].sum():,.2f}")
+        
+        # Delta indica se a margem está positiva ou negativa
+        margem_pct = (balanco_projetado / rec_total * 100) if rec_total > 0 else (0.0 if balanco_projetado >= 0 else -100.0)
+        k4.metric("⚖️ Balanço Líquido", f"€{balanco_projetado:,.2f}", 
+                  delta=f"{margem_pct:.1f}% Margem", 
+                  delta_color="normal" if balanco_projetado >= 0 else "inverse")
 
         # 3. GRÁFICOS ANALÍTICOS
         st.markdown("---")
