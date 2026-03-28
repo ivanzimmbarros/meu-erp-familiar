@@ -179,6 +179,13 @@ def init_db():
     admin_pw = hashlib.sha256("123456".encode()).hexdigest()
     db_execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao) VALUES ('admin', ?, 'Administrador')", (admin_pw,))
 
+     try:
+            # Tenta adicionar a coluna. Se ela já existir, o SQLite retornará um erro que o 'except' vai ignorar.
+            db_execute("ALTER TABLE orcamentos ADD COLUMN categoria_filho TEXT DEFAULT 'Geral'")
+        except Exception:
+            pass # Coluna já existe, não faz nada
+        # ============================================
+
 init_db()
 
 if 'ver' not in st.session_state:
@@ -528,42 +535,68 @@ with tab4:
 # --- TAB 5: METAS (COMPLETA) ---
 with tab5:
     st.subheader("🎯 Orçamento e Metas")
+    
+    # Lista de meses para o filtro
     m_ref_list = sorted(list(set([d[0][:7] for d in db_query("SELECT data FROM transacoes")] + [date.today().strftime("%Y-%m")])), reverse=True)
-    m_ref = st.selectbox("Mês de Referência", m_ref_list, key="m_ref_metas")
+    m_ref = st.selectbox("Mês de Referência", m_ref_list, key="m_ref_metas_hierarquia")
     
     with st.expander("➕ Definir Nova Meta / Teto"):
-        # 1. GATILHO DE REATIVIDADE (FORA DO FORM)
-        # Ao mudar aqui, o script roda novamente e atualiza a query abaixo
-        t_m_sel = st.radio("Tipo de Meta", ["Despesa", "Receita"], horizontal=True, key="tipo_meta_reativo")
+        # 1. ESCOLHA DA NATUREZA (Reativa)
+        t_m_sel = st.radio("Natureza da Meta", ["Despesa", "Receita"], horizontal=True, key="hier_t_meta")
         
-        # 2. FILTRAGEM DINÂMICA BASEADA NO RÁDIO
-        cats_p_db = db_query("SELECT nome FROM categorias WHERE pai_id IS NULL AND tipo_categoria=?", (t_m_sel,))
-        lista_final_cats = [c[0] for c in cats_p_db] if cats_p_db else ["Sem categorias cadastradas"]
+        # 2. BUSCA DE CATEGORIAS PAI
+        pais_db = db_query("SELECT id, nome FROM categorias WHERE pai_id IS NULL AND tipo_categoria=?", (t_m_sel,))
+        lista_p = {p[1]: p[0] for p in pais_db} # Dicionário Nome: ID
+        
+        c_p_sel = st.selectbox("Categoria Principal", list(lista_p.keys()) if lista_p else ["Sem categorias"])
+        
+        # 3. BUSCA REATIVA DE CATEGORIAS FILHO
+        id_pai_selecionado = lista_p.get(c_p_sel)
+        filhos_db = db_query("SELECT nome FROM categorias WHERE pai_id = ?", (id_pai_selecionado,)) if id_pai_selecionado else []
+        lista_f = ["Geral"] + [f[0] for f in filhos_db]
+        
+        c_f_sel = st.selectbox("Subcategoria / Detalhe", lista_f)
 
-        # 3. FORMULÁRIO DE DADOS
-        with st.form("f_metas_corrigido", clear_on_submit=True):
-            c_m = st.selectbox("Selecione a Categoria Principal", lista_final_cats)
+        with st.form("f_metas_hierarquico", clear_on_submit=True):
             v_m = st.number_input("Valor Planejado (€)", min_value=0.0, step=50.0)
             
-            # Botão de submissão
-            btn_meta = st.form_submit_button("💾 Salvar Planejamento", use_container_width=True)
-            
-            if btn_meta:
-                if lista_final_cats[0] == "Sem categorias cadastradas":
-                    st.error("Cadastre uma categoria para este tipo na aba Gestão primeiro.")
+            if st.form_submit_button("💾 SALVAR PLANEJAMENTO"):
+                if c_p_sel == "Sem categorias":
+                    st.error("Erro: Selecione uma categoria válida.")
                 else:
-                    db_execute("INSERT OR REPLACE INTO orcamentos (mes_ano, categoria_pai, valor_previsto, tipo_meta) VALUES (?,?,?,?)", 
-                               (m_ref, c_m, v_m, t_m_sel))
-                    st.success(f"Meta de {t_m_sel} para {c_m} salva!")
+                    # Chave única: Mês + Pai + Filho + Tipo
+                    db_execute("""
+                        INSERT OR REPLACE INTO orcamentos (mes_ano, categoria_pai, categoria_filho, valor_previsto, tipo_meta) 
+                        VALUES (?,?,?,?,?)""", (m_ref, c_p_sel, c_f_sel, v_m, t_m_sel))
+                    st.success(f"Meta salva: {c_p_sel} > {c_f_sel}")
                     st.rerun()
-                    
+
     st.divider()
-    metas = db_df("SELECT * FROM orcamentos WHERE mes_ano=?", (m_ref,))
-    if metas.empty: st.info("Nenhuma meta para este mês.")
-    for _, r in metas.iterrows():
-        real = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE categoria_pai=? AND data LIKE ? AND tipo=?", (r['categoria_pai'], f"{m_ref}%", r['tipo_meta']))[0][0] or 0.0
-        p = min(real / r['valor_previsto'], 1.0) if r['valor_previsto'] > 0 else 0.0
-        st.write(f"**{r['categoria_pai']}** ({r['tipo_meta']})"); st.progress(p, text=f"€{real:,.2f} / €{r['valor_previsto']:,.2f}")
+    # 4. LISTAGEM E COMPARATIVO (Hereditário)
+    metas_hier = db_df("SELECT * FROM orcamentos WHERE mes_ano=?", (m_ref,))
+    if metas_hier.empty:
+        st.info("Nenhuma meta definida para este período.")
+    else:
+        for _, meta in metas_hier.iterrows():
+            # Lógica de Realizado: Se for 'Geral', soma tudo do Pai. Se for específico, soma só o Filho.
+            if meta['categoria_filho'] == "Geral":
+                real_val = db_query("""
+                    SELECT SUM(valor_eur) FROM transacoes 
+                    WHERE categoria_pai=? AND data LIKE ? AND tipo=? AND status_liquidacao != 'CANCELADO'
+                """, (meta['categoria_pai'], f"{m_ref}%", meta['tipo_meta']))[0][0] or 0.0
+            else:
+                real_val = db_query("""
+                    SELECT SUM(valor_eur) FROM transacoes 
+                    WHERE categoria_pai=? AND categoria_filho=? AND data LIKE ? AND tipo=?
+                """, (meta['categoria_pai'], meta['categoria_filho'], f"{m_ref}%", meta['tipo_meta']))[0][0] or 0.0
+
+            # Cálculo de Progresso
+            p_val = min(real_val / meta['valor_previsto'], 1.0) if meta['valor_previsto'] > 0 else 0.0
+            is_over = (meta['tipo_meta'] == "Despesa" and real_val > meta['valor_previsto'])
+            
+            label_color = "🔴" if is_over else "🟢"
+            st.write(f"**{label_color} {meta['categoria_pai']}** ➔ {meta['categoria_filho']} ({meta['tipo_meta']})")
+            st.progress(p_val, text=f"€{real_val:,.2f} de €{meta['valor_previsto']:,.2f}")
 
 # --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI EDITION V2) ---
 with tab6:
