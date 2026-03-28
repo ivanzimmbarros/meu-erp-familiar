@@ -171,20 +171,23 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT)",
         "CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY, nome TEXT UNIQUE, pai_id INTEGER, tipo_categoria TEXT, FOREIGN KEY(pai_id) REFERENCES categorias(id) ON DELETE RESTRICT)",
         "CREATE TABLE IF NOT EXISTS cartoes (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, limite REAL, dia_fechamento INTEGER, dia_vencimento INTEGER, conta_pagamento TEXT)",
-        "CREATE TABLE IF NOT EXISTS orcamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, mes_ano TEXT, categoria_pai TEXT, valor_previsto REAL, tipo_meta TEXT, UNIQUE(mes_ano, categoria_pai, tipo_meta))",
+        # Atualizado UNIQUE para incluir categoria_filho
+        "CREATE TABLE IF NOT EXISTS orcamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, mes_ano TEXT, categoria_pai TEXT, categoria_filho TEXT DEFAULT 'Geral', valor_previsto REAL, tipo_meta TEXT, UNIQUE(mes_ano, categoria_pai, categoria_filho, tipo_meta))",
         "CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, categoria_pai TEXT, categoria_filho TEXT, beneficiario TEXT, fonte TEXT, valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT, forma_pagamento TEXT DEFAULT 'Dinheiro/Débito', cartao_id INTEGER, fatura_ref TEXT, status_cartao TEXT DEFAULT 'pendente', status_liquidacao TEXT DEFAULT 'PAGO', data_liquidacao TEXT, parcela_id TEXT, parcela_numero INTEGER DEFAULT 1, total_parcelas INTEGER DEFAULT 1)"
     ]
-    for sql in tables: db_execute(sql)
+    
+    for sql in tables: 
+        db_execute(sql)
+    
+    # Migração segura: Adiciona a coluna categoria_filho se ela não existir
+    try:
+        db_execute("ALTER TABLE orcamentos ADD COLUMN categoria_filho TEXT DEFAULT 'Geral'")
+    except Exception:
+        pass 
+
     db_execute("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('taxa_brl_eur', '0.16')")
     admin_pw = hashlib.sha256("123456".encode()).hexdigest()
     db_execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao) VALUES ('admin', ?, 'Administrador')", (admin_pw,))
-
-     try:
-            # Tenta adicionar a coluna. Se ela já existir, o SQLite retornará um erro que o 'except' vai ignorar.
-            db_execute("ALTER TABLE orcamentos ADD COLUMN categoria_filho TEXT DEFAULT 'Geral'")
-        except Exception:
-            pass # Coluna já existe, não faz nada
-        # ============================================
 
 init_db()
 
