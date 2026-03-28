@@ -596,22 +596,53 @@ with tab6:
     else:
         # 2. KPIs EXECUTIVOS
         st.markdown("---")
+        # --- CÁLCULOS DE BI (CORRIGIDOS) ---
         rec_total = df_bi[df_bi['tipo'] == 'Receita']['valor_eur'].sum()
         des_total = df_bi[df_bi['tipo'] == 'Despesa']['valor_eur'].sum()
         
         # O Balanço Líquido agora registra o impacto do Comprometido
-        balanco_projetado = rec_total - des_total
+        balanco_projetado = round(rec_total - des_total, 2)
         
+        # Lógica de Margem
+        margem_pct = (balanco_projetado / rec_total * 100) if rec_total > 0 else (0.0 if balanco_projetado >= 0 else -100.0)
+
+        # 2. KPIs EXECUTIVOS COM TRATAMENTO DE CORES
+        st.markdown("---")
         k1, k2, k3, k4 = st.columns(4)
+        
         k1.metric("💰 Receita Total", f"€{rec_total:,.2f}")
         k2.metric("💸 Despesa Realizada", f"€{df_bi[(df_bi['tipo'] == 'Despesa') & (df_bi['status_liquidacao'] == 'PAGO')]['valor_eur'].sum():,.2f}")
         k3.metric("⚠️ Total Comprometido", f"€{df_bi[df_bi['status_liquidacao'].isin(['PENDENTE', 'PREVISTO'])]['valor_eur'].sum():,.2f}")
         
-        # Delta indica se a margem está positiva ou negativa
-        margem_pct = (balanco_projetado / rec_total * 100) if rec_total > 0 else (0.0 if balanco_projetado >= 0 else -100.0)
-        k4.metric("⚖️ Balanço Líquido", f"€{balanco_projetado:,.2f}", 
-                  delta=f"{margem_pct:.1f}% Margem", 
-                  delta_color="normal" if balanco_projetado >= 0 else "inverse")
+        with k4:
+            # Lógica Condicional de Cores para o Balanço
+            # 'normal' = verde se positivo, vermelho se negativo
+            # 'inverse' = vermelho se positivo, verde se negativo (útil para dívidas)
+            # Como balanço positivo é bom, usamos 'normal'. 
+            # Mas vamos forçar o texto do valor a mudar de cor via CSS localizado.
+            
+            status_color = "#10b981" if balanco_projetado >= 0 else "#ef4444"
+            st.markdown(f"""
+                <style>
+                /* Alvos específicos para o valor da 4ª métrica no grid */
+                [data-testid="stMetricValue"] {{
+                    color: {status_color} !important;
+                }}
+                </style>
+            """, unsafe_allow_html=True)
+            
+            st.metric(
+                label="⚖️ Balanço Líquido", 
+                value=f"€{balanco_projetado:,.2f}", 
+                delta=f"{margem_pct:.1f}% Margem",
+                delta_color="normal" # Streamlit já torna vermelho se o delta for negativo
+            )
+
+        # Alerta Adicional de BI para Situação Crítica
+        if balanco_projetado < 0:
+            st.error(f"🚨 **Déficit Detectado:** Suas despesas e compromissos superam as receitas em **€{abs(balanco_projetado):,.2f}**. Recomenda-se revisão de gastos na subcategoria de maior peso.")
+        elif balanco_projetado > 0:
+            st.success(f"✅ **Superávit Projetado:** Você possui uma margem de segurança de **€{balanco_projetado:,.2f}** para este período.")
 
         # 3. GRÁFICOS ANALÍTICOS
         st.markdown("---")
