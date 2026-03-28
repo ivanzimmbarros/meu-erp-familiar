@@ -116,6 +116,25 @@ st.markdown("""
     ::-webkit-scrollbar-thumb { background: #9099A2; border-radius: 10px; }
 
     header {visibility: hidden;}
+
+    /* UNIFICAÇÃO DE TODOS OS CABEÇALHOS (Subheaders) */
+    /* Garante que o texto 'Transferência Entre Bancos' fique idêntico ao 'Auditoria de Lançamentos' */
+    h1, h2, h3, [data-testid="stHeaderElement"] {
+        color: #4A4A4A !important;
+        font-family: 'Georgia', serif !important;
+        font-weight: 600 !important;
+        letter-spacing: -0.5px !important;
+    }
+    
+    /* Ajuste específico para o Subheader do Streamlit */
+    .st-emotion-cache-eqo0xs h3 {
+        font-size: 1.5rem !important; /* Tamanho padrão para subheaders */
+    }
+
+    /* Remove qualquer margem fluorescente residual */
+    .stMarkdown h2 {
+        color: #4A4A4A !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 # --- 2. MOTOR DE BANCO DE DADOS E ESTADO DA SESSÃO ---
@@ -706,7 +725,7 @@ with tab7:
 
 # --- TAB 8: TRANSFERÊNCIAS (IDENTIDADE VISUAL MENTA/AZUL) ---
 with tab8:
-    st.markdown("<h2 style='color:#0FFCBE;'>🔄 Transferência Entre Bancos</h2>", unsafe_allow_html=True)
+    st.subheader("🔄 Transferência Entre Bancos")
     
     # Busca contas cadastradas
     res_fontes = db_query("SELECT nome FROM fontes ORDER BY nome")
