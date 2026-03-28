@@ -15,59 +15,109 @@ import streamlit as st
 
 st.markdown("""
 <style>
-    /* 1. REDUÇÃO DE PADDING SUPERIOR NO CONTAINER PRINCIPAL */
-    /* Ajusta o gap deixado pelo header escondido e aproxima o conteúdo do topo */
-    .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 0rem !important;
-        padding-left: 5rem !important;
-        padding-right: 5rem !important;
+    /* 1. FUNDO GERAL E CONTAINER (Journal Paper Style) */
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
+        background-color: #D5D5D5 !important;
+        color: #2F2F2F !important;
     }
 
-    /* 2. ESTILIZAÇÃO AVANÇADA DAS MÉTRICAS */
-    /* Personaliza o espaçamento interno das métricas para evitar quebras no mobile */
+    .block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 1rem !important;
+        padding-left: 3rem !important;
+        padding-right: 3rem !important;
+    }
+
+    /* 2. SIDEBAR (Overcast Style) */
+    [data-testid="stSidebar"] {
+        background-color: #9099A2 !important;
+        border-right: 1px solid rgba(0,0,0,0.1);
+    }
+    
+    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] p, [data-testid="stSidebar"] span {
+        color: #FFFFFF !important;
+    }
+
+    /* 3. ABAS (TABS) CUSTOMIZADAS */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: #9099A2;
+        padding: 8px 8px 0px 8px;
+        border-radius: 10px 10px 0 0;
+        gap: 5px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        height: 45px;
+        background-color: transparent;
+        color: #F0F0F0 !important;
+        font-weight: 500;
+        border: none !important;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background-color: #6D7993 !important; /* Lavendar */
+        color: #FFFFFF !important;
+        border-radius: 5px 5px 0 0 !important;
+    }
+
+    /* 4. MÉTRICAS AVANÇADAS */
     [data-testid="stMetric"] {
         background-color: #FFFFFF;
         padding: 15px;
         border-radius: 4px;
-        border-left: 4px solid #6D7993; /* Cor Lavendar */
+        border-left: 4px solid #6D7993;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
 
-    /* Ajuste de cor do Label da métrica (mais suave) */
     [data-testid="stMetricLabel"] p {
-        color: #9099A2 !important; /* Cor Overcast */
-        font-size: 0.9rem !important;
+        color: #9099A2 !important;
+        font-size: 0.85rem !important;
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
 
-    /* 3. SCROLLBAR CUSTOMIZADA (Journal Style) */
-    /* Torna a experiência de navegação mais integrada ao tema */
-    ::-webkit-scrollbar {
-        width: 8px;
-    }
-    ::-webkit-scrollbar-track {
-        background: #D5D5D5; 
-    }
-    ::-webkit-scrollbar-thumb {
-        background: #9099A2; 
-        border-radius: 10px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-        background: #6D7993; 
+    /* 5. BOTÕES (Dusty Style) */
+    .stButton>button {
+        background-color: #96858F !important;
+        color: #FFFFFF !important;
+        border-radius: 4px !important;
+        border: none !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        transition: 0.3s ease;
     }
 
-    /* Responsividade para tablets/mobile */
-    @media (max-width: 768px) {
-        .block-container {
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-        }
+    .stButton>button:hover {
+        background-color: #6D7993 !important;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
+
+    /* 6. INPUTS, SELECTS E DATA EDITORS */
+    div[data-baseweb="input"], div[data-baseweb="select"], .stNumberInput input {
+        background-color: #FFFFFF !important;
+        color: #2F2F2F !important;
+        border: 1px solid #9099A2 !important;
+    }
+
+    /* 7. CARDS E LISTAGENS */
+    .card, .liquidar-row {
+        background-color: #FFFFFF !important;
+        border-left: 6px solid #6D7993 !important;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+
+    /* Scrollbar Journal Style */
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #D5D5D5; }
+    ::-webkit-scrollbar-thumb { background: #9099A2; border-radius: 10px; }
+
+    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
-
 # --- 2. MOTOR DE BANCO DE DADOS E ESTADO DA SESSÃO ---
 DB_PATH = 'finance.db'
 
