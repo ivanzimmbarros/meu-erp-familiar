@@ -117,26 +117,30 @@ st.markdown("""
 
     header {visibility: hidden;}
 
-    /* UNIFICAÇÃO DE TODOS OS CABEÇALHOS (Subheaders) */
-    /* Garante que o texto 'Transferência Entre Bancos' fique idêntico ao 'Auditoria de Lançamentos' */
-    h1, h2, h3, [data-testid="stHeaderElement"] {
-        color: #4A4A4A !important;
-        font-family: 'Georgia', serif !important;
-        font-weight: 600 !important;
-        letter-spacing: -0.5px !important;
+    /* 8. PADRONIZAÇÃO ABSOLUTA DE FONTES (BASEADO NA GESTÃO GERAL) */
+    /* Substitui a tipografia Serifada pela Sans-Serif moderna em todos os cabeçalhos */
+    h1, h2, h3, h4, h5, h6, [data-testid="stHeaderElement"], .stMarkdown h4 {
+        font-family: 'Inter', 'Source Sans Pro', 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
+        color: #2F2F2F !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.02em !important;
     }
     
-    /* Ajuste específico para o Subheader do Streamlit */
-    .st-emotion-cache-eqo0xs h3 {
-        font-size: 1.5rem !important; /* Tamanho padrão para subheaders */
-    }
+    /* Ajuste de escala para manter st.subheader e Markdown proporcionais */
+    h1 { font-size: 1.8rem !important; }
+    h2 { font-size: 1.6rem !important; }
+    h3 { font-size: 1.4rem !important; } /* st.subheader */
+    h4 { font-size: 1.25rem !important; } /* Seções de Markdown #### */
 
-    /* Remove qualquer margem fluorescente residual */
+    /* Remove qualquer resquício de cor ou fonte anterior de marcações Markdown h2 */
     .stMarkdown h2 {
-        color: #4A4A4A !important;
+        color: #2F2F2F !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
     }
 </style>
 """, unsafe_allow_html=True)
+
 # --- 2. MOTOR DE BANCO DE DADOS E ESTADO DA SESSÃO ---
 DB_PATH = 'finance.db'
 
