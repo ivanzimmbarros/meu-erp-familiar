@@ -403,7 +403,7 @@ with tab2:
         df_raw['dt'] = pd.to_datetime(df_raw['data'], errors='coerce')
         df_raw = df_raw.dropna(subset=['dt'])
         df_raw['mes_ref'] = df_raw['dt'].dt.strftime('%m/%Y - %B')
-        meses_uniquos = df_raw.sort_values('dt', ascending=False)['mes_ref'].unique()
+        meses_uniquos = df_raw.sort_values('dt', ascending=True)['mes_ref'].unique()
 
         st.markdown("---")
         for m in meses_uniquos:
@@ -512,7 +512,7 @@ with tab4:
     for _, c in cts.iterrows():
         usd = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE cartao_id=? AND status_cartao='pendente'", (c['id'],))[0][0] or 0.0
         st.markdown(f'<div class="card"><b>💳 {c["nome"]}</b><br>Limite: €{c["limite"]:,.2f} | Usado: €{usd:,.2f}</div>', unsafe_allow_html=True)
-        fats = db_df("SELECT fatura_ref, SUM(valor_eur) as tot, status_cartao FROM transacoes WHERE cartao_id=? GROUP BY fatura_ref ORDER BY fatura_ref DESC", (c['id'],))
+        fats = db_df("SELECT fatura_ref, SUM(valor_eur) as tot, status_cartao FROM transacoes WHERE cartao_id=? GROUP BY fatura_ref ORDER BY fatura_ref ASC", (c['id'],))
         for _, f in fats.iterrows():
             with st.expander(f"📅 Fatura {f['fatura_ref']} | €{f['tot']:,.2f} ({f['status_cartao']})"):
                 comp = db_df("SELECT data, categoria_pai, valor_eur, nota FROM transacoes WHERE cartao_id=? AND fatura_ref=?", (c['id'], f['fatura_ref']))
