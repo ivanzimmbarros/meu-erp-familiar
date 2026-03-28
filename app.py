@@ -604,33 +604,45 @@ with tab6:
         total_comp = df_bi[df_bi['status_liquidacao'].isin(['PENDENTE', 'PREVISTO'])]['valor_eur'].sum()
         
         balanco_projetado = round(rec_total - des_total, 2)
+        # Margem calculada para exibição no alerta
         margem_pct = (balanco_projetado / rec_total * 100) if rec_total > 0 else (0.0 if balanco_projetado >= 0 else -100.0)
 
-        # --- 2. CSS DINÂMICO (FORA DAS COLUNAS PARA EVITAR DESALINHAMENTO) ---
-        # Usamos o seletor nth-of-type(4) para pintar apenas a última métrica do grid
+        # --- 2. CSS PARA ALINHAMENTO E CORES (GLOBAL DA ABA) ---
         status_color = "#10b981" if balanco_projetado >= 0 else "#ef4444"
         st.markdown(f"""
             <style>
+                /* Garante que todos os cards de métrica tenham a mesma altura */
+                [data-testid="stMetricValue"] {{
+                    font-size: 1.8rem !important;
+                }}
+                /* Pinta apenas o valor do 4º card */
                 [data-testid="stHorizontalBlock"] > div:nth-of-type(4) [data-testid="stMetricValue"] {{
                     color: {status_color} !important;
                 }}
             </style>
         """, unsafe_allow_html=True)
 
-        # --- 3. GRID DE KPIs (LIMPO E SIMÉTRICO) ---
+        # --- 3. GRID DE KPIs (SEM DELTA PARA MANTER SIMETRIA) ---
         st.markdown("---")
         k1, k2, k3, k4 = st.columns(4)
         
         k1.metric("💰 Receita Total", f"€{rec_total:,.2f}")
         k2.metric("💸 Despesa Realizada", f"€{des_paga:,.2f}")
         k3.metric("⚠️ Total Comprometido", f"€{total_comp:,.2f}")
-        k4.metric("⚖️ Balanço Líquido", f"€{balanco_projetado:,.2f}", delta=f"{margem_pct:.1f}% Margem")
+        # Removido o parâmetro 'delta' para alinhar a base das caixas
+        k4.metric("⚖️ Balanço Líquido", f"€{balanco_projetado:,.2f}")
 
-        # --- 4. ALERTA DE STATUS ---
+        # --- 4. ÁREA DE ANALYTICS E STATUS (DESTAQUE DA MARGEM) ---
         if balanco_projetado < 0:
-            st.error(f"🚨 **Déficit Detectado:** Seus compromissos superam as receitas em **€{abs(balanco_projetado):,.2f}**.")
+            st.error(f"""
+                **Déficit Detectado:** Seus compromissos superam as receitas em **€{abs(balanco_projetado):,.2f}**.  
+                📌 **Margem de Segurança:** `{margem_pct:.1f}%` (Negativa)
+            """)
         else:
-            st.success(f"✅ **Superávit Projetado:** Margem de segurança de **€{balanco_projetado:,.2f}**.")
+            st.success(f"""
+                **Superávit Projetado:** Você possui uma margem de segurança de **€{balanco_projetado:,.2f}**.  
+                📌 **Margem de Segurança:** `{margem_pct:.1f}%` (Positiva)
+            """)
         
         # 3. GRÁFICOS ANALÍTICOS
         st.markdown("---")
