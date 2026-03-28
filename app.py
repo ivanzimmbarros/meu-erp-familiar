@@ -532,14 +532,31 @@ with tab5:
     m_ref = st.selectbox("Mês de Referência", m_ref_list, key="m_ref_metas")
     
     with st.expander("➕ Definir Nova Meta / Teto"):
-        with st.form("f_metas"):
-            t_m = st.radio("Tipo de Meta", ["Despesa", "Receita"], horizontal=True)
-            cats_p = db_query("SELECT nome FROM categorias WHERE pai_id IS NULL AND tipo_categoria=?", (t_m,))
-            c_m = st.selectbox("Categoria Principal", [c[0] for c in cats_p] if cats_p else ["Sem categorias"])
-            v_m = st.number_input("Valor Planejado (€)", min_value=0.0, step=50.0)
-            if st.form_submit_button("Salvar Planejamento") and cats_p:
-                db_execute("INSERT OR REPLACE INTO orcamentos (mes_ano, categoria_pai, valor_previsto, tipo_meta) VALUES (?,?,?,?)", (m_ref, c_m, v_m, t_m)); st.rerun()
+        # 1. GATILHO DE REATIVIDADE (FORA DO FORM)
+        # Ao mudar aqui, o script roda novamente e atualiza a query abaixo
+        t_m_sel = st.radio("Tipo de Meta", ["Despesa", "Receita"], horizontal=True, key="tipo_meta_reativo")
+        
+        # 2. FILTRAGEM DINÂMICA BASEADA NO RÁDIO
+        cats_p_db = db_query("SELECT nome FROM categorias WHERE pai_id IS NULL AND tipo_categoria=?", (t_m_sel,))
+        lista_final_cats = [c[0] for c in cats_p_db] if cats_p_db else ["Sem categorias cadastradas"]
 
+        # 3. FORMULÁRIO DE DADOS
+        with st.form("f_metas_corrigido", clear_on_submit=True):
+            c_m = st.selectbox("Selecione a Categoria Principal", lista_final_cats)
+            v_m = st.number_input("Valor Planejado (€)", min_value=0.0, step=50.0)
+            
+            # Botão de submissão
+            btn_meta = st.form_submit_button("💾 Salvar Planejamento", use_container_width=True)
+            
+            if btn_meta:
+                if lista_final_cats[0] == "Sem categorias cadastradas":
+                    st.error("Cadastre uma categoria para este tipo na aba Gestão primeiro.")
+                else:
+                    db_execute("INSERT OR REPLACE INTO orcamentos (mes_ano, categoria_pai, valor_previsto, tipo_meta) VALUES (?,?,?,?)", 
+                               (m_ref, c_m, v_m, t_m_sel))
+                    st.success(f"Meta de {t_m_sel} para {c_m} salva!")
+                    st.rerun()
+                    
     st.divider()
     metas = db_df("SELECT * FROM orcamentos WHERE mes_ano=?", (m_ref,))
     if metas.empty: st.info("Nenhuma meta para este mês.")
