@@ -320,34 +320,46 @@ with tab1:
         benef_sel = st.selectbox("Beneficiário", [""] + benef_list)
         nota_in = st.text_input("Observação Adicional")
 
+        # --- BOTÃO DE SALVAMENTO COM VALIDAÇÃO DE CAMPOS ---
         if st.form_submit_button("💾 SALVAR REGISTRO"):
-            try:
-                is_cc = (forma_sel == "Cartão de Crédito")
-                c_inf = db_query("SELECT id, dia_fechamento, dia_vencimento FROM cartoes WHERE nome=?", (fonte_sel,))[0] if is_cc else (None, 0, 0)
-                
-                # Gera o cronograma de parcelas
-                parcs = calcular_parcelas(data_in.strftime("%Y-%m-%d"), c_inf[1], c_inf[2], valor_in, parc_in, is_cc)
-                
-                ops = []
-                for i, (p_d, p_v, p_n) in enumerate(parcs):
-                    # --- APLICAÇÃO DA NOVA REGRA DE OURO ---
-                    if is_cc:
-                        # Se for cartão, NADA é pago agora. Tudo entra como PENDENTE.
-                        st_liq = "PENDENTE"
-                    else:
-                        # Se for Dinheiro/Débito, segue a regra: 1ª Paga, demais Pendentes.
-                        st_liq = determinar_status_operacao(tipo_sel, eh_primeira_parcela=(i==0))
+            # 1. CHECKLIST DE OBRIGATORIEDADE
+            campos_invalidos = []
+            
+            if not pai_sel or pai_sel == "Sem categorias": campos_invalidos.append("Categoria Principal")
+            if not fonte_sel: campos_invalidos.append("Origem / Destino (Conta ou Cartão)")
+            if not benef_sel or benef_sel == "": campos_invalidos.append("Beneficiário")
+            if not nota_in or nota_in.strip() == "": campos_invalidos.append("Observação / Descrição")
+            if valor_in <= 0: campos_invalidos.append("Valor (deve ser maior que zero)")
+
+            # 2. BLOQUEIO DE SEGURANÇA
+            if campos_invalidos:
+                st.error(f"⚠️ **Erro de Preenchimento:** Os seguintes campos são obrigatórios: {', '.join(campos_invalidos)}.")
+            else:
+                # 3. PROCESSAMENTO SE TODOS OS CAMPOS ESTIVEREM OK
+                try:
+                    is_cc = (forma_sel == "Cartão de Crédito")
+                    c_inf_res = db_query("SELECT id, dia_fechamento, dia_vencimento FROM cartoes WHERE nome=?", (fonte_sel,))
+                    c_inf = c_inf_res[0] if c_inf_res else (None, 0, 0)
                     
-                    f_ref = calcular_fatura_ref(p_d, c_inf[1]) if is_cc else None
+                    parcs = calcular_parcelas(data_in.strftime("%Y-%m-%d"), c_inf[1], c_inf[2], valor_in, parc_in, is_cc)
                     
-                    ops.append(("INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, fatura_ref, status_liquidacao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                (p_d, pai_sel, filho_sel, benef_sel, fonte_sel, p_v, tipo_sel, f"{nota_in} ({p_n}/{parc_in})" if parc_in>1 else nota_in, st.session_state.user, forma_sel, c_inf[0], f_ref, st_liq)))
-                
-                db_execute_many(ops)
-                st.success(f"✅ Sucesso! {parc_in} lançamento(s) registrado(s) como {st_liq if not is_cc or i>0 else 'PENDENTE (Cartão)'}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro Crítico: {e}")
+                    ops = []
+                    for i, (p_d, p_v, p_n) in enumerate(parcs):
+                        if is_cc:
+                            st_liq = "PENDENTE"
+                        else:
+                            st_liq = determinar_status_operacao(tipo_sel, eh_primeira_parcela=(i==0))
+                        
+                        f_ref = calcular_fatura_ref(p_d, c_inf[1]) if is_cc else None
+                        
+                        ops.append(("INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, fatura_ref, status_liquidacao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                    (p_d, pai_sel, filho_sel, benef_sel, fonte_sel, p_v, tipo_sel, f"{nota_in} ({p_n}/{parc_in})" if parc_in>1 else nota_in, st.session_state.user, forma_sel, c_inf[0], f_ref, st_liq)))
+                    
+                    db_execute_many(ops)
+                    st.success(f"✅ Sucesso! {parc_in} lançamento(s) registrado(s) corretamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro Crítico ao Salvar: {e}")
 
 # --- TAB 2: HISTÓRICO ---
 
