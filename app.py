@@ -452,23 +452,71 @@ with tab2:
                                 liquidar_transacao(r['id'], r['tipo'], st.session_state.user)
                                 st.rerun()
 
-        # 5. TABELA TÉCNICA DE REMOÇÃO
+        # 5. TABELA TÉCNICA DE REMOÇÃO E AUDITORIA (DADOS BRUTOS E ESTRUTURADOS)
         st.divider()
-        st.caption("🛠️ Remoção e Auditoria Técnica")
-        df_audit = df_raw.copy()
-        df_audit.insert(0, "Remover", False)
-        editor_df = st.data_editor(df_audit[["Remover", "id", "data", "categoria_pai", "valor_eur", "nota"]], 
-                                     hide_index=True, use_container_width=True, key=f"ed_v_final")
+        st.markdown("#### 🛠️ Auditoria Técnica e Controle de Registros")
+        st.caption("Esta visão mostra os dados originais do banco para exclusão precisa e conferência de parcelamentos.")
+
+        # Buscamos os dados diretamente da tabela transacoes para evitar o agrupamento de faturas
+        # Isso corrige o erro da categoria "Cartão de Crédito" e mostra a categoria real
+        df_audit_raw = db_df("SELECT * FROM transacoes ORDER BY data DESC, id DESC")
         
-        if st.button("🗑️ Excluir Selecionados", type="secondary"):
-            ids_rm = df_audit.loc[editor_df["Remover"] == True, "id"].tolist()
-            if ids_rm:
-                ph = ",".join(["?"] * len(ids_rm))
-                db_execute(f"DELETE FROM transacoes WHERE id IN ({ph})", tuple(ids_rm))
-                st.rerun()
-    else:
-        st.info("Nenhum registro encontrado para os filtros aplicados.")
-        
+        if not df_audit_raw.empty:
+            # --- PROCESSAMENTO DE BI PARA A TABELA ---
+            
+            # A. Formatação da Nota Estruturada (Regra 5)
+            def formatar_nota_bi(row):
+                nota_base = row['nota'] or ""
+                # Se for parcelado, criamos a estrutura hierárquica de nota
+                if row['total_parcelas'] > 1:
+                    # Tenta limpar a nota caso ela já tenha o sufixo (X/Y) para não duplicar
+                    nota_limpa = nota_base.split(" (")[0]
+                    return f"📦 Parcela {row['parcela_numero']}/{row['total_parcelas']} | {nota_limpa}"
+                return nota_base
+
+            df_audit_raw['informacao_detalhada'] = df_audit_raw.apply(formatar_nota_bi, axis=1)
+
+            # B. Seleção e Renomeação das Colunas (Regras 1, 2, 3 e 4)
+            df_audit_view = df_audit_raw.copy()
+            df_audit_view.insert(0, "🗑️", False) # Checkbox de remoção
+            
+            # Mapeamento de colunas para nomes amigáveis conforme solicitado
+            df_audit_final = df_audit_view[[
+                "🗑️", "id", "data", "tipo", "forma_pagamento", 
+                "categoria_pai", "categoria_filho", "beneficiario", 
+                "valor_eur", "informacao_detalhada"
+            ]].rename(columns={
+                "data": "Data",
+                "tipo": "Operação",
+                "forma_pagamento": "Meio de Pagamento",
+                "categoria_pai": "Categoria",
+                "categoria_filho": "Subcategoria",
+                "beneficiario": "Beneficiário",
+                "valor_eur": "Valor (€)",
+                "informacao_detalhada": "Estrutura de Notas / Parcelamento"
+            })
+
+            # Renderização da Tabela com Data Editor
+            editor_audit = st.data_editor(
+                df_audit_final, 
+                hide_index=True, 
+                use_container_width=True, 
+                key=f"audit_final_v4"
+            )
+            
+            # Ação de Exclusão
+            if st.button("🗑️ EXCLUIR REGISTROS SELECIONADOS", type="secondary"):
+                # Capturamos os IDs onde a coluna de remoção está marcada como True
+                ids_para_excluir = df_audit_final.loc[editor_audit["🗑️"] == True, "id"].tolist()
+                
+                if ids_para_excluir:
+                    placeholder = ",".join(["?"] * len(ids_para_excluir))
+                    db_execute(f"DELETE FROM transacoes WHERE id IN ({placeholder})", tuple(ids_para_excluir))
+                    st.success(f"✅ {len(ids_para_excluir)} registro(s) removido(s) com sucesso!")
+                    st.rerun()
+                else:
+                    st.warning("Selecione pelo menos um registro para excluir.")
+
 # --- TAB 3 E 4: SALDOS E CARTÕES ---
 with tab3:
     st.subheader("💰 Patrimônio e Liquidez")
