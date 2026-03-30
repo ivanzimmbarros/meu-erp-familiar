@@ -702,27 +702,22 @@ with tab5:
                     st.progress(p_val, text=f"€{real_val:,.2f} de €{r['valor_previsto']:,.2f}")
             st.markdown("<br>", unsafe_allow_html=True) # Espaço entre grupos
 
-# --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (VERSÃO FINAL E SEGURA) ---
-
+# --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI COMPLETO V2) ---
 with tab6:
     st.subheader("📊 Business Intelligence: Saúde e Tendências")
     
     # 1. CARREGAMENTO INICIAL DOS DADOS
-    # Usamos um nome de variável único e consistente
     df_dashboard_base = db_df("SELECT * FROM transacoes")
     
     if df_dashboard_base.empty:
         st.warning("⚠️ O banco de dados está vazio. Registre lançamentos para visualizar os gráficos.")
-        # O código para por aqui dentro desta aba, mas continua nas abas Gestão e Transf
     else:
-        
-        # 2. MOTOR DE FILTROS AVANÇADOS (AGORA COM SUBCATEGORIAS)
+        # 2. MOTOR DE FILTROS AVANÇADOS (COM SUBCATEGORIAS)
         with st.expander("🔍 Filtros Avançados de BI", expanded=False):
             df_dashboard_base['dt'] = pd.to_datetime(df_dashboard_base['data'])
             df_dashboard_base['beneficiario'] = df_dashboard_base['beneficiario'].fillna("N/A").replace("", "N/A")
             df_dashboard_base['categoria_filho'] = df_dashboard_base['categoria_filho'].fillna("Geral")
             
-            # Primeira linha de filtros
             c_an1, c_an2, c_an3 = st.columns(3)
             min_d = df_dashboard_base['dt'].min().date()
             max_d = df_dashboard_base['dt'].max().date()
@@ -731,11 +726,9 @@ with tab6:
             f_contas = c_an2.multiselect("Filtrar Contas/Cartões", sorted(df_dashboard_base['fonte'].unique()))
             f_ben = c_an3.multiselect("Filtrar Beneficiários", sorted(df_dashboard_base['beneficiario'].unique()))
 
-            # Segunda linha de filtros (Hierarquia de Categorias)
             c_an4, c_an5 = st.columns(2)
             f_cats = c_an4.multiselect("Filtrar Categorias Principais", sorted(df_dashboard_base['categoria_pai'].unique()))
             
-            # Se categorias principais forem selecionadas, podemos filtrar a lista de subcategorias para facilitar
             if f_cats:
                 sub_options = sorted(df_dashboard_base[df_dashboard_base['categoria_pai'].isin(f_cats)]['categoria_filho'].unique())
             else:
@@ -743,18 +736,19 @@ with tab6:
                 
             f_subcats = c_an5.multiselect("Filtrar Subcategorias / Detalhes", sub_options)
 
-        # 3. PROCESSAMENTO DOS DADOS FILTRADOS (LÓGICA INCREMENTAL)
+        # 3. PROCESSAMENTO DOS DADOS FILTRADOS
         df_bi = df_dashboard_base.copy()
-        
         if len(data_range) == 2:
             df_bi = df_bi[(df_bi['dt'].dt.date >= data_range[0]) & (df_bi['dt'].dt.date <= data_range[1])]
-        
         if f_contas:  df_bi = df_bi[df_bi['fonte'].isin(f_contas)]
         if f_cats:    df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
-        if f_subcats: df_bi = df_bi[df_bi['categoria_filho'].isin(f_subcats)] # NOVO FILTRO
+        if f_subcats: df_bi = df_bi[df_bi['categoria_filho'].isin(f_subcats)]
         if f_ben:     df_bi = df_bi[df_bi['beneficiario'].isin(f_ben)]
-            
-            # 4. KPIs EXECUTIVOS
+
+        if df_bi.empty:
+            st.info("Ajuste os filtros acima. Nenhum dado encontrado para esta seleção.")
+        else:
+            # 4. KPIs EXECUTIVOS E ALINHAMENTO VISUAL
             st.markdown("---")
             rec_total = df_bi[df_bi['tipo'] == 'Receita']['valor_eur'].sum()
             des_total = df_bi[df_bi['tipo'] == 'Despesa']['valor_eur'].sum()
@@ -764,9 +758,14 @@ with tab6:
             balanco_projetado = round(rec_total - des_total, 2)
             margem_pct = (balanco_projetado / rec_total * 100) if rec_total > 0 else (0.0 if balanco_projetado >= 0 else -100.0)
 
-            # CSS Dinâmico para a cor do Balanço
+            # CSS Dinâmico para Alinhamento e Cor do Balanço
             status_color = "#10b981" if balanco_projetado >= 0 else "#ef4444"
-            st.markdown(f"<style>[data-testid='stHorizontalBlock'] > div:nth-of-type(4) [data-testid='stMetricValue'] {{ color: {status_color} !important; }}</style>", unsafe_allow_html=True)
+            st.markdown(f"""
+                <style>
+                [data-testid="stMetricValue"] {{ font-size: 1.8rem !important; }}
+                [data-testid="stHorizontalBlock"] > div:nth-of-type(4) [data-testid="stMetricValue"] {{ color: {status_color} !important; }}
+                </style>
+            """, unsafe_allow_html=True)
 
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("💰 Receita Total", f"€{rec_total:,.2f}")
@@ -779,7 +778,7 @@ with tab6:
             else:
                 st.success(f"**Superávit Projetado:** Margem de segurança: `{margem_pct:.1f}%`")
 
-            # 5. GRÁFICOS
+            # 5. GRÁFICOS ANALÍTICOS
             st.markdown("---")
             col_g1, col_g2 = st.columns([2, 1])
             with col_g1:
@@ -787,7 +786,7 @@ with tab6:
                 fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], title="Fluxo Temporal", color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'}, markers=True, template="simple_white")
                 st.plotly_chart(fig_trend, use_container_width=True)
             with col_g2:
-                fig_tree = px.treemap(df_bi[df_bi['tipo']=='Despesa'], path=['categoria_pai', 'beneficiario'], values='valor_eur', title="Gastos: Categoria > Beneficiário", color_discrete_sequence=['#6D7993', '#96858F'])
+                fig_tree = px.treemap(df_bi[df_bi['tipo']=='Despesa'], path=['categoria_pai', 'categoria_filho'], values='valor_eur', title="Hierarquia de Gastos", color_discrete_sequence=['#6D7993', '#96858F'])
                 st.plotly_chart(fig_tree, use_container_width=True)
 
             st.markdown("---")
@@ -799,14 +798,14 @@ with tab6:
                 df_src = df_bi.groupby(['fonte', 'tipo'])['valor_eur'].sum().reset_index()
                 st.plotly_chart(px.sunburst(df_src, path=['fonte', 'tipo'], values='valor_eur', title="Distribuição por Fonte", color='tipo', color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'}), use_container_width=True)
 
-    # 6. EXPORTAÇÃO (Sempre disponível no final da aba)
+    # 6. EXPORTAÇÃO GERENCIAL
     st.markdown("---")
-    if st.button("📊 Gerar Relatório Excel (3 Abas)", use_container_width=True):
+    if st.button("📊 Gerar Relatório Excel (3 Abas)", use_container_width=True, type="primary"):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             db_df("SELECT * FROM transacoes").to_excel(writer, index=False, sheet_name='Transacoes_Full')
             db_df("SELECT * FROM orcamentos").to_excel(writer, index=False, sheet_name='Metas_Configuradas')
-        st.download_button("⬇️ Baixar Excel", output.getvalue(), "Relatorio_Financeiro.xlsx")
+        st.download_button("⬇️ Baixar Excel", output.getvalue(), "Relatorio_BI_Gerencial.xlsx")
         
 # --- TAB 7: GESTÃO GERAL (TOTALMENTE RESTAURADA E RESILIENTE) ---
 with tab7:
