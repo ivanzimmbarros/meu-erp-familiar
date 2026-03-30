@@ -715,35 +715,45 @@ with tab6:
         st.warning("⚠️ O banco de dados está vazio. Registre lançamentos para visualizar os gráficos.")
         # O código para por aqui dentro desta aba, mas continua nas abas Gestão e Transf
     else:
-        # 2. MOTOR DE FILTROS AVANÇADOS
+        
+        # 2. MOTOR DE FILTROS AVANÇADOS (AGORA COM SUBCATEGORIAS)
         with st.expander("🔍 Filtros Avançados de BI", expanded=False):
             df_dashboard_base['dt'] = pd.to_datetime(df_dashboard_base['data'])
             df_dashboard_base['beneficiario'] = df_dashboard_base['beneficiario'].fillna("N/A").replace("", "N/A")
+            df_dashboard_base['categoria_filho'] = df_dashboard_base['categoria_filho'].fillna("Geral")
             
-            c_an1, c_an2 = st.columns(2)
-            c_an3, c_an4 = st.columns(2)
-            
+            # Primeira linha de filtros
+            c_an1, c_an2, c_an3 = st.columns(3)
             min_d = df_dashboard_base['dt'].min().date()
             max_d = df_dashboard_base['dt'].max().date()
             data_range = c_an1.date_input("Período de Análise", [min_d, max_d])
             
             f_contas = c_an2.multiselect("Filtrar Contas/Cartões", sorted(df_dashboard_base['fonte'].unique()))
-            f_cats = c_an3.multiselect("Filtrar Categorias", sorted(df_dashboard_base['categoria_pai'].unique()))
-            f_ben = c_an4.multiselect("Filtrar Beneficiários", sorted(df_dashboard_base['beneficiario'].unique()))
+            f_ben = c_an3.multiselect("Filtrar Beneficiários", sorted(df_dashboard_base['beneficiario'].unique()))
 
-        # 3. PROCESSAMENTO DOS DADOS FILTRADOS
+            # Segunda linha de filtros (Hierarquia de Categorias)
+            c_an4, c_an5 = st.columns(2)
+            f_cats = c_an4.multiselect("Filtrar Categorias Principais", sorted(df_dashboard_base['categoria_pai'].unique()))
+            
+            # Se categorias principais forem selecionadas, podemos filtrar a lista de subcategorias para facilitar
+            if f_cats:
+                sub_options = sorted(df_dashboard_base[df_dashboard_base['categoria_pai'].isin(f_cats)]['categoria_filho'].unique())
+            else:
+                sub_options = sorted(df_dashboard_base['categoria_filho'].unique())
+                
+            f_subcats = c_an5.multiselect("Filtrar Subcategorias / Detalhes", sub_options)
+
+        # 3. PROCESSAMENTO DOS DADOS FILTRADOS (LÓGICA INCREMENTAL)
         df_bi = df_dashboard_base.copy()
         
         if len(data_range) == 2:
             df_bi = df_bi[(df_bi['dt'].dt.date >= data_range[0]) & (df_bi['dt'].dt.date <= data_range[1])]
         
-        if f_contas: df_bi = df_bi[df_bi['fonte'].isin(f_contas)]
-        if f_cats:   df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
-        if f_ben:    df_bi = df_bi[df_bi['beneficiario'].isin(f_ben)]
-
-        if df_bi.empty:
-            st.info("Ajuste os filtros acima. Nenhum dado encontrado para esta seleção.")
-        else:
+        if f_contas:  df_bi = df_bi[df_bi['fonte'].isin(f_contas)]
+        if f_cats:    df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
+        if f_subcats: df_bi = df_bi[df_bi['categoria_filho'].isin(f_subcats)] # NOVO FILTRO
+        if f_ben:     df_bi = df_bi[df_bi['beneficiario'].isin(f_ben)]
+            
             # 4. KPIs EXECUTIVOS
             st.markdown("---")
             rec_total = df_bi[df_bi['tipo'] == 'Receita']['valor_eur'].sum()
