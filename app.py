@@ -778,26 +778,47 @@ with tab6:
             else:
                 st.success(f"**Superávit Projetado:** Margem de segurança: `{margem_pct:.1f}%`")
 
-            # 5. GRÁFICOS ANALÍTICOS
+    	    # 5. GRÁFICOS ANALÍTICOS COM SELETOR DE PERSPECTIVA
             st.markdown("---")
+            
+            # Seletor de Visão Temporal
+            visao_t = st.radio("Selecione a Visão do Fluxo:", 
+                               ["Receita x Despesa", "Execução de Despesa", "Despesa por Categoria"], 
+                               horizontal=True, key="visao_temporal_bi")
+
             col_g1, col_g2 = st.columns([2, 1])
+            
             with col_g1:
-                df_trend = df_bi.groupby(['dt', 'tipo'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
-                fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], title="Fluxo Temporal", color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'}, markers=True, template="simple_white")
+                if visao_t == "Receita x Despesa":
+                    df_trend = df_bi.groupby(['dt', 'tipo'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
+                    fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], 
+                                        title="Tendência: Receita vs Despesa",
+                                        color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'},
+                                        markers=True, template="simple_white")
+
+                elif visao_t == "Execução de Despesa":
+                    # Filtra apenas despesas e classifica por status
+                    df_exec = df_bi[df_bi['tipo'] == 'Despesa'].copy()
+                    df_exec['Status_Exec'] = df_exec['status_liquidacao'].apply(lambda x: 'Realizado (Pago)' if x == 'PAGO' else 'Comprometido (Pendente)')
+                    df_trend = df_exec.groupby(['dt', 'Status_Exec'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
+                    # Adiciona coluna de Total
+                    cols_s = [c for c in df_trend.columns if c != 'dt']
+                    df_trend['Total Geral'] = df_trend[cols_s].sum(axis=1)
+                    
+                    fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], 
+                                        title="Execução Financeira: Realizado vs Comprometido vs Total",
+                                        color_discrete_map={'Realizado (Pago)': '#9099A2', 'Comprometido (Pendente)': '#B45F5F', 'Total Geral': '#6D7993'},
+                                        markers=True, template="simple_white")
+
+                else: # Despesa por Categoria
+                    df_cat_t = df_bi[df_bi['tipo'] == 'Despesa'].groupby(['dt', 'categoria_pai'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
+                    fig_trend = px.area(df_cat_t, x='dt', y=df_cat_t.columns[1:], 
+                                        title="Comportamento Temporal por Categoria",
+                                        template="simple_white", color_discrete_sequence=px.colors.qualitative.Safe)
+
+                fig_trend.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig_trend, use_container_width=True)
-            with col_g2:
-                fig_tree = px.treemap(df_bi[df_bi['tipo']=='Despesa'], path=['categoria_pai', 'categoria_filho'], values='valor_eur', title="Hierarquia de Gastos", color_discrete_sequence=['#6D7993', '#96858F'])
-                st.plotly_chart(fig_tree, use_container_width=True)
-
-            st.markdown("---")
-            col_g3, col_g4 = st.columns(2)
-            with col_g3:
-                df_pareto = df_bi[df_bi['tipo']=='Despesa'].groupby('beneficiario')['valor_eur'].sum().sort_values(ascending=False).head(10).reset_index()
-                st.plotly_chart(px.bar(df_pareto, x='valor_eur', y='beneficiario', orientation='h', title="Top 10 Beneficiários", color='valor_eur', color_continuous_scale='Blues'), use_container_width=True)
-            with col_g4:
-                df_src = df_bi.groupby(['fonte', 'tipo'])['valor_eur'].sum().reset_index()
-                st.plotly_chart(px.sunburst(df_src, path=['fonte', 'tipo'], values='valor_eur', title="Distribuição por Fonte", color='tipo', color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'}), use_container_width=True)
-
+    
     # 6. EXPORTAÇÃO GERENCIAL
     st.markdown("---")
     if st.button("📊 Gerar Relatório Excel (3 Abas)", use_container_width=True, type="primary"):
