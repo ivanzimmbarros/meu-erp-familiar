@@ -778,73 +778,84 @@ with tab6:
             else:
                 st.success(f"**Superávit Projetado:** Margem de segurança: `{margem_pct:.1f}%`")
 
-            # 5. MOTOR DE INTELIGÊNCIA GRÁFICA (MULTIPERSPECTIVA)
+            # 5. MOTOR DE INTELIGÊNCIA GRÁFICA (EDITION: REFINED JOURNAL)
             st.markdown("---")
             
-            # Seletor de Visão para o Gráfico Principal (Temporal)
             visao_t = st.radio("Selecione a Perspectiva do Fluxo Temporal:", 
                                ["Receita x Despesa", "Execução de Despesa", "Despesa por Categoria"], 
-                               horizontal=True, key="visao_temporal_bi_final")
+                               horizontal=True, key="visao_temporal_bi_final_v2")
 
-            # PRIMEIRA LINHA: Gráfico Temporal + Treemap
             col_g1, col_g2 = st.columns([2, 1])
             
             with col_g1:
+                # Definimos a paleta Journal para consistência
+                paleta_journal = {"Receita": "#6D7993", "Despesa": "#96858F", 
+                                  "Realizado (Pago)": "#9099A2", "Comprometido (Pendente)": "#96858F", 
+                                  "Total Geral": "#4A4A4A"}
+
                 if visao_t == "Receita x Despesa":
                     df_trend = df_bi.groupby(['dt', 'tipo'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
-                    fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], 
+                    # Melt para controle fino de traços
+                    df_melt = df_trend.melt(id_vars='dt', var_name='Tipo', value_name='Valor')
+                    fig_trend = px.line(df_melt, x='dt', y='Valor', color='Tipo', 
+                                        line_dash='Tipo', # Diferencia por estilo de linha
                                         title="Tendência: Receita vs Despesa",
-                                        color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'},
+                                        color_discrete_map=paleta_journal,
                                         markers=True, template="simple_white")
 
                 elif visao_t == "Execução de Despesa":
                     df_exec = df_bi[df_bi['tipo'] == 'Despesa'].copy()
                     df_exec['Status_Exec'] = df_exec['status_liquidacao'].apply(lambda x: 'Realizado (Pago)' if x == 'PAGO' else 'Comprometido (Pendente)')
                     df_trend = df_exec.groupby(['dt', 'Status_Exec'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
-                    cols_s = [c for c in df_trend.columns if c != 'dt']
-                    df_trend['Total Geral'] = df_trend[cols_s].sum(axis=1)
-                    fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], 
+                    
+                    # Garantir que todas as colunas existem para não quebrar o gráfico
+                    for col in ['Realizado (Pago)', 'Comprometido (Pendente)']:
+                        if col not in df_trend.columns: df_trend[col] = 0
+                    
+                    df_trend['Total Geral'] = df_trend['Realizado (Pago)'] + df_trend['Comprometido (Pendente)']
+                    df_melt = df_trend.melt(id_vars='dt', var_name='Status', value_name='Valor')
+                    
+                    fig_trend = px.line(df_melt, x='dt', y='Valor', color='Status',
+                                        line_dash='Status', # Total (Sólida), Realizado (Tracejada), Pendente (Pontilhada)
                                         title="Execução: Realizado vs Comprometido",
-                                        color_discrete_map={'Realizado (Pago)': '#9099A2', 'Comprometido (Pendente)': '#B45F5F', 'Total Geral': '#6D7993'},
+                                        color_discrete_map=paleta_journal,
                                         markers=True, template="simple_white")
 
                 else: # Despesa por Categoria
                     df_cat_t = df_bi[df_bi['tipo'] == 'Despesa'].groupby(['dt', 'categoria_pai'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
                     fig_trend = px.area(df_cat_t, x='dt', y=df_cat_t.columns[1:], 
                                         title="Peso Temporal por Categoria",
-                                        template="simple_white", color_discrete_sequence=px.colors.qualitative.Safe)
+                                        template="simple_white", color_discrete_sequence=px.colors.qualitative.Pastel)
 
                 fig_trend.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                 st.plotly_chart(fig_trend, use_container_width=True)
 
             with col_g2:
-                # TREEMAP: Composição Hierárquica
                 fig_tree = px.treemap(df_bi[df_bi['tipo']=='Despesa'], 
                                       path=['categoria_pai', 'beneficiario'], 
                                       values='valor_eur', 
                                       title="Estrutura de Gastos", 
-                                      color_discrete_sequence=['#6D7993', '#96858F'])
+                                      color_discrete_sequence=['#6D7993', '#96858F', '#9099A2'])
+                fig_tree.update_layout(margin=dict(t=30, l=10, r=10, b=10))
                 st.plotly_chart(fig_tree, use_container_width=True)
 
-            # SEGUNDA LINHA: Pareto de Beneficiários + Concentração por Fonte
             st.markdown("---")
             col_g3, col_g4 = st.columns(2)
             
             with col_g3:
-                # ANÁLISE DE PARETO: Top 10 Beneficiários
                 df_pareto = df_bi[df_bi['tipo']=='Despesa'].groupby('beneficiario')['valor_eur'].sum().sort_values(ascending=False).head(10).reset_index()
                 fig_pareto = px.bar(df_pareto, x='valor_eur', y='beneficiario', orientation='h', 
-                                    title="Top 10 Beneficiários (Maiores Drenos)", 
-                                    color='valor_eur', color_continuous_scale='Blues')
+                                    title="Top 10 Beneficiários", 
+                                    color='valor_eur', color_continuous_scale='Purples')
                 fig_pareto.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_pareto, use_container_width=True)
 
             with col_g4:
-                # SUNBURST: Concentração por Fonte
+                # SUNBURST REFINADO: Cores pastéis e neutras
                 df_src = df_bi.groupby(['fonte', 'tipo'])['valor_eur'].sum().reset_index()
                 fig_sun = px.sunburst(df_src, path=['fonte', 'tipo'], values='valor_eur', 
                                       title="Concentração de Volume por Fonte", 
-                                      color='tipo', color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'})
+                                      color_discrete_sequence=['#9099A2', '#6D7993', '#96858F', '#D5D5D5'])
                 st.plotly_chart(fig_sun, use_container_width=True)
     
     # 6. EXPORTAÇÃO GERENCIAL
