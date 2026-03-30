@@ -219,18 +219,30 @@ def calcular_fatura_ref(data_str, dia_fech):
     return d.strftime("%Y-%m")
 
 def calcular_saldo_real(fonte):
+    """Calcula o dinheiro que REALMENTE existe na conta agora."""
     res_ini = db_query("SELECT valor_inicial FROM saldos_iniciais WHERE fonte=?", (fonte,))
     ini = res_ini[0][0] if res_ini else 0.0
-    rec = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Receita' AND status_liquidacao='RECEBIDO'", (fonte,))[0][0] or 0.0
-    des = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Despesa' AND status_liquidacao='PAGO'", (fonte,))[0][0] or 0.0
+    # Soma apenas o que entrou (RECEBIDO) e saiu (PAGO) via Dinheiro/Débito nesta conta
+    rec = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Receita' AND status_liquidacao='RECEBIDO' AND forma_pagamento != 'Cartão de Crédito'", (fonte,))[0][0] or 0.0
+    des = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo='Despesa' AND status_liquidacao='PAGO' AND forma_pagamento != 'Cartão de Crédito'", (fonte,))[0][0] or 0.0
     return round(ini + rec - des, 2)
 
 def calcular_comprometido(fonte):
-    sql = "SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo=? AND status_liquidacao IN ('PENDENTE','PREVISTO')"
-    desp = db_query(sql, (fonte, "Despesa"))[0][0] or 0.0
-    rec = db_query(sql, (fonte, "Receita"))[0][0] or 0.0
-    fat = db_query("SELECT SUM(t.valor_eur) FROM transacoes t JOIN cartoes c ON t.cartao_id=c.id WHERE c.conta_pagamento=? AND t.status_cartao='pendente'", (fonte,))[0][0] or 0.0
-    return round(desp - rec + fat, 2)
+    """Calcula tudo que vai sair da conta no futuro (Boletos Pendentes + Faturas)."""
+    # 1. Boletos e Receitas agendadas diretamente nesta conta (excluindo cartão)
+    sql_pend = "SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo=? AND status_liquidacao IN ('PENDENTE','PREVISTO') AND forma_pagamento != 'Cartão de Crédito'"
+    desp_p = db_query(sql_pend, (fonte, "Despesa"))[0][0] or 0.0
+    rec_p = db_query(sql_pend, (fonte, "Receita"))[0][0] or 0.0
+    
+    # 2. Total de faturas de todos os cartões que debitam nesta conta
+    fat = db_query("""
+        SELECT SUM(t.valor_eur) 
+        FROM transacoes t 
+        JOIN cartoes c ON t.cartao_id = c.id 
+        WHERE c.conta_pagamento=? AND t.status_cartao='pendente'
+    """, (fonte,))[0][0] or 0.0
+    
+    return round(desp_p - rec_p + fat, 2)
 
 def realizar_transferencia(origem, destino, valor, data_str, usuario, nota):
     nota_f = f"Transferência: {origem} ➔ {destino} | {nota}"
@@ -512,48 +524,51 @@ with tab2:
                     st.success(f"✅ {len(ids_para_excluir)} registro(s) removido(s).")
                     st.rerun()
                     
-# --- TAB 3 E 4: SALDOS E CARTÕES ---
+# --- TAB 3: SALDOS ---
 with tab3:
     st.subheader("💰 Patrimônio e Liquidez")
     fnts = [f[0] for f in db_query("SELECT nome FROM fontes ORDER BY nome")]
+    
     if not fnts:
-        st.info("💡 Vá até a aba ⚙️ Gestão e cadastre suas Contas Bancárias.")
+        st.info("💡 Cadastre suas contas na aba Gestão.")
     else:
-        tr, tl = 0.0, 0.0
-        cols = st.columns(3)
+        t_real, t_livre = 0.0, 0.0
+        cols = st.columns(len(fnts) if len(fnts) <= 3 else 3)
+        
         for i, f in enumerate(fnts):
-            sr = calcular_saldo_real(f); sc = calcular_comprometido(f); sl = sr - sc
-            tr += sr; tl += sl
-            with cols[i%3]: 
-                st.markdown(f'<div class="card"><b>🏦 {f}</b><br>Real: €{sr:,.2f}<br>Livre: <b style="color:{"#10b981" if sl>=0 else "#ef4444"};">€{sl:,.2f}</b></div>', unsafe_allow_html=True)
+            sr = calcular_saldo_real(f)
+            sc = calcular_comprometido(f)
+            sl = round(sr - sc, 2)
+            t_real += sr
+            t_livre += sl
+            
+            with cols[i % 3]:
+                cor_livre = "#10b981" if sl >= 0 else "#ef4444"
+                st.markdown(f"""
+                    <div class="card">
+                        <h4 style="margin:0; color:#2F2F2F;">🏦 {f}</h4>
+                        <div style="display:flex; justify-content:space-between; margin-top:10px; color:#2F2F2F;">
+                            <span>Saldo Real:</span> <b>€{sr:,.2f}</b>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; color:#6D7993; font-size:0.9rem;">
+                            <span>Comprometido:</span> <span>-€{sc:,.2f}</span>
+                        </div>
+                        <hr style="margin:8px 0; border:0; border-top:1px solid #eee;">
+                        <div style="display:flex; justify-content:space-between; color:#2F2F2F;">
+                            <span>Disponível:</span> <b style="color:{cor_livre};">€{sl:,.2f}</b>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
         st.divider()
         c_t1, c_t2 = st.columns(2)
-        c_t1.metric("SALDO REAL TOTAL", f"€ {tr:,.2f}")
-        c_t2.metric("DISPONIBILIDADE REAL", f"€ {tl:,.2f}", delta_color="normal" if tl>=0 else "inverse")
-        if tl < 0: st.error("🚨 RISCO DE INSOLVÊNCIA PATRIMONIAL!")
+        c_t1.metric("SALDO REAL TOTAL", f"€ {t_real:,.2f}")
+        c_t2.metric("DISPONIBILIDADE REAL", f"€ {t_livre:,.2f}", 
+                  delta=f"€ {t_livre:,.2f}", 
+                  delta_color="normal" if t_livre >= 0 else "inverse")
         
-        st.divider()
-        col_aj, col_ini = st.columns(2)
-        with col_aj:
-            st.markdown("#### ⚖️ Bater Saldo (Ajuste)")
-            f_aj = st.selectbox("Conta", fnts, key="f_aj")
-            v_banco = st.number_input("Valor no Extrato (€)", step=0.01, format="%.2f")
-            if st.button("Sincronizar Banco"):
-                sr_atual = calcular_saldo_real(f_aj)
-                diff = round(v_banco - sr_atual, 2)
-                if abs(diff) > 0.01:
-                    t_aj, st_aj = ("Receita", "RECEBIDO") if diff > 0 else ("Despesa", "PAGO")
-                    db_execute("INSERT INTO transacoes (data, categoria_pai, fonte, valor_eur, tipo, nota, status_liquidacao, usuario) VALUES (?,?,?,?,?,?,?,?)",
-                               (date.today().strftime("%Y-%m-%d"), "Ajuste de Saldo", f_aj, abs(diff), t_aj, f"Ajuste automático (diff {diff})", st_aj, st.session_state.user))
-                    st.success("Ajuste realizado!"); st.rerun()
-                else: st.info("Saldo já coincide.")
-        with col_ini:
-            st.markdown("#### 🔧 Configurar Saldo Inicial")
-            f_ini = st.selectbox("Conta Inicial", fnts, key="f_ini")
-            n_ini = st.number_input("Valor Inicial (€)", step=10.0, format="%.2f")
-            if st.button("Salvar Inicial"):
-                db_execute("INSERT OR REPLACE INTO saldos_iniciais (fonte, valor_inicial) VALUES (?,?)", (f_ini, n_ini))
-                st.success("Salvo!"); st.rerun()
+        if t_livre < 0:
+            st.error("🚨 **ALERTA DE INSOLVÊNCIA:** Suas obrigações futuras superam o dinheiro disponível em conta.")
 
 # --- TAB 4: CARTÕES (COMPLETA) ---
 with tab4:
