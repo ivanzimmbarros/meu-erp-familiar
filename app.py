@@ -561,14 +561,43 @@ with tab3:
                 """, unsafe_allow_html=True)
 
         st.divider()
+        
+        # 1. CÁLCULO DE INSIGHTS PARA A MENSAGEM
+        status_color_livre = "#10b981" if t_livre >= 0 else "#ef4444"
+        # Percentual de comprometimento do patrimônio total
+        pct_comprometido = (abs(t_real - t_livre) / t_real * 100) if t_real > 0 else 0
+
+        # 2. CSS PARA ALINHAMENTO E COR DINÂMICA
+        # Nota: O seletor nth-of-type(2) foca na segunda métrica deste bloco horizontal
+        st.markdown(f"""
+            <style>
+                [data-testid="stMetricValue"] {{ font-size: 1.8rem !important; }}
+                [data-testid="stHorizontalBlock"] > div:nth-of-type(2) [data-testid="stMetricValue"] {{
+                    color: {status_color_livre} !important;
+                }}
+            </style>
+        """, unsafe_allow_html=True)
+
+        # 3. GRID DE TOTAIS (SIMÉTRICO - SEM DELTA)
         c_t1, c_t2 = st.columns(2)
         c_t1.metric("SALDO REAL TOTAL", f"€ {t_real:,.2f}")
-        c_t2.metric("DISPONIBILIDADE REAL", f"€ {t_livre:,.2f}", 
-                  delta=f"€ {t_livre:,.2f}", 
-                  delta_color="normal" if t_livre >= 0 else "inverse")
-        
+        c_t2.metric("DISPONIBILIDADE REAL", f"€ {t_livre:,.2f}")
+
+        # 4. MENSAGEM COMPLEMENTAR INCREMENTADA (BI INSIGHT)
         if t_livre < 0:
-            st.error("🚨 **ALERTA DE INSOLVÊNCIA:** Suas obrigações futuras superam o dinheiro disponível em conta.")
+            st.error(f"""
+                🚨 **ALERTA DE INSOLVÊNCIA PATRIMONIAL**  
+                Suas obrigações futuras (contas pendentes + faturas) superam o seu dinheiro disponível em conta.  
+                📌 **Déficit Estimado:** `€{abs(t_livre):,.2f}`  
+                📊 **Pressão sobre o Patrimônio:** Suas dívidas representam `{pct_comprometido:.1f}%` acima do seu saldo atual.
+            """)
+        else:
+            st.success(f"""
+                ✅ **DISPONIBILIDADE POSITIVA**  
+                Seu patrimônio atual é suficiente para cobrir todos os compromissos futuros registrados.  
+                📌 **Margem de Segurança Livre:** `€{t_livre:,.2f}`  
+                📊 **Nível de Comprometimento:** Você já empenhou `{pct_comprometido:.1f}%` do seu saldo real.
+            """)
 
 # --- TAB 4: CARTÕES (COMPLETA) ---
 with tab4:
