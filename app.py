@@ -603,35 +603,38 @@ with tab5:
                     st.progress(p_val, text=f"€{real_val:,.2f} de €{r['valor_previsto']:,.2f}")
             st.markdown("<br>", unsafe_allow_html=True) # Espaço entre grupos
 
-# --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI EDITION V2) ---
+# --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (VERSÃO FINAL E SEGURA) ---
+
 with tab6:
     st.subheader("📊 Business Intelligence: Saúde e Tendências")
     
-    # Busca dados para verificar se o BI pode ser montado
-    df_all_bi = db_df("SELECT * FROM transacoes")
+    # 1. CARREGAMENTO INICIAL DOS DADOS
+    # Usamos um nome de variável único e consistente
+    df_dashboard_base = db_df("SELECT * FROM transacoes")
     
-    if df_all_bi.empty:
-        st.warning("⚠️ O banco de dados está vazio. Registre lançamentos na aba 'Novos Lançamentos' para ativar as análises de BI.")
-        # Removido o st.stop() para não quebrar as abas seguintes
+    if df_dashboard_base.empty:
+        st.warning("⚠️ O banco de dados está vazio. Registre lançamentos para visualizar os gráficos.")
+        # O código para por aqui dentro desta aba, mas continua nas abas Gestão e Transf
     else:
-        # 1. MOTOR DE FILTROS AVANÇADOS (Apenas renderiza se houver dados)
+        # 2. MOTOR DE FILTROS AVANÇADOS
         with st.expander("🔍 Filtros Avançados de BI", expanded=False):
-            df_all_bi['dt'] = pd.to_datetime(df_all_bi['data'])
-            df_all_bi['beneficiario'] = df_all_bi['beneficiario'].fillna("N/A").replace("", "N/A")
+            df_dashboard_base['dt'] = pd.to_datetime(df_dashboard_base['data'])
+            df_dashboard_base['beneficiario'] = df_dashboard_base['beneficiario'].fillna("N/A").replace("", "N/A")
             
             c_an1, c_an2 = st.columns(2)
             c_an3, c_an4 = st.columns(2)
             
-            min_d = df_all_bi['dt'].min().date()
-            max_d = df_all_bi['dt'].max().date()
+            min_d = df_dashboard_base['dt'].min().date()
+            max_d = df_dashboard_base['dt'].max().date()
             data_range = c_an1.date_input("Período de Análise", [min_d, max_d])
             
-            f_contas = c_an2.multiselect("Filtrar Contas/Cartões", sorted(df_all_bi['fonte'].unique()))
-            f_cats = c_an3.multiselect("Filtrar Categorias", sorted(df_all_bi['categoria_pai'].unique()))
-            f_ben = c_an4.multiselect("Filtrar Beneficiários", sorted(df_all_bi['beneficiario'].unique()))
+            f_contas = c_an2.multiselect("Filtrar Contas/Cartões", sorted(df_dashboard_base['fonte'].unique()))
+            f_cats = c_an3.multiselect("Filtrar Categorias", sorted(df_dashboard_base['categoria_pai'].unique()))
+            f_ben = c_an4.multiselect("Filtrar Beneficiários", sorted(df_dashboard_base['beneficiario'].unique()))
 
-        # --- PROCESSAMENTO DOS DADOS ---
-        df_bi = df_all_bi.copy()
+        # 3. PROCESSAMENTO DOS DADOS FILTRADOS
+        df_bi = df_dashboard_base.copy()
+        
         if len(data_range) == 2:
             df_bi = df_bi[(df_bi['dt'].dt.date >= data_range[0]) & (df_bi['dt'].dt.date <= data_range[1])]
         
@@ -639,122 +642,63 @@ with tab6:
         if f_cats:   df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
         if f_ben:    df_bi = df_bi[df_bi['beneficiario'].isin(f_ben)]
 
-    # --- PROCESSAMENTO DOS DADOS COM TRAVA DE SEGURANÇA ---
-    df_bi = df_all.copy()
-    
-    # Correção do Erro de Atributo: Uso de .dt.date
-    if len(data_range) == 2:
-        df_bi = df_bi[(df_bi['dt'].dt.date >= data_range[0]) & (df_bi['dt'].dt.date <= data_range[1])]
-    
-    if f_contas: df_bi = df_bi[df_bi['fonte'].isin(f_contas)]
-    if f_cats:   df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
-    if f_ben:    df_bi = df_bi[df_bi['beneficiario'].isin(f_ben)]
-
-    if df_bi.empty:
-        st.info("Ajuste os filtros para visualizar a análise. Nenhum dado encontrado para esta seleção.")
-    else:
-        # 2. KPIs EXECUTIVOS
-        st.markdown("---")
-        
-        # --- 1. CÁLCULOS ANALÍTICOS ---
-        rec_total = df_bi[df_bi['tipo'] == 'Receita']['valor_eur'].sum()
-        des_total = df_bi[df_bi['tipo'] == 'Despesa']['valor_eur'].sum()
-        des_paga  = df_bi[(df_bi['tipo'] == 'Despesa') & (df_bi['status_liquidacao'] == 'PAGO')]['valor_eur'].sum()
-        total_comp = df_bi[df_bi['status_liquidacao'].isin(['PENDENTE', 'PREVISTO'])]['valor_eur'].sum()
-        
-        balanco_projetado = round(rec_total - des_total, 2)
-        # Margem calculada para exibição no alerta
-        margem_pct = (balanco_projetado / rec_total * 100) if rec_total > 0 else (0.0 if balanco_projetado >= 0 else -100.0)
-
-        # --- 2. CSS PARA ALINHAMENTO E CORES (GLOBAL DA ABA) ---
-        status_color = "#10b981" if balanco_projetado >= 0 else "#ef4444"
-        st.markdown(f"""
-            <style>
-                /* Garante que todos os cards de métrica tenham a mesma altura */
-                [data-testid="stMetricValue"] {{
-                    font-size: 1.8rem !important;
-                }}
-                /* Pinta apenas o valor do 4º card */
-                [data-testid="stHorizontalBlock"] > div:nth-of-type(4) [data-testid="stMetricValue"] {{
-                    color: {status_color} !important;
-                }}
-            </style>
-        """, unsafe_allow_html=True)
-
-        # --- 3. GRID DE KPIs (SEM DELTA PARA MANTER SIMETRIA) ---
-        st.markdown("---")
-        k1, k2, k3, k4 = st.columns(4)
-        
-        k1.metric("💰 Receita Total", f"€{rec_total:,.2f}")
-        k2.metric("💸 Despesa Realizada", f"€{des_paga:,.2f}")
-        k3.metric("⚠️ Total Comprometido", f"€{total_comp:,.2f}")
-        # Removido o parâmetro 'delta' para alinhar a base das caixas
-        k4.metric("⚖️ Balanço Líquido", f"€{balanco_projetado:,.2f}")
-
-        # --- 4. ÁREA DE ANALYTICS E STATUS (DESTAQUE DA MARGEM) ---
-        if balanco_projetado < 0:
-            st.error(f"""
-                **Déficit Detectado:** Seus compromissos superam as receitas em **€{abs(balanco_projetado):,.2f}**.  
-                📌 **Margem de Segurança:** `{margem_pct:.1f}%` (Negativa)
-            """)
+        if df_bi.empty:
+            st.info("Ajuste os filtros acima. Nenhum dado encontrado para esta seleção.")
         else:
-            st.success(f"""
-                **Superávit Projetado:** Você possui uma margem de segurança de **€{balanco_projetado:,.2f}**.  
-                📌 **Margem de Segurança:** `{margem_pct:.1f}%` (Positiva)
-            """)
-        
-        # 3. GRÁFICOS ANALÍTICOS
-        st.markdown("---")
-        col_g1, col_g2 = st.columns([2, 1])
+            # 4. KPIs EXECUTIVOS
+            st.markdown("---")
+            rec_total = df_bi[df_bi['tipo'] == 'Receita']['valor_eur'].sum()
+            des_total = df_bi[df_bi['tipo'] == 'Despesa']['valor_eur'].sum()
+            des_paga  = df_bi[(df_bi['tipo'] == 'Despesa') & (df_bi['status_liquidacao'] == 'PAGO')]['valor_eur'].sum()
+            total_comp = df_bi[df_bi['status_liquidacao'].isin(['PENDENTE', 'PREVISTO'])]['valor_eur'].sum()
+            
+            balanco_projetado = round(rec_total - des_total, 2)
+            margem_pct = (balanco_projetado / rec_total * 100) if rec_total > 0 else (0.0 if balanco_projetado >= 0 else -100.0)
 
-        with col_g1:
-            # FLUXO DE CAIXA NO TEMPO
-            df_trend = df_bi.groupby(['dt', 'tipo'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
-            fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], 
-                                title="Tendência Temporal: Receita vs Despesa",
-                                color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'},
-                                markers=True, template="simple_white")
-            st.plotly_chart(fig_trend, use_container_width=True)
+            # CSS Dinâmico para a cor do Balanço
+            status_color = "#10b981" if balanco_projetado >= 0 else "#ef4444"
+            st.markdown(f"<style>[data-testid='stHorizontalBlock'] > div:nth-of-type(4) [data-testid='stMetricValue'] {{ color: {status_color} !important; }}</style>", unsafe_allow_html=True)
 
-        with col_g2:
-            # COMPOSIÇÃO HIERÁRQUICA
-            fig_tree = px.treemap(df_bi[df_bi['tipo']=='Despesa'], 
-                                  path=['categoria_pai', 'beneficiario'], 
-                                  values='valor_eur',
-                                  title="Gastos: Categoria > Beneficiário",
-                                  color_discrete_sequence=['#6D7993', '#96858F', '#9099A2'])
-            st.plotly_chart(fig_tree, use_container_width=True)
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("💰 Receita Total", f"€{rec_total:,.2f}")
+            k2.metric("💸 Despesa Paga", f"€{des_paga:,.2f}")
+            k3.metric("⚠️ Comprometido", f"€{total_comp:,.2f}")
+            k4.metric("⚖️ Balanço Líquido", f"€{balanco_projetado:,.2f}")
 
-        st.markdown("---")
-        col_g3, col_g4 = st.columns(2)
+            if balanco_projetado < 0:
+                st.error(f"**Déficit Detectado:** Suas obrigações superam as receitas. Margem: `{margem_pct:.1f}%`")
+            else:
+                st.success(f"**Superávit Projetado:** Margem de segurança: `{margem_pct:.1f}%`")
 
-        with col_g3:
-            # ANÁLISE DE PARETO (RANKING)
-            df_pareto = df_bi[df_bi['tipo']=='Despesa'].groupby('beneficiario')['valor_eur'].sum().sort_values(ascending=False).head(10).reset_index()
-            fig_pareto = px.bar(df_pareto, x='valor_eur', y='beneficiario', orientation='h',
-                                title="Pareto: Top 10 Gastos por Beneficiário",
-                                color='valor_eur', color_continuous_scale='Blues')
-            fig_pareto.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_pareto, use_container_width=True)
+            # 5. GRÁFICOS
+            st.markdown("---")
+            col_g1, col_g2 = st.columns([2, 1])
+            with col_g1:
+                df_trend = df_bi.groupby(['dt', 'tipo'])['valor_eur'].sum().unstack(fill_value=0).reset_index()
+                fig_trend = px.line(df_trend, x='dt', y=df_trend.columns[1:], title="Fluxo Temporal", color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'}, markers=True, template="simple_white")
+                st.plotly_chart(fig_trend, use_container_width=True)
+            with col_g2:
+                fig_tree = px.treemap(df_bi[df_bi['tipo']=='Despesa'], path=['categoria_pai', 'beneficiario'], values='valor_eur', title="Gastos: Categoria > Beneficiário", color_discrete_sequence=['#6D7993', '#96858F'])
+                st.plotly_chart(fig_tree, use_container_width=True)
 
-        with col_g4:
-            # CONCENTRAÇÃO POR FONTE
-            df_src = df_bi.groupby(['fonte', 'tipo'])['valor_eur'].sum().reset_index()
-            fig_sun = px.sunburst(df_src, path=['fonte', 'tipo'], values='valor_eur',
-                                  title="Onde o dinheiro está circulando?",
-                                  color='tipo', color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'})
-            st.plotly_chart(fig_sun, use_container_width=True)
+            st.markdown("---")
+            col_g3, col_g4 = st.columns(2)
+            with col_g3:
+                df_pareto = df_bi[df_bi['tipo']=='Despesa'].groupby('beneficiario')['valor_eur'].sum().sort_values(ascending=False).head(10).reset_index()
+                st.plotly_chart(px.bar(df_pareto, x='valor_eur', y='beneficiario', orientation='h', title="Top 10 Beneficiários", color='valor_eur', color_continuous_scale='Blues'), use_container_width=True)
+            with col_g4:
+                df_src = df_bi.groupby(['fonte', 'tipo'])['valor_eur'].sum().reset_index()
+                st.plotly_chart(px.sunburst(df_src, path=['fonte', 'tipo'], values='valor_eur', title="Distribuição por Fonte", color='tipo', color_discrete_map={'Receita': '#6D7993', 'Despesa': '#96858F'}), use_container_width=True)
 
-    # Botão de Exportação Gerencial
+    # 6. EXPORTAÇÃO (Sempre disponível no final da aba)
     st.markdown("---")
-    if st.button("📊 Gerar Exportação para Auditoria Externa", use_container_width=True):
-        m_ref_backup = date.today().strftime("%Y-%m")
+    if st.button("📊 Gerar Relatório Excel (3 Abas)", use_container_width=True):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df_bi.to_excel(writer, index=False, sheet_name='Dados_Filtrados_BI')
-            db_df("SELECT * FROM transacoes").to_excel(writer, index=False, sheet_name='Backup_Completo')
-        st.download_button("⬇️ Baixar Dados Analíticos", output.getvalue(), f"BI_Audit_{m_ref_backup}.xlsx")
-
+            db_df("SELECT * FROM transacoes").to_excel(writer, index=False, sheet_name='Transacoes_Full')
+            db_df("SELECT * FROM orcamentos").to_excel(writer, index=False, sheet_name='Metas_Configuradas')
+        st.download_button("⬇️ Baixar Excel", output.getvalue(), "Relatorio_Financeiro.xlsx")
+        
 # --- TAB 7: GESTÃO GERAL (TOTALMENTE RESTAURADA E RESILIENTE) ---
 with tab7:
     st.subheader("⚙️ Gestão e Configurações do Sistema")
