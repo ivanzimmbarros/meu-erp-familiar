@@ -987,51 +987,51 @@ with tab8:
                     st.success("Transferência realizada!")
                     st.rerun()
 
-    # 2. HISTÓRICO DE TRANSFERÊNCIAS (TABELA DE AUDITORIA)
+    # 2. HISTÓRICO DE TRANSFERÊNCIAS (VISÃO CONSOLIDADA DE BI)
     st.divider()
     st.markdown("#### 📜 Histórico de Movimentações Internas")
     
-    # Buscamos apenas os registros que possuem a categoria 'Transferência'
-    # Como cada transferência gera 2 linhas, mostramos ambas para transparência total
+    # Lógica de Agrupamento: Unimos as duas linhas (ID par/ímpar) em um único evento visual
     df_trans_hist = db_df("""
-        SELECT id, data, fonte, beneficiario, valor_eur, nota 
+        SELECT 
+            GROUP_CONCAT(id) as ids_grupo, -- Junta os IDs das duas pontas (ex: "13,14")
+            data as Data,
+            MAX(CASE WHEN beneficiario LIKE 'Para %' THEN fonte END) as "Conta Origem",
+            MAX(CASE WHEN beneficiario LIKE 'De %' THEN fonte END) as "Conta Destino",
+            valor_eur as "Valor (€)",
+            nota as "Descrição"
         FROM transacoes 
         WHERE categoria_pai = 'Transferência' 
-        ORDER BY data DESC, id DESC
+        GROUP BY data, valor_eur, nota -- Agrupa as pontas que compartilham os mesmos dados
+        ORDER BY data DESC
     """)
 
     if df_trans_hist.empty:
         st.info("Nenhuma transferência registrada no histórico.")
     else:
-        # Formatação para melhor leitura
         df_trans_view = df_trans_hist.copy()
         df_trans_view.insert(0, "🗑️", False)
         
-        df_trans_view = df_trans_view.rename(columns={
-            "data": "Data",
-            "fonte": "Conta Impactada",
-            "beneficiario": "Fluxo",
-            "valor_eur": "Valor (€)",
-            "nota": "Descrição Completa"
-        })
-
-        st.caption("Selecione e use o botão abaixo para estornar (apagar) uma transferência.")
+        st.caption("Abaixo, cada linha representa uma operação completa entre duas contas.")
         ed_trans = st.data_editor(
             df_trans_view, 
             hide_index=True, 
             use_container_width=True, 
-            key="editor_transf_final"
+            key="editor_transf_consolidado"
         )
 
-        # 3. LÓGICA DE EXCLUSÃO (ESTORNO)
+        # 3. LÓGICA DE EXCLUSÃO ATÔMICA (ESTORNA AS DUAS PONTAS)
         if st.button("🗑️ Estornar Movimentações Selecionadas", type="secondary"):
-            # Identifica os IDs das linhas selecionadas
-            ids_excluir = df_trans_view.loc[ed_trans["🗑️"] == True, "id"].tolist()
+            # Coletamos as strings de IDs agrupados (ex: ["13,14", "15,16"])
+            strings_ids = df_trans_view.loc[ed_trans["🗑️"] == True, "ids_grupo"].tolist()
             
-            if ids_excluir:
-                # Nota: Para excluir uma transferência de forma justa, 
-                # o ideal é o usuário selecionar as duas pontas (Entrada e Saída).
-                placeholder = ",".join(["?"] * len(ids_excluir))
-                db_execute(f"DELETE FROM transacoes WHERE id IN ({placeholder})", tuple(ids_excluir))
-                st.warning(f"Foram removidos {len(ids_excluir)} registros de transferência.")
+            if strings_ids:
+                # Transformamos ["13,14", "15,16"] em uma lista única de IDs [13, 14, 15, 16]
+                todos_ids = []
+                for s in strings_ids:
+                    todos_ids.extend(s.split(','))
+                
+                placeholder = ",".join(["?"] * len(todos_ids))
+                db_execute(f"DELETE FROM transacoes WHERE id IN ({placeholder})", tuple(todos_ids))
+                st.success(f"✅ Sucesso! {len(strings_ids)} operação(ões) de transferência estornada(s).")
                 st.rerun()
