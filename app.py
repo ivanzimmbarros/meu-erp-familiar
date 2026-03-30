@@ -959,44 +959,79 @@ with tab7:
             db_execute("INSERT INTO usuarios (username, password, nome_exibicao) VALUES (?,?,?)", 
                        (ulog, hashlib.sha256(usenh.encode()).hexdigest(), unome)); st.success("Usuário Criado!")
 
-# --- TAB 8: TRANSFERÊNCIAS (IDENTIDADE VISUAL MENTA/AZUL) ---
+# --- TAB 8: TRANSFERÊNCIAS (SOMA ZERO + HISTÓRICO DE AUDITORIA) ---
 with tab8:
     st.subheader("🔄 Transferência Entre Bancos")
     
-    # Busca contas cadastradas
+    # 1. MOTOR DE ENTRADA (FORMULÁRIO)
     res_fontes = db_query("SELECT nome FROM fontes ORDER BY nome")
     fontes_t = [f[0] for f in res_fontes]
 
     if len(fontes_t) < 2:
-        st.error("❗ **Ação Necessária:** Você precisa de pelo menos **2 CONTAS** (ex: Banco e Carteira) para habilitar transferências.")
-        st.info("Vá na aba **⚙️ Gestão** para cadastrar suas contas bancárias.")
+        st.error("❗ **Ação Necessária:** Cadastre pelo menos 2 contas na aba Gestão.")
     else:
-        st.markdown('<div class="card">Mova valores entre suas contas mantendo a integridade do saldo geral.</div>', unsafe_allow_html=True)
-        
-        with st.form("form_transf_final"):
-            c1, c2 = st.columns(2)
-            c_origem = c1.selectbox("De onde sai o dinheiro?", fontes_t)
-            # Destinos excluindo a origem
-            c_destino = c2.selectbox("Para onde vai o dinheiro?", [f for f in fontes_t if f != c_origem])
-            
-            v_col, d_col = st.columns(2)
-            valor_transf = v_col.number_input("Valor (€)", min_value=0.01, step=10.0, format="%.2f")
-            data_transf = d_col.date_input("Data da Transferência", date.today())
-            
-            nota_transf = st.text_input("Nota / Observação")
-            
-            if st.form_submit_button("🔁 EXECUTAR TRANSFERÊNCIA"):
-                try:
-                    realizar_transferencia(
-                        c_origem, 
-                        c_destino, 
-                        valor_transf, 
-                        data_transf.strftime("%Y-%m-%d"), 
-                        st.session_state.user, 
-                        nota_transf
-                    )
-                    st.balloons()
-                    st.success(f"Transferência de €{valor_transf} concluída com sucesso!")
+        with st.expander("➕ Executar Nova Transferência", expanded=True):
+            with st.form("form_transf_bi"):
+                c1, c2 = st.columns(2)
+                c_origem = c1.selectbox("Conta de Origem (Saída)", fontes_t)
+                c_destino = c2.selectbox("Conta de Destino (Entrada)", [f for f in fontes_t if f != c_origem])
+                
+                v_col, d_col = st.columns(2)
+                valor_transf = v_col.number_input("Valor (€)", min_value=0.01, step=10.0, format="%.2f")
+                data_transf = d_col.date_input("Data da Operação", date.today())
+                
+                nota_transf = st.text_input("Nota / Motivo da Movimentação")
+                
+                if st.form_submit_button("🔁 CONFIRMAR MOVIMENTAÇÃO"):
+                    realizar_transferencia(c_origem, c_destino, valor_transf, data_transf.strftime("%Y-%m-%d"), st.session_state.user, nota_transf)
+                    st.success("Transferência realizada!")
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Erro no processamento: {e}")
+
+    # 2. HISTÓRICO DE TRANSFERÊNCIAS (TABELA DE AUDITORIA)
+    st.divider()
+    st.markdown("#### 📜 Histórico de Movimentações Internas")
+    
+    # Buscamos apenas os registros que possuem a categoria 'Transferência'
+    # Como cada transferência gera 2 linhas, mostramos ambas para transparência total
+    df_trans_hist = db_df("""
+        SELECT id, data, fonte, beneficiario, valor_eur, nota 
+        FROM transacoes 
+        WHERE categoria_pai = 'Transferência' 
+        ORDER BY data DESC, id DESC
+    """)
+
+    if df_trans_hist.empty:
+        st.info("Nenhuma transferência registrada no histórico.")
+    else:
+        # Formatação para melhor leitura
+        df_trans_view = df_trans_hist.copy()
+        df_trans_view.insert(0, "🗑️", False)
+        
+        df_trans_view = df_trans_view.rename(columns={
+            "data": "Data",
+            "fonte": "Conta Impactada",
+            "beneficiario": "Fluxo",
+            "valor_eur": "Valor (€)",
+            "nota": "Descrição Completa"
+        })
+
+        st.caption("Selecione e use o botão abaixo para estornar (apagar) uma transferência.")
+        ed_trans = st.data_editor(
+            df_trans_view, 
+            hide_index=True, 
+            use_container_width=True, 
+            key="editor_transf_final"
+        )
+
+        # 3. LÓGICA DE EXCLUSÃO (ESTORNO)
+        if st.button("🗑️ Estornar Movimentações Selecionadas", type="secondary"):
+            # Identifica os IDs das linhas selecionadas
+            ids_excluir = df_trans_view.loc[ed_trans["🗑️"] == True, "id"].tolist()
+            
+            if ids_excluir:
+                # Nota: Para excluir uma transferência de forma justa, 
+                # o ideal é o usuário selecionar as duas pontas (Entrada e Saída).
+                placeholder = ",".join(["?"] * len(ids_excluir))
+                db_execute(f"DELETE FROM transacoes WHERE id IN ({placeholder})", tuple(ids_excluir))
+                st.warning(f"Foram removidos {len(ids_excluir)} registros de transferência.")
+                st.rerun()
