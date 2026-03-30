@@ -607,33 +607,37 @@ with tab5:
 with tab6:
     st.subheader("📊 Business Intelligence: Saúde e Tendências")
     
-    # 1. MOTOR DE FILTROS AVANÇADOS (AGORA COM BENEFICIÁRIOS)
-    with st.expander("🔍 Filtros Avançados de BI", expanded=False):
-        # Carregamento base para os filtros
-        df_all = db_df("SELECT * FROM transacoes")
-        if df_all.empty:
-            st.warning("O banco de dados está vazio. Registre lançamentos para ativar o BI.")
-            st.stop()
+    # Busca dados para verificar se o BI pode ser montado
+    df_all_bi = db_df("SELECT * FROM transacoes")
+    
+    if df_all_bi.empty:
+        st.warning("⚠️ O banco de dados está vazio. Registre lançamentos na aba 'Novos Lançamentos' para ativar as análises de BI.")
+        # Removido o st.stop() para não quebrar as abas seguintes
+    else:
+        # 1. MOTOR DE FILTROS AVANÇADOS (Apenas renderiza se houver dados)
+        with st.expander("🔍 Filtros Avançados de BI", expanded=False):
+            df_all_bi['dt'] = pd.to_datetime(df_all_bi['data'])
+            df_all_bi['beneficiario'] = df_all_bi['beneficiario'].fillna("N/A").replace("", "N/A")
             
-        df_all['dt'] = pd.to_datetime(df_all['data'])
-        df_all['beneficiario'] = df_all['beneficiario'].fillna("N/A").replace("", "N/A")
+            c_an1, c_an2 = st.columns(2)
+            c_an3, c_an4 = st.columns(2)
+            
+            min_d = df_all_bi['dt'].min().date()
+            max_d = df_all_bi['dt'].max().date()
+            data_range = c_an1.date_input("Período de Análise", [min_d, max_d])
+            
+            f_contas = c_an2.multiselect("Filtrar Contas/Cartões", sorted(df_all_bi['fonte'].unique()))
+            f_cats = c_an3.multiselect("Filtrar Categorias", sorted(df_all_bi['categoria_pai'].unique()))
+            f_ben = c_an4.multiselect("Filtrar Beneficiários", sorted(df_all_bi['beneficiario'].unique()))
+
+        # --- PROCESSAMENTO DOS DADOS ---
+        df_bi = df_all_bi.copy()
+        if len(data_range) == 2:
+            df_bi = df_bi[(df_bi['dt'].dt.date >= data_range[0]) & (df_bi['dt'].dt.date <= data_range[1])]
         
-        c_an1, c_an2 = st.columns(2)
-        c_an3, c_an4 = st.columns(2)
-        
-        # Filtro 1: Datas (Range)
-        min_d = df_all['dt'].min().date()
-        max_d = df_all['dt'].max().date()
-        data_range = c_an1.date_input("Período de Análise", [min_d, max_d])
-        
-        # Filtro 2: Contas/Cartões
-        f_contas = c_an2.multiselect("Filtrar Contas/Cartões", sorted(df_all['fonte'].unique()))
-        
-        # Filtro 3: Categorias
-        f_cats = c_an3.multiselect("Filtrar Categorias", sorted(df_all['categoria_pai'].unique()))
-        
-        # Filtro 4: Beneficiários (NOVO)
-        f_ben = c_an4.multiselect("Filtrar Beneficiários", sorted(df_all['beneficiario'].unique()))
+        if f_contas: df_bi = df_bi[df_bi['fonte'].isin(f_contas)]
+        if f_cats:   df_bi = df_bi[df_bi['categoria_pai'].isin(f_cats)]
+        if f_ben:    df_bi = df_bi[df_bi['beneficiario'].isin(f_ben)]
 
     # --- PROCESSAMENTO DOS DADOS COM TRAVA DE SEGURANÇA ---
     df_bi = df_all.copy()
@@ -751,49 +755,74 @@ with tab6:
             db_df("SELECT * FROM transacoes").to_excel(writer, index=False, sheet_name='Backup_Completo')
         st.download_button("⬇️ Baixar Dados Analíticos", output.getvalue(), f"BI_Audit_{m_ref_backup}.xlsx")
 
-# --- TAB 7: GESTÃO (TOTALMENTE CORRIGIDA E FUNCIONAL) ---
+# --- TAB 7: GESTÃO GERAL (TOTALMENTE RESTAURADA E RESILIENTE) ---
 with tab7:
-    st.markdown("#### 🏦 Seção 1 - Contas Bancárias (Fontes)")
-    n_font = st.text_input("Nome da Nova Conta")
-    if st.button("➕ Adicionar Conta"):
-        if n_font: db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_font,)); st.rerun()
-    df_f = db_df("SELECT id, nome FROM fontes")
-    if not df_f.empty:
-        df_f.insert(0, "Remover", False) # Coluna booleana explícita para o checkbox
-        ed_f = st.data_editor(df_f, hide_index=True, use_container_width=True, key="ed_font")
-        if st.button("🗑️ Excluir Conta Selecionada"):
-            for _, r in df_f[ed_f["Remover"] == True].iterrows():
-                if not verificar_bloqueio_delecao("fontes", r['id']): db_execute("DELETE FROM fontes WHERE id=?", (r['id'],)); st.rerun()
-                else: st.error(f"Bloqueado: Conta {r['nome']} possui lançamentos.")
+    st.subheader("⚙️ Gestão e Configurações do Sistema")
+    
+    # Seção 0: Câmbio
+    st.markdown("#### 💱 Seção 0 - Taxa de Câmbio")
+    ntax = st.number_input("Taxa BRL/EUR", value=st.session_state.taxa, format="%.4f")
+    if st.button("💾 Salvar Nova Taxa"):
+        db_execute("UPDATE configuracoes SET valor=? WHERE chave='taxa_brl_eur'", (str(ntax),))
+        st.session_state.taxa = ntax
+        st.success("Taxa atualizada com sucesso!")
+        st.rerun()
 
     st.divider()
-    st.markdown("#### 📂 Seção 2 - Categorias")
+    
+    # Seção 1: Contas
+    st.markdown("#### 🏦 Seção 1 - Contas Bancárias (Fontes)")
+    n_font = st.text_input("Nome da Nova Conta (Ex: Banco X, Carteira)")
+    if st.button("➕ Adicionar Conta"):
+        if n_font: 
+            db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_font,))
+            st.success(f"Conta '{n_font}' adicionada!")
+            st.rerun()
+    
+    df_f = db_df("SELECT id, nome FROM fontes")
+    if not df_f.empty:
+        df_f.insert(0, "Remover", False)
+        ed_f = st.data_editor(df_f, hide_index=True, use_container_width=True, key="ed_font_gest")
+        if st.button("🗑️ Excluir Contas Selecionadas"):
+            for _, r in df_f[ed_f["Remover"] == True].iterrows():
+                if not verificar_bloqueio_delecao("fontes", r['id']):
+                    db_execute("DELETE FROM fontes WHERE id=?", (r['id'],))
+                else: st.error(f"Bloqueado: A conta '{r['nome']}' possui lançamentos vinculados.")
+            st.rerun()
+
+    st.divider()
+    
+    # Seção 2: Categorias
+    st.markdown("#### 📂 Seção 2 - Árvore de Categorias")
     c1, c2 = st.columns(2)
     with c1:
-        st.caption("Adicionar Categoria Principal")
-        tc = st.radio("Tipo", ["Despesa", "Receita"], horizontal=True, key="tc_gest")
-        nc = st.text_input("Nome da Categoria Principal")
-        if st.button("➕ Adicionar Pai"):
+        st.caption("Criar Categoria Principal")
+        tc = st.radio("Natureza", ["Despesa", "Receita"], horizontal=True, key="tc_gest_final")
+        nc = st.text_input("Nome da Categoria")
+        if st.button("➕ Criar Categoria Principal"):
             if nc: db_execute("INSERT INTO categorias (nome, tipo_categoria) VALUES (?,?)", (nc, tc)); st.rerun()
     with c2:
-        st.caption("Adicionar Detalhamento (Filho)")
+        st.caption("Criar Detalhamento (Subcategoria)")
         pais_list = db_query("SELECT id, nome FROM categorias WHERE pai_id IS NULL")
         if pais_list:
-            p_sel_g = st.selectbox("Vincular com a Categoria Principal", [p[1] for p in pais_list])
+            p_sel_g = st.selectbox("Vincular ao Pai", [p[1] for p in pais_list])
             ns = st.text_input("Nome do Detalhe")
-            if st.button("➕ Adicionar Filho"):
+            if st.button("➕ Criar Subcategoria"):
                 id_p_g = [p[0] for p in pais_list if p[1] == p_sel_g][0]
                 db_execute("INSERT INTO categorias (nome, pai_id) VALUES (?,?)", (ns, id_p_g)); st.rerun()
 
     df_c = db_df("SELECT id, nome, tipo_categoria FROM categorias")
     if not df_c.empty:
         df_c.insert(0, "Remover", False)
-        ed_c = st.data_editor(df_c, hide_index=True, use_container_width=True, key="ed_cat")
-        if st.button("🗑️ Excluir Categoria Selecionada"):
+        ed_c = st.data_editor(df_c, hide_index=True, use_container_width=True, key="ed_cat_gest")
+        if st.button("🗑️ Excluir Categorias Selecionadas"):
             for _, r in df_c[ed_c["Remover"] == True].iterrows():
-                if not verificar_bloqueio_delecao("categorias", r['id']): db_execute("DELETE FROM categorias WHERE id=?", (r['id'],)); st.rerun()
-                else: st.error(f"Bloqueado: Categoria {r['nome']} possui lançamentos.")
+                if not verificar_bloqueio_delecao("categorias", r['id']):
+                    db_execute("DELETE FROM categorias WHERE id=?", (r['id'],))
+                else: st.error(f"Bloqueado: Categoria '{r['nome']}' possui dependências.")
+            st.rerun()
 
+    # Seção 3 e 4 (Beneficiários e Usuários) devem seguir a mesma lógica de st.data_editor acima
     st.divider()
     st.markdown("#### 👤 Seção 3 - Beneficiários")
     nb = st.text_input("Novo Beneficiário")
