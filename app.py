@@ -5,8 +5,10 @@ import plotly.express as px
 import hashlib
 import io
 import logging
+import smtplib, random, hashlib
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
+from email.mime.text import MIMEText
 
 # --- 1. CONFIGURAÇÃO GLOBAL E CSS MOBILE-FIRST ---
 st.set_page_config(page_title="ERP Familiar", page_icon="🏠", layout="wide")
@@ -189,7 +191,48 @@ def init_db():
     admin_pw = hashlib.sha256("123456".encode()).hexdigest()
     db_execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao) VALUES ('admin', ?, 'Administrador')", (admin_pw,))
 
-init_db()
+def init_db():
+    tables = [
+        # Tabela de usuários: Agora com EMAIL e PERFIL
+        "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, nome_exibicao TEXT, email TEXT, perfil TEXT DEFAULT 'Utilizador')",
+        "CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)",
+        "CREATE TABLE IF NOT EXISTS saldos_iniciais (fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)",
+        "CREATE TABLE IF NOT EXISTS beneficiarios (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)",
+        "CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT)",
+        "CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY, nome TEXT UNIQUE, pai_id INTEGER, tipo_categoria TEXT, FOREIGN KEY(pai_id) REFERENCES categorias(id) ON DELETE RESTRICT)",
+        "CREATE TABLE IF NOT EXISTS cartoes (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, limite REAL, dia_fechamento INTEGER, dia_vencimento INTEGER, conta_pagamento TEXT)",
+        "CREATE TABLE IF NOT EXISTS orcamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, mes_ano TEXT, categoria_pai TEXT, categoria_filho TEXT DEFAULT 'Geral', valor_previsto REAL, tipo_meta TEXT, UNIQUE(mes_ano, categoria_pai, categoria_filho, tipo_meta))",
+        "CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, categoria_pai TEXT, categoria_filho TEXT, beneficiario TEXT, fonte TEXT, valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT, forma_pagamento TEXT DEFAULT 'Dinheiro/Débito', cartao_id INTEGER, fatura_ref TEXT, status_cartao TEXT DEFAULT 'pendente', status_liquidacao TEXT DEFAULT 'PAGO', data_liquidacao TEXT, parcela_id TEXT, parcela_numero INTEGER DEFAULT 1, total_parcelas INTEGER DEFAULT 1)"
+    ]
+    for sql in tables: db_execute(sql)
+    
+    # --- MIGRAÇÃO E CRIAÇÃO DO ADMIN VIA SECRETS ---
+    # Se o banco já existe, adicionamos as colunas novas caso não existam
+    try: db_execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
+    except: pass
+    try: db_execute("ALTER TABLE usuarios ADD COLUMN perfil TEXT DEFAULT 'Utilizador'")
+    except: pass
+
+    # Cadastra o Admin Mestre vindo dos Secrets
+    s = st.secrets["initial_setup"]
+    pwd_h = hashlib.sha256(s["admin_password"].encode()).hexdigest()
+    db_execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao, email, perfil) VALUES (?,?,?,?,'Administrador')",
+               (s["admin_user"], pwd_h, "Administrador Mestre", s["admin_email"]))
+
+def enviar_email(assunto, conteudo, destino):
+    """Envia e-mails via SMTP configurado nos Secrets do Streamlit."""
+    msg = MIMEText(conteudo)
+    msg['Subject'] = assunto
+    msg['From'] = st.secrets["smtp"]["user"]
+    msg['To'] = destino
+    try:
+        with smtplib.SMTP(st.secrets["smtp"]["server"], st.secrets["smtp"]["port"]) as server:
+            server.starttls()
+            server.login(st.secrets["smtp"]["user"], st.secrets["smtp"]["password"])
+            server.sendmail(st.secrets["smtp"]["user"], destino, msg.as_string())
+        return True
+    except Exception as e:
+        st.error(f"⚠️ Erro ao enviar e-mail: {e}"); return False
 
 if 'ver' not in st.session_state:
     taxa_db = db_query("SELECT valor FROM configuracoes WHERE chave='taxa_brl_eur'")
@@ -273,20 +316,93 @@ def verificar_bloqueio_delecao(tabela, id_item):
         return len(db_query("SELECT id FROM transacoes WHERE beneficiario=?", (res[0][0],))) > 0
     return False
 
-# --- 4. AUTENTICAÇÃO E SIDEBAR ---
-if not st.session_state.logado:
-    _, col_login, _ = st.columns([1, 1.5, 1])
-    with col_login:
-        st.markdown("<br>## 🏠 ERP Familiar", unsafe_allow_html=True)
-        u_in = st.text_input("Usuário")
-        p_in = st.text_input("Senha", type="password")
-        if st.button("Entrar", use_container_width=True, type="primary"):
-            pwd_hash = hashlib.sha256(p_in.encode()).hexdigest()
-            res = db_query("SELECT nome_exibicao FROM usuarios WHERE username=? AND password=?", (u_in, pwd_hash))
-            if res: st.session_state.update({'logado': True, 'user': u_in, 'display_name': res[0][0]}); st.rerun()
-            else: st.error("Erro de login.")
-    st.stop()
+# --- 4. NOVO MOTOR DE ACESSO (LOGIN / 2FA / RECUPERAÇÃO) ---
+if 'auth_step' not in st.session_state: 
+    st.session_state.auth_step = 'login'
 
+if not st.session_state.logado:
+    # Centralização do Portal
+    _, col_auth, _ = st.columns([1, 1.5, 1])
+    
+    with col_auth:
+        st.markdown("<br><h2 style='text-align: center;'>🔒 Portal de Acesso</h2>", unsafe_allow_html=True)
+        
+        # FASE 1: IDENTIFICAÇÃO (USUÁRIO E SENHA)
+        if st.session_state.auth_step == 'login':
+            u_in = st.text_input("Usuário", placeholder="Digite seu login")
+            p_in = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+            
+            c1, c2 = st.columns(2)
+            if c1.button("Entrar no Sistema", use_container_width=True, type="primary"):
+                pwd_h = hashlib.sha256(p_in.encode()).hexdigest()
+                # Busca e-mail, perfil e nome do usuário
+                res = db_query("SELECT email, perfil, nome_exibicao FROM usuarios WHERE username=? AND password=?", (u_in, pwd_h))
+                if res:
+                    u_email, u_perfil, u_nome = res[0]
+                    otp_code = str(random.randint(100000, 999999))
+                    # Envia o e-mail via SMTP configurado nos Secrets
+                    msg_txt = f"Olá {u_nome},\n\nSeu código de verificação de 2 fatores é: {otp_code}\n\nEste código expira ao fechar a página."
+                    if enviar_email("🔑 Código de Acesso - ERP Familiar", msg_txt, u_email):
+                        st.session_state.update({
+                            'temp_user': u_in, 'temp_perfil': u_perfil, 
+                            'temp_display': u_nome, 'correct_otp': otp_code,
+                            'auth_step': '2fa'
+                        })
+                        st.rerun()
+                else:
+                    st.error("❌ Usuário ou senha incorretos.")
+            
+            if c2.button("Esqueci a Senha", use_container_width=True):
+                st.session_state.auth_step = 'recovery'
+                st.rerun()
+
+        # FASE 2: VERIFICAÇÃO (2FA)
+        elif st.session_state.auth_step == '2fa':
+            st.info(f"Um código de segurança foi enviado para o e-mail cadastrado.")
+            otp_in = st.text_input("Digite o código de 6 dígitos", max_chars=6)
+            
+            if st.button("Validar e Acessar →", use_container_width=True, type="primary"):
+                if otp_in == st.session_state.correct_otp:
+                    st.session_state.update({
+                        'logado': True, 
+                        'user': st.session_state.temp_user,
+                        'perfil': st.session_state.temp_perfil, 
+                        'display_name': st.session_state.temp_display
+                    })
+                    st.success("✅ Acesso autorizado!")
+                    st.rerun()
+                else:
+                    st.error("❌ Código inválido. Tente novamente.")
+            
+            if st.button("← Voltar ao Login"):
+                st.session_state.auth_step = 'login'
+                st.rerun()
+
+        # FASE 3: RECUPERAÇÃO DE SENHA
+        elif st.session_state.auth_step == 'recovery':
+            st.subheader("Recuperar Senha")
+            email_rec = st.text_input("Digite seu e-mail cadastrado")
+            
+            if st.button("Enviar Nova Senha por E-mail", use_container_width=True, type="primary"):
+                # Verifica se e-mail existe
+                user_check = db_query("SELECT id FROM usuarios WHERE email=?", (email_rec,))
+                if user_check:
+                    nova_senha_temp = str(random.randint(10000000, 99999999))
+                    pwd_h = hashlib.sha256(nova_senha_temp.encode()).hexdigest()
+                    db_execute("UPDATE usuarios SET password=? WHERE email=?", (pwd_h, email_rec))
+                    
+                    if enviar_email("🔐 Recuperação de Conta", f"Sua nova senha temporária é: {nova_senha_temp}\n\nRecomendamos alterá-la imediatamente ao entrar.", email_rec):
+                        st.success("✅ Uma nova senha foi enviada!")
+                        st.session_state.auth_step = 'login'
+                        st.rerun()
+                else:
+                    st.error("❌ E-mail não localizado no sistema.")
+            
+            if st.button("← Voltar"):
+                st.session_state.auth_step = 'login'
+                st.rerun()
+
+    st.stop() # Bloqueia o app até o login ser completado
 with st.sidebar:
     st.markdown(f"### 👋 {st.session_state.display_name}")
     st.caption(date.today().strftime('%d/%m/%Y'))
@@ -298,11 +414,23 @@ with st.sidebar:
     st.caption(f"💱 Câmbio BRL/EUR: **{st.session_state.taxa:.4f}**")
     if st.button("🚪 Sair", use_container_width=True): st.session_state.clear(); st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["➕ Novos Lançamentos", "📋 Histórico de Lançamentos", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dashboards", "⚙️ Gestão Geral", "🔄 Transferências"])
+# --- 5. DEFINIÇÃO DE ABAS POR PERFIL ---
+is_admin = (st.session_state.perfil == "Administrador")
 
+if is_admin:
+    # Admin vê as 8 abas (Gestão foi para a posição 7)
+    titulos = ["➕ Novos Lançamentos", "📋 Histórico", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dashboards", "🔄 Transferências", "⚙️ Gestão Geral"]
+else:
+    # Utilizador vê 7 abas (Gestão Geral sumiu da lista)
+    titulos = ["➕ Novos Lançamentos", "📋 Histórico", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dashboards", "🔄 Transferências"]
+
+# Criação dinâmica das abas
+tabs = st.tabs(tab_list)
+
+# Agora, em vez de tab1, tab2, usaremos o índice tabs[0], tabs[1]...
 # --- TAB 1: NOVO LANÇAMENTO ---
 
-with tab1:
+with tabs[0]:
     st.subheader("➕ Registro de Movimentação")
     
     # Grid de Escolha Inicial
@@ -375,7 +503,7 @@ with tab1:
 
 # --- TAB 2: HISTÓRICO ---
 
-with tab2:
+with tabs[1]:
     st.subheader("📋 Auditoria de Lançamentos")
 
     # 1. Recuperação da Base de Dados (Híbrida)
@@ -525,7 +653,7 @@ with tab2:
                     st.rerun()
                     
 # --- TAB 3: SALDOS ---
-with tab3:
+with tabs[2]:
     st.subheader("💰 Patrimônio e Liquidez")
     fnts = [f[0] for f in db_query("SELECT nome FROM fontes ORDER BY nome")]
     
@@ -600,7 +728,7 @@ with tab3:
             """)
 
 # --- TAB 4: CARTÕES (COMPLETA) ---
-with tab4:
+with tabs[3]:
     st.subheader("💳 Gestão de Crédito")
     
     with st.expander("➕ Cadastrar Novo Cartão"):
@@ -636,7 +764,7 @@ with tab4:
 
 # --- TAB 5: METAS (COMPLETA) ---
 
-with tab5:
+with tabs[4]:
     st.subheader("🎯 Orçamento e Metas")
     
     # 1. SELETOR DE MÊS
@@ -703,7 +831,7 @@ with tab5:
             st.markdown("<br>", unsafe_allow_html=True) # Espaço entre grupos
 
 # --- TAB 6: DASHBOARD DE INTELIGÊNCIA FINANCEIRA (BI COMPLETO V2) ---
-with tab6:
+with tabs[5]:
     st.subheader("📊 Business Intelligence: Saúde e Tendências")
     
     # 1. CARREGAMENTO INICIAL DOS DADOS
@@ -868,99 +996,140 @@ with tab6:
         st.download_button("⬇️ Baixar Excel", output.getvalue(), "Relatorio_BI_Gerencial.xlsx")
         
 # --- TAB 7: GESTÃO GERAL (TOTALMENTE RESTAURADA E RESILIENTE) ---
-with tab7:
-    st.subheader("⚙️ Gestão e Configurações do Sistema")
-    
-    # Seção 0: Câmbio
-    st.markdown("#### 💱 Seção 0 - Taxa de Câmbio")
-    ntax = st.number_input("Taxa BRL/EUR", value=st.session_state.taxa, format="%.4f")
-    if st.button("💾 Salvar Nova Taxa"):
-        db_execute("UPDATE configuracoes SET valor=? WHERE chave='taxa_brl_eur'", (str(ntax),))
-        st.session_state.taxa = ntax
-        st.success("Taxa atualizada com sucesso!")
-        st.rerun()
-
-    st.divider()
-    
-    # Seção 1: Contas
-    st.markdown("#### 🏦 Seção 1 - Contas Bancárias (Fontes)")
-    n_font = st.text_input("Nome da Nova Conta (Ex: Banco X, Carteira)")
-    if st.button("➕ Adicionar Conta"):
-        if n_font: 
-            db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_font,))
-            st.success(f"Conta '{n_font}' adicionada!")
+if is_admin:
+    with tabs[6]:
+        st.subheader("⚙️ Gestão e Configurações do Sistema")
+        
+        # Seção 0: Câmbio
+        st.markdown("#### 💱 Seção 0 - Taxa de Câmbio")
+        ntax = st.number_input("Taxa BRL/EUR", value=st.session_state.taxa, format="%.4f")
+        if st.button("💾 Salvar Nova Taxa"):
+            db_execute("UPDATE configuracoes SET valor=? WHERE chave='taxa_brl_eur'", (str(ntax),))
+            st.session_state.taxa = ntax
+            st.success("Taxa atualizada com sucesso!")
             st.rerun()
     
-    df_f = db_df("SELECT id, nome FROM fontes")
-    if not df_f.empty:
-        df_f.insert(0, "Remover", False)
-        ed_f = st.data_editor(df_f, hide_index=True, use_container_width=True, key="ed_font_gest")
-        if st.button("🗑️ Excluir Contas Selecionadas"):
-            for _, r in df_f[ed_f["Remover"] == True].iterrows():
-                if not verificar_bloqueio_delecao("fontes", r['id']):
-                    db_execute("DELETE FROM fontes WHERE id=?", (r['id'],))
-                else: st.error(f"Bloqueado: A conta '{r['nome']}' possui lançamentos vinculados.")
-            st.rerun()
-
-    st.divider()
+        st.divider()
+        
+        # Seção 1: Contas
+        st.markdown("#### 🏦 Seção 1 - Contas Bancárias (Fontes)")
+        n_font = st.text_input("Nome da Nova Conta (Ex: Banco X, Carteira)")
+        if st.button("➕ Adicionar Conta"):
+            if n_font: 
+                db_execute("INSERT INTO fontes (nome) VALUES (?)", (n_font,))
+                st.success(f"Conta '{n_font}' adicionada!")
+                st.rerun()
+        
+        df_f = db_df("SELECT id, nome FROM fontes")
+        if not df_f.empty:
+            df_f.insert(0, "Remover", False)
+            ed_f = st.data_editor(df_f, hide_index=True, use_container_width=True, key="ed_font_gest")
+            if st.button("🗑️ Excluir Contas Selecionadas"):
+                for _, r in df_f[ed_f["Remover"] == True].iterrows():
+                    if not verificar_bloqueio_delecao("fontes", r['id']):
+                        db_execute("DELETE FROM fontes WHERE id=?", (r['id'],))
+                    else: st.error(f"Bloqueado: A conta '{r['nome']}' possui lançamentos vinculados.")
+                st.rerun()
     
-    # Seção 2: Categorias
-    st.markdown("#### 📂 Seção 2 - Árvore de Categorias")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.caption("Criar Categoria Principal")
-        tc = st.radio("Natureza", ["Despesa", "Receita"], horizontal=True, key="tc_gest_final")
-        nc = st.text_input("Nome da Categoria")
-        if st.button("➕ Criar Categoria Principal"):
-            if nc: db_execute("INSERT INTO categorias (nome, tipo_categoria) VALUES (?,?)", (nc, tc)); st.rerun()
-    with c2:
-        st.caption("Criar Detalhamento (Subcategoria)")
-        pais_list = db_query("SELECT id, nome FROM categorias WHERE pai_id IS NULL")
-        if pais_list:
-            p_sel_g = st.selectbox("Vincular ao Pai", [p[1] for p in pais_list])
-            ns = st.text_input("Nome do Detalhe")
-            if st.button("➕ Criar Subcategoria"):
-                id_p_g = [p[0] for p in pais_list if p[1] == p_sel_g][0]
-                db_execute("INSERT INTO categorias (nome, pai_id) VALUES (?,?)", (ns, id_p_g)); st.rerun()
-
-    df_c = db_df("SELECT id, nome, tipo_categoria FROM categorias")
-    if not df_c.empty:
-        df_c.insert(0, "Remover", False)
-        ed_c = st.data_editor(df_c, hide_index=True, use_container_width=True, key="ed_cat_gest")
-        if st.button("🗑️ Excluir Categorias Selecionadas"):
-            for _, r in df_c[ed_c["Remover"] == True].iterrows():
-                if not verificar_bloqueio_delecao("categorias", r['id']):
-                    db_execute("DELETE FROM categorias WHERE id=?", (r['id'],))
-                else: st.error(f"Bloqueado: Categoria '{r['nome']}' possui dependências.")
-            st.rerun()
-
-    # Seção 3 e 4 (Beneficiários e Usuários) devem seguir a mesma lógica de st.data_editor acima
-    st.divider()
-    st.markdown("#### 👤 Seção 3 - Beneficiários")
-    nb = st.text_input("Novo Beneficiário")
-    if st.button("➕ Adicionar Beneficiário"):
-        if nb: db_execute("INSERT OR IGNORE INTO beneficiarios (nome) VALUES (?)", (nb,)); st.rerun()
-    df_b = db_df("SELECT id, nome FROM beneficiarios")
-    if not df_b.empty:
-        df_b.insert(0, "Remover", False)
-        ed_b = st.data_editor(df_b, hide_index=True, use_container_width=True, key="ed_ben")
-        if st.button("🗑️ Excluir Beneficiário"):
-            for _, r in df_b[ed_b["Remover"] == True].iterrows():
-                if not verificar_bloqueio_delecao("beneficiarios", r['id']): db_execute("DELETE FROM beneficiarios WHERE id=?", (r['id'],)); st.rerun()
-
-    st.divider()
-    st.markdown("#### 👥 Seção 4 - Acesso e Usuários")
-    u1, u2, u3 = st.columns(3)
-    unome = u1.text_input("Nome de Exibição")
-    ulog = u2.text_input("Login")
-    usenh = u3.text_input("Senha", type="password")
-    if st.button("👤 Criar Novo Usuário", type="primary"):
-        if unome and ulog and usenh:
-            db_execute("INSERT INTO usuarios (username, password, nome_exibicao) VALUES (?,?,?)", 
-                       (ulog, hashlib.sha256(usenh.encode()).hexdigest(), unome)); st.success("Usuário Criado!")
+        st.divider()
+        
+        # Seção 2: Categorias
+        st.markdown("#### 📂 Seção 2 - Árvore de Categorias")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.caption("Criar Categoria Principal")
+            tc = st.radio("Natureza", ["Despesa", "Receita"], horizontal=True, key="tc_gest_final")
+            nc = st.text_input("Nome da Categoria")
+            if st.button("➕ Criar Categoria Principal"):
+                if nc: db_execute("INSERT INTO categorias (nome, tipo_categoria) VALUES (?,?)", (nc, tc)); st.rerun()
+        with c2:
+            st.caption("Criar Detalhamento (Subcategoria)")
+            pais_list = db_query("SELECT id, nome FROM categorias WHERE pai_id IS NULL")
+            if pais_list:
+                p_sel_g = st.selectbox("Vincular ao Pai", [p[1] for p in pais_list])
+                ns = st.text_input("Nome do Detalhe")
+                if st.button("➕ Criar Subcategoria"):
+                    id_p_g = [p[0] for p in pais_list if p[1] == p_sel_g][0]
+                    db_execute("INSERT INTO categorias (nome, pai_id) VALUES (?,?)", (ns, id_p_g)); st.rerun()
+    
+        df_c = db_df("SELECT id, nome, tipo_categoria FROM categorias")
+        if not df_c.empty:
+            df_c.insert(0, "Remover", False)
+            ed_c = st.data_editor(df_c, hide_index=True, use_container_width=True, key="ed_cat_gest")
+            if st.button("🗑️ Excluir Categorias Selecionadas"):
+                for _, r in df_c[ed_c["Remover"] == True].iterrows():
+                    if not verificar_bloqueio_delecao("categorias", r['id']):
+                        db_execute("DELETE FROM categorias WHERE id=?", (r['id'],))
+                    else: st.error(f"Bloqueado: Categoria '{r['nome']}' possui dependências.")
+                st.rerun()
+    
+        # --- SEÇÃO 3: BENEFICIÁRIOS (MANTIDA E ORGANIZADA) ---
+        st.divider()
+        st.markdown("#### 👤 Seção 3 - Gestão de Beneficiários")
+        nb = st.text_input("Novo Beneficiário", placeholder="Ex: Nome da Pessoa ou Empresa")
+        if st.button("➕ Adicionar Beneficiário"):
+            if nb: 
+                db_execute("INSERT OR IGNORE INTO beneficiarios (nome) VALUES (?)", (nb.strip(),))
+                st.rerun()
+    
+        df_b = db_df("SELECT id, nome FROM beneficiarios ORDER BY nome")
+        if not df_b.empty:
+            df_b.insert(0, "Remover", False)
+            ed_b = st.data_editor(df_b, hide_index=True, use_container_width=True, key="ed_ben_gestao")
+            if st.button("🗑️ Excluir Beneficiários Selecionados"):
+                for _, r in df_b[ed_b["Remover"] == True].iterrows():
+                    if not verificar_bloqueio_delecao("beneficiarios", r['id']):
+                        db_execute("DELETE FROM beneficiarios WHERE id=?", (r['id'],))
+                    else:
+                        st.error(f"Bloqueado: '{r['nome']}' possui transações vinculadas.")
+                st.rerun()
+    
+        # --- SEÇÃO 4: USUÁRIOS E SEGURANÇA (TOTALMENTE NOVA) ---
+        st.divider()
+        st.markdown("#### 👥 Seção 4 - Controle de Usuários e Perfis")
+        st.caption("Cadastre membros da família e defina o nível de acesso (Admin ou Utilizador).")
+        
+        with st.form("form_novo_usuario", clear_on_submit=True):
+            u_col1, u_col2 = st.columns(2)
+            u_col3, u_col4 = st.columns(2)
+            
+            with u_col1: unome = st.text_input("Nome de Exibição")
+            with u_col2: ulog = st.text_input("Login (Username)")
+            with u_col3: umail = st.text_input("E-mail (Para 2FA)")
+            with u_col4: uprof = st.selectbox("Perfil", ["Utilizador", "Administrador"])
+            
+            usenh = st.text_input("Senha Inicial", type="password")
+            
+            if st.form_submit_button("👤 CRIAR CONTA", use_container_width=True):
+                if unome and ulog and umail and usenh:
+                    pwd_h = hashlib.sha256(usenh.encode()).hexdigest()
+                    try:
+                        db_execute("INSERT INTO usuarios (username, password, nome_exibicao, email, perfil) VALUES (?,?,?,?,?)",
+                                   (ulog.strip(), pwd_h, unome.strip(), umail.strip(), uprof))
+                        st.success(f"✅ Usuário '{ulog}' criado como {uprof}!")
+                        st.rerun()
+                    except:
+                        st.error("Erro: Este login já está em uso.")
+                else:
+                    st.warning("Preencha todos os campos.")
+    
+        # Tabela de Auditoria de Usuários (Apenas Admin vê)
+        st.markdown("##### Usuários Cadastrados")
+        df_users = db_df("SELECT id, username as Login, nome_exibicao as Nome, email as Email, perfil as Perfil FROM usuarios")
+        if not df_users.empty:
+            df_users.insert(0, "Remover", False)
+            ed_u = st.data_editor(df_users, hide_index=True, use_container_width=True, key="ed_usuarios_gestao")
+            if st.button("🗑️ Remover Acesso Selecionado"):
+                for _, r in df_users[ed_u["Remover"] == True].iterrows():
+                    # Proteção para não deletar a si mesmo ou o admin master por engano
+                    if r['Login'] == st.session_state.user:
+                        st.error("Você não pode remover seu próprio acesso.")
+                    else:
+                        db_execute("DELETE FROM usuarios WHERE id=?", (r['id'],))
+                st.rerun()
 
 # --- TAB 8: TRANSFERÊNCIAS (SOMA ZERO + HISTÓRICO DE AUDITORIA) ---
-with tab8:
+with tabs[7]:
     st.subheader("🔄 Transferência Entre Bancos")
     
     # 1. MOTOR DE ENTRADA (FORMULÁRIO)
