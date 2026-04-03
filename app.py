@@ -166,34 +166,6 @@ def db_execute_many(ops):
 
 def init_db():
     tables = [
-        "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, nome_exibicao TEXT)",
-        "CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)",
-        "CREATE TABLE IF NOT EXISTS saldos_iniciais (fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)",
-        "CREATE TABLE IF NOT EXISTS beneficiarios (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)",
-        "CREATE TABLE IF NOT EXISTS configuracoes (chave TEXT PRIMARY KEY, valor TEXT)",
-        "CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY, nome TEXT UNIQUE, pai_id INTEGER, tipo_categoria TEXT, FOREIGN KEY(pai_id) REFERENCES categorias(id) ON DELETE RESTRICT)",
-        "CREATE TABLE IF NOT EXISTS cartoes (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, limite REAL, dia_fechamento INTEGER, dia_vencimento INTEGER, conta_pagamento TEXT)",
-        # Atualizado UNIQUE para incluir categoria_filho
-        "CREATE TABLE IF NOT EXISTS orcamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, mes_ano TEXT, categoria_pai TEXT, categoria_filho TEXT DEFAULT 'Geral', valor_previsto REAL, tipo_meta TEXT, UNIQUE(mes_ano, categoria_pai, categoria_filho, tipo_meta))",
-        "CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, categoria_pai TEXT, categoria_filho TEXT, beneficiario TEXT, fonte TEXT, valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT, forma_pagamento TEXT DEFAULT 'Dinheiro/Débito', cartao_id INTEGER, fatura_ref TEXT, status_cartao TEXT DEFAULT 'pendente', status_liquidacao TEXT DEFAULT 'PAGO', data_liquidacao TEXT, parcela_id TEXT, parcela_numero INTEGER DEFAULT 1, total_parcelas INTEGER DEFAULT 1)"
-    ]
-    
-    for sql in tables: 
-        db_execute(sql)
-    
-    # Migração segura: Adiciona a coluna categoria_filho se ela não existir
-    try:
-        db_execute("ALTER TABLE orcamentos ADD COLUMN categoria_filho TEXT DEFAULT 'Geral'")
-    except Exception:
-        pass 
-
-    db_execute("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('taxa_brl_eur', '0.16')")
-    admin_pw = hashlib.sha256("123456".encode()).hexdigest()
-    db_execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao) VALUES ('admin', ?, 'Administrador')", (admin_pw,))
-
-def init_db():
-    tables = [
-        # Tabela de usuários: Agora com EMAIL e PERFIL
         "CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, nome_exibicao TEXT, email TEXT, perfil TEXT DEFAULT 'Utilizador')",
         "CREATE TABLE IF NOT EXISTS fontes (id INTEGER PRIMARY KEY, nome TEXT UNIQUE)",
         "CREATE TABLE IF NOT EXISTS saldos_iniciais (fonte TEXT PRIMARY KEY, valor_inicial REAL DEFAULT 0.0)",
@@ -205,22 +177,15 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, categoria_pai TEXT, categoria_filho TEXT, beneficiario TEXT, fonte TEXT, valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT, forma_pagamento TEXT DEFAULT 'Dinheiro/Débito', cartao_id INTEGER, fatura_ref TEXT, status_cartao TEXT DEFAULT 'pendente', status_liquidacao TEXT DEFAULT 'PAGO', data_liquidacao TEXT, parcela_id TEXT, parcela_numero INTEGER DEFAULT 1, total_parcelas INTEGER DEFAULT 1)"
     ]
     for sql in tables: db_execute(sql)
-    
-    # --- MIGRAÇÃO E CRIAÇÃO DO ADMIN VIA SECRETS ---
-    # Se o banco já existe, adicionamos as colunas novas caso não existam
-    try: db_execute("ALTER TABLE usuarios ADD COLUMN email TEXT")
-    except: pass
-    try: db_execute("ALTER TABLE usuarios ADD COLUMN perfil TEXT DEFAULT 'Utilizador'")
-    except: pass
-
-    # Cadastra o Admin Mestre vindo dos Secrets
+    for t, c, s in [("orcamentos", "categoria_filho", "TEXT DEFAULT 'Geral'"), ("usuarios", "email", "TEXT"), ("usuarios", "perfil", "TEXT DEFAULT 'Utilizador'")]:
+        try: db_execute(f"ALTER TABLE {t} ADD COLUMN {c} {s}")
+        except: pass
     s = st.secrets["initial_setup"]
     pwd_h = hashlib.sha256(s["admin_password"].encode()).hexdigest()
-    db_execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao, email, perfil) VALUES (?,?,?,?,'Administrador')",
-               (s["admin_user"], pwd_h, "Administrador Mestre", s["admin_email"]))
+    db_execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao, email, perfil) VALUES (?,?,?,?,'Administrador')", (s["admin_user"], pwd_h, "Administrador Mestre", s["admin_email"]))
+    db_execute("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('taxa_brl_eur', '0.16')")
 
 def enviar_email(assunto, conteudo, destino):
-    """Envia e-mails via SMTP configurado nos Secrets do Streamlit."""
     msg = MIMEText(conteudo)
     msg['Subject'] = assunto
     msg['From'] = st.secrets["smtp"]["user"]
@@ -232,11 +197,18 @@ def enviar_email(assunto, conteudo, destino):
             server.sendmail(st.secrets["smtp"]["user"], destino, msg.as_string())
         return True
     except Exception as e:
-        st.error(f"⚠️ Erro ao enviar e-mail: {e}"); return False
+        st.error(f"⚠️ Erro SMTP: {e}"); return False
 
 if 'ver' not in st.session_state:
-    taxa_db = db_query("SELECT valor FROM configuracoes WHERE chave='taxa_brl_eur'")
-    st.session_state.update({'ver': 0, 'logado': False, 'user': None, 'display_name': None, 'taxa': float(taxa_db[0][0]) if taxa_db else 0.16})
+    try:
+        taxa_db = db_query("SELECT valor FROM configuracoes WHERE chave='taxa_brl_eur'")
+        t_init = float(taxa_db[0][0]) if taxa_db else 0.16
+    except: t_init = 0.16
+    st.session_state.update({
+        'ver': 0, 'logado': False, 'user': None, 'display_name': None, 
+        'perfil': None, # Novo campo obrigatório
+        'taxa': t_init
+    })    
 
 # --- 3. CORE FINANCEIRO E REGRAS DE NEGÓCIO ---
 def determinar_status_operacao(tipo, eh_primeira_parcela=True):
@@ -317,92 +289,45 @@ def verificar_bloqueio_delecao(tabela, id_item):
     return False
 
 # --- 4. NOVO MOTOR DE ACESSO (LOGIN / 2FA / RECUPERAÇÃO) ---
-if 'auth_step' not in st.session_state: 
-    st.session_state.auth_step = 'login'
+if 'auth_step' not in st.session_state: st.session_state.auth_step = 'login'
 
 if not st.session_state.logado:
-    # Centralização do Portal
     _, col_auth, _ = st.columns([1, 1.5, 1])
-    
     with col_auth:
         st.markdown("<br><h2 style='text-align: center;'>🔒 Portal de Acesso</h2>", unsafe_allow_html=True)
-        
-        # FASE 1: IDENTIFICAÇÃO (USUÁRIO E SENHA)
         if st.session_state.auth_step == 'login':
-            u_in = st.text_input("Usuário", placeholder="Digite seu login")
-            p_in = st.text_input("Senha", type="password", placeholder="Digite sua senha")
-            
-            c1, c2 = st.columns(2)
-            if c1.button("Entrar no Sistema", use_container_width=True, type="primary"):
+            u_in = st.text_input("Usuário", key="u_login")
+            p_in = st.text_input("Senha", type="password", key="p_login")
+            if st.button("Entrar", use_container_width=True, type="primary"):
                 pwd_h = hashlib.sha256(p_in.encode()).hexdigest()
-                # Busca e-mail, perfil e nome do usuário
                 res = db_query("SELECT email, perfil, nome_exibicao FROM usuarios WHERE username=? AND password=?", (u_in, pwd_h))
                 if res:
                     u_email, u_perfil, u_nome = res[0]
-                    otp_code = str(random.randint(100000, 999999))
-                    # Envia o e-mail via SMTP configurado nos Secrets
-                    msg_txt = f"Olá {u_nome},\n\nSeu código de verificação de 2 fatores é: {otp_code}\n\nEste código expira ao fechar a página."
-                    if enviar_email("🔑 Código de Acesso - ERP Familiar", msg_txt, u_email):
-                        st.session_state.update({
-                            'temp_user': u_in, 'temp_perfil': u_perfil, 
-                            'temp_display': u_nome, 'correct_otp': otp_code,
-                            'auth_step': '2fa'
-                        })
+                    otp = str(random.randint(100000, 999999))
+                    if enviar_email("🔑 Código 2FA", f"Seu código é: {otp}", u_email):
+                        st.session_state.update({'temp_user': u_in, 'temp_perfil': u_perfil, 'temp_display': u_nome, 'correct_otp': otp, 'auth_step': '2fa'})
                         st.rerun()
-                else:
-                    st.error("❌ Usuário ou senha incorretos.")
-            
-            if c2.button("Esqueci a Senha", use_container_width=True):
-                st.session_state.auth_step = 'recovery'
-                st.rerun()
-
-        # FASE 2: VERIFICAÇÃO (2FA)
+                else: st.error("Acesso negado.")
+            if st.button("Esqueci a Senha"): st.session_state.auth_step = 'recovery'; st.rerun()
         elif st.session_state.auth_step == '2fa':
-            st.info(f"Um código de segurança foi enviado para o e-mail cadastrado.")
-            otp_in = st.text_input("Digite o código de 6 dígitos", max_chars=6)
-            
-            if st.button("Validar e Acessar →", use_container_width=True, type="primary"):
+            otp_in = st.text_input("Código de 6 dígitos", max_chars=6)
+            if st.button("Verificar e Entrar"):
                 if otp_in == st.session_state.correct_otp:
-                    st.session_state.update({
-                        'logado': True, 
-                        'user': st.session_state.temp_user,
-                        'perfil': st.session_state.temp_perfil, 
-                        'display_name': st.session_state.temp_display
-                    })
-                    st.success("✅ Acesso autorizado!")
+                    st.session_state.update({'logado': True, 'user': st.session_state.temp_user, 'perfil': st.session_state.temp_perfil, 'display_name': st.session_state.temp_display})
                     st.rerun()
-                else:
-                    st.error("❌ Código inválido. Tente novamente.")
-            
-            if st.button("← Voltar ao Login"):
-                st.session_state.auth_step = 'login'
-                st.rerun()
-
-        # FASE 3: RECUPERAÇÃO DE SENHA
+                else: st.error("Incorreto.")
         elif st.session_state.auth_step == 'recovery':
-            st.subheader("Recuperar Senha")
-            email_rec = st.text_input("Digite seu e-mail cadastrado")
-            
-            if st.button("Enviar Nova Senha por E-mail", use_container_width=True, type="primary"):
-                # Verifica se e-mail existe
+            email_rec = st.text_input("Email cadastrado")
+            if st.button("Resetar"):
                 user_check = db_query("SELECT id FROM usuarios WHERE email=?", (email_rec,))
                 if user_check:
-                    nova_senha_temp = str(random.randint(10000000, 99999999))
-                    pwd_h = hashlib.sha256(nova_senha_temp.encode()).hexdigest()
-                    db_execute("UPDATE usuarios SET password=? WHERE email=?", (pwd_h, email_rec))
-                    
-                    if enviar_email("🔐 Recuperação de Conta", f"Sua nova senha temporária é: {nova_senha_temp}\n\nRecomendamos alterá-la imediatamente ao entrar.", email_rec):
-                        st.success("✅ Uma nova senha foi enviada!")
-                        st.session_state.auth_step = 'login'
-                        st.rerun()
-                else:
-                    st.error("❌ E-mail não localizado no sistema.")
-            
-            if st.button("← Voltar"):
-                st.session_state.auth_step = 'login'
-                st.rerun()
+                    nova = str(random.randint(10000000, 99999999))
+                    db_execute("UPDATE usuarios SET password=? WHERE email=?", (hashlib.sha256(nova.encode()).hexdigest(), email_rec))
+                    enviar_email("Nova Senha", f"Senha temporária: {nova}", email_rec)
+                    st.success("Enviado!"); st.session_state.auth_step = 'login'; st.rerun()
+st.stop() # Bloqueia o app até o login ser completado
 
-    st.stop() # Bloqueia o app até o login ser completado
+# --- 5. INTERFACE LOGADA (FORA DO BLOCO DE LOGIN) ---
 with st.sidebar:
     st.markdown(f"### 👋 {st.session_state.display_name}")
     st.caption(date.today().strftime('%d/%m/%Y'))
@@ -414,18 +339,16 @@ with st.sidebar:
     st.caption(f"💱 Câmbio BRL/EUR: **{st.session_state.taxa:.4f}**")
     if st.button("🚪 Sair", use_container_width=True): st.session_state.clear(); st.rerun()
 
-# --- 5. DEFINIÇÃO DE ABAS POR PERFIL ---
+# --- 5. DEFINIÇÃO DE ABAS POR PERFIL (LOGICA DINÂMICA) ---
 is_admin = (st.session_state.perfil == "Administrador")
 
 if is_admin:
-    # Admin vê as 8 abas (Gestão foi para a posição 7)
     titulos = ["➕ Novos Lançamentos", "📋 Histórico", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dashboards", "🔄 Transferências", "⚙️ Gestão Geral"]
 else:
-    # Utilizador vê 7 abas (Gestão Geral sumiu da lista)
     titulos = ["➕ Novos Lançamentos", "📋 Histórico", "💰 Saldos", "💳 Cartões", "🎯 Metas", "📊 Dashboards", "🔄 Transferências"]
 
-# Criação dinâmica das abas
-tabs = st.tabs(tab_list)
+# Criação das abas usando a variável correta 'titulos'
+tabs = st.tabs(titulos)
 
 # Agora, em vez de tab1, tab2, usaremos o índice tabs[0], tabs[1]...
 # --- TAB 1: NOVO LANÇAMENTO ---
@@ -462,6 +385,11 @@ with tabs[0]:
 
         # --- BOTÃO DE SALVAMENTO COM VALIDAÇÃO DE CAMPOS ---
         if st.form_submit_button("💾 SALVAR REGISTRO"):
+            if not pai_sel or not benef_sel or not nota_in:
+                st.error("🚨 Todos os campos são obrigatórios.")
+            elif valor_in <= 0:
+                st.error("🚨 Valor deve ser maior que zero.")
+            else:
             # 1. CHECKLIST DE OBRIGATORIEDADE
             campos_invalidos = []
             
