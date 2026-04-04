@@ -197,6 +197,8 @@ def enviar_email(assunto, conteudo, destino):
     except Exception as e:
         st.error(f"⚠️ Erro SMTP: {e}"); return False
 
+init_db()
+
 if 'ver' not in st.session_state:
     try:
         taxa_db = db_query("SELECT valor FROM configuracoes WHERE chave='taxa_brl_eur'")
