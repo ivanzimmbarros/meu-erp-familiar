@@ -920,7 +920,7 @@ with tabs[5]:
         
 # --- TAB 7: GESTÃO GERAL (TOTALMENTE RESTAURADA E RESILIENTE) ---
 if is_admin:
-    with tabs[6]:
+    with tabs[7]:
         st.subheader("⚙️ Gestão e Configurações do Sistema")
         
         # Seção 0: Câmbio
@@ -1052,7 +1052,7 @@ if is_admin:
                 st.rerun()
 
 # --- TAB 8: TRANSFERÊNCIAS (SOMA ZERO + HISTÓRICO DE AUDITORIA) ---
-with tabs[7]:
+with tabs[6]:
     st.subheader("🔄 Transferência Entre Bancos")
     
     # 1. MOTOR DE ENTRADA (FORMULÁRIO)
