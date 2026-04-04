@@ -304,7 +304,7 @@ def liquidar_transacao(trans_id, tipo, usuario):
     db_execute("UPDATE transacoes SET status_liquidacao=?, data_liquidacao=? WHERE id=?", 
                (status, date.today().strftime("%Y-%m-%d"), trans_id))
 
-# --- 4. MOTOR DE ACESSO (PROTEÇÃO DE CAMADA ZERO) ---
+# --- 4. MOTOR DE ACESSO (AUTENTICAÇÃO E TROCA OBRIGATÓRIA) ---
 if 'auth_step' not in st.session_state: st.session_state.auth_step = 'login'
 
 if not st.session_state.logado:
@@ -312,10 +312,11 @@ if not st.session_state.logado:
     with col_auth:
         st.markdown("<br><h2 style='text-align: center;'>🔒 Portal de Acesso</h2>", unsafe_allow_html=True)
         
+        # CAMADA 1: LOGIN
         if st.session_state.auth_step == 'login':
             u_in = st.text_input("Usuário", key="u_login")
             p_in = st.text_input("Senha", type="password", key="p_login")
-            if st.button("Entrar", use_container_width=True, type="primary"):
+            if st.button("ENTRAR", use_container_width=True, type="primary"):
                 pwd_h = hashlib.sha256(p_in.encode()).hexdigest()
                 res = db_query("SELECT email, perfil, nome_exibicao FROM usuarios WHERE username=? AND password=?", (u_in, pwd_h))
                 if res:
@@ -325,56 +326,56 @@ if not st.session_state.logado:
                         st.session_state.update({'temp_user': u_in, 'temp_perfil': u_perfil, 'temp_display': u_nome, 'correct_otp': otp, 'auth_step': '2fa'})
                         st.rerun()
                 else: st.error("Acesso negado.")
-            if st.button("Esqueci a Senha"): 
-                st.session_state.auth_step = 'recovery'; st.rerun()
+            if st.button("Esqueci a Senha"): st.session_state.auth_step = 'recovery'; st.rerun()
 
+        # CAMADA 2: VERIFICAÇÃO 2FA + CHEQUE DE RESET
         elif st.session_state.auth_step == '2fa':
-            otp_in = st.text_input("Código de 6 dígitos", max_chars=6)
-            if st.button("VERIFICAR E ENTRAR", use_container_width=True, type="primary"):
+            otp_in = st.text_input("Código de 6 dígitos enviado por e-mail", max_chars=6)
+            if st.button("VERIFICAR CÓDIGO", use_container_width=True, type="primary"):
                 if otp_in == st.session_state.correct_otp:
-                    res = db_query("SELECT force_reset FROM usuarios WHERE username=?", (st.session_state.temp_user,))
-                    if res and res[0][0] == 1:
+                    # Checa se o usuário está marcado para troca obrigatória
+                    check = db_query("SELECT force_reset FROM usuarios WHERE username=?", (st.session_state.temp_user,))
+                    if check and check[0][0] == 1:
                         st.session_state.auth_step = 'force_password_change'; st.rerun()
                     else:
                         st.session_state.update({'logado': True, 'user': st.session_state.temp_user, 'perfil': st.session_state.temp_perfil, 'display_name': st.session_state.temp_display})
                         st.rerun()
-                else: st.error("Incorreto.")
+                else: st.error("Código inválido.")
 
+        # CAMADA 3: RECUPERAÇÃO DE SENHA (MARCA O FLAG force_reset)
         elif st.session_state.auth_step == 'recovery':
-            st.markdown("#### 🔑 Recuperar Acesso")
-            email_rec = st.text_input("Informe o e-mail cadastrado")
-            c_rec1, c_rec2 = st.columns(2)
-            if c_rec1.button("ENVIAR SENHA", use_container_width=True, type="primary"):
-                user_check = db_query("SELECT id, username FROM usuarios WHERE email=?", (email_rec,))
+            st.markdown("#### 🔑 Recuperação")
+            email_rec = st.text_input("E-mail cadastrado")
+            if st.button("GERAR SENHA TEMPORÁRIA", use_container_width=True):
+                user_check = db_query("SELECT username FROM usuarios WHERE email=?", (email_rec,))
                 if user_check:
                     chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
                     temp_pwd = ''.join(random.choice(chars) for _ in range(10))
                     pwd_hash = hashlib.sha256(temp_pwd.encode()).hexdigest()
                     db_execute("UPDATE usuarios SET password=?, force_reset=1 WHERE email=?", (pwd_hash, email_rec))
-                    msg = f"Senha temporária: {temp_pwd}\nTroca obrigatória no acesso."
-                    if enviar_email("🔐 Redefinição", msg, email_rec):
-                        st.success("✅ Enviado!"); st.session_state.auth_step = 'login'; st.rerun()
-                else: st.error("E-mail não localizado.")
-            if c_rec2.button("VOLTAR", use_container_width=True):
-                st.session_state.auth_step = 'login'; st.rerun()
+                    if enviar_email("🔐 Nova Senha", f"Senha temporária: {temp_pwd}\nTroca obrigatória no acesso.", email_rec):
+                        st.success("✅ Verifique seu e-mail!"); st.session_state.auth_step = 'login'; st.rerun()
+                else: st.error("E-mail não encontrado.")
+            if st.button("Voltar"): st.session_state.auth_step = 'login'; st.rerun()
 
+        # CAMADA 4: TROCA OBRIGATÓRIA (INTERCEPTADOR)
         elif st.session_state.auth_step == 'force_password_change':
-            st.warning("⚠️ **Defina uma nova senha forte.**")
-            with st.form("form_pwd_reset"):
+            st.warning("⚠️ **Ação Obrigatória:** Defina uma nova senha forte (8+ chars, Maiúscula, Número e Especial).")
+            with st.form("f_force_pwd"):
                 n_pwd = st.text_input("Nova Senha", type="password")
-                c_pwd = st.text_input("Confirme", type="password")
-                if st.form_submit_button("✅ ATUALIZAR E ACESSAR"):
+                c_pwd = st.text_input("Confirme a Senha", type="password")
+                if st.form_submit_button("✅ ATUALIZAR E ACESSAR", use_container_width=True):
                     import re
                     pattern = r"^(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$"
                     if n_pwd != c_pwd: st.error("Senhas não coincidem.")
-                    elif not re.match(pattern, n_pwd): st.error("Senha fraca.")
+                    elif not re.match(pattern, n_pwd): st.error("A senha não atende aos requisitos.")
                     else:
                         pwd_h = hashlib.sha256(n_pwd.encode()).hexdigest()
                         db_execute("UPDATE usuarios SET password=?, force_reset=0 WHERE username=?", (pwd_h, st.session_state.temp_user))
                         st.session_state.update({'logado': True, 'user': st.session_state.temp_user, 'perfil': st.session_state.temp_perfil, 'display_name': st.session_state.temp_display})
                         st.rerun()
 
-    st.stop() # Trava de segurança absoluta
+    st.stop() # TRAVA FINAL: Posicionada após todos os ELIFs de autenticação.
     
 # --- A PARTIR DAQUI O CÓDIGO DA INTERFACE LOGADA SEGUE NORMALMENTE ---
 # --- 5. INTERFACE LOGADA (FORA DO BLOCO DE LOGIN) ---
@@ -1077,14 +1078,23 @@ if is_admin:
                 if unome and ulog and umail and usenh:
                     pwd_h = hashlib.sha256(usenh.encode()).hexdigest()
                     try:
-                        db_execute("INSERT INTO usuarios (username, password, nome_exibicao, email, perfil) VALUES (?,?,?,?,?)",
+                        # Registro atômico no banco
+                        db_execute("INSERT INTO usuarios (username, password, nome_exibicao, email, perfil, force_reset) VALUES (?,?,?,?,?,0)",
                                    (ulog.strip(), pwd_h, unome.strip(), umail.strip(), uprof))
-                        st.success(f"✅ Usuário '{ulog}' criado como {uprof}!")
-                        st.rerun()
-                    except:
-                        st.error("Erro: Este login já está em uso.")
+                        st.success(f"✅ Usuário '{ulog}' criado com sucesso!")
+                        # O rerun agora acontece fora do try para não ser capturado pelo erro de banco
+                        st.session_state['flag_rerun'] = True 
+                    except sqlite3.IntegrityError:
+                        st.error("❌ Erro: Este Login (Username) já está em uso por outro membro.")
+                    except Exception as e:
+                        st.error(f"❌ Erro inesperado: {e}")
                 else:
-                    st.warning("Preencha todos os campos.")
+                    st.warning("⚠️ Preencha todos os campos obrigatórios.")
+        
+        # Trigger de recarregamento limpo
+        if st.session_state.get('flag_rerun'):
+            st.session_state['flag_rerun'] = False
+            st.rerun()
     
         # Tabela de Auditoria de Usuários (Apenas Admin vê)
         st.markdown("##### Usuários Cadastrados")
