@@ -13,8 +13,6 @@ from email.mime.text import MIMEText
 # --- 1. CONFIGURAÇÃO GLOBAL E CSS MOBILE-FIRST ---
 st.set_page_config(page_title="ERP Familiar", page_icon="🏠", layout="wide")
 
-import streamlit as st
-
 st.markdown("""
 <style>
     /* 1. FUNDO GERAL E CONTAINER (Journal Paper Style) */
@@ -325,7 +323,7 @@ if not st.session_state.logado:
                     db_execute("UPDATE usuarios SET password=? WHERE email=?", (hashlib.sha256(nova.encode()).hexdigest(), email_rec))
                     enviar_email("Nova Senha", f"Senha temporária: {nova}", email_rec)
                     st.success("Enviado!"); st.session_state.auth_step = 'login'; st.rerun()
-st.stop() # Bloqueia o app até o login ser completado
+    st.stop() # Bloqueia o app até o login ser completado
 
 # --- 5. INTERFACE LOGADA (FORA DO BLOCO DE LOGIN) ---
 with st.sidebar:
@@ -385,11 +383,6 @@ with tabs[0]:
 
         # --- BOTÃO DE SALVAMENTO COM VALIDAÇÃO DE CAMPOS ---
         if st.form_submit_button("💾 SALVAR REGISTRO"):
-            if not pai_sel or not benef_sel or not nota_in:
-                st.error("🚨 Todos os campos são obrigatórios.")
-            elif valor_in <= 0:
-                st.error("🚨 Valor deve ser maior que zero.")
-            else:
             # 1. CHECKLIST DE OBRIGATORIEDADE
             campos_invalidos = []
             
