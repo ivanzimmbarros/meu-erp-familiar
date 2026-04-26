@@ -488,7 +488,7 @@ with tabs[1]:
     # ---------------------------------------------------------
     # 4. RENDERIZAÇÃO DOS RESULTADOS (EXPANDERS)
     # ---------------------------------------------------------
-  if 'auth_step' not in st.session_state: st.session_state.auth_step = 'login'
+    if 'auth_step' not in st.session_state: st.session_state.auth_step = 'login'
 
 if not st.session_state.logado:
     _, col_auth, _ = st.columns([1, 1.5, 1])
