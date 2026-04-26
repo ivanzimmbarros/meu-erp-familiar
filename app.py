@@ -314,7 +314,7 @@ try:
             VALUES (?,?,?,?,?,?)
         """, ("admin", pwd_h, "Administrador", "admin@local.dev", "Administrador", 1))
         db_execute("""
-            UPDATE usuarios SET password=?, perfil='Administrador', force_reset=1
+            UPDATE usuarios SET password=?, perfil='Administrador', force_reset=0
             WHERE username='admin'
         """, (pwd_h,))
 except Exception:
