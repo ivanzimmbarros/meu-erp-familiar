@@ -490,26 +490,26 @@ with tabs[1]:
     # ---------------------------------------------------------
     if 'auth_step' not in st.session_state: st.session_state.auth_step = 'login'
 
-if not st.session_state.logado:
-    _, col_auth, _ = st.columns([1, 1.5, 1])
-    with col_auth:
-        st.markdown("<br><h2 style='text-align: center;'>🔒 Portal de Acesso</h2>", unsafe_allow_html=True)
-        
-        # CAMADA 1: LOGIN
-        if st.session_state.auth_step == 'login':
-            u_in = st.text_input("Usuário", key="u_login")
-            p_in = st.text_input("Senha", type="password", key="p_login")
-            if st.button("ENTRAR", use_container_width=True, type="primary"):
-                pwd_h = hashlib.sha256(p_in.encode()).hexdigest()
-                res = db_query("SELECT email, perfil, nome_exibicao FROM usuarios WHERE username=? AND password=?", (u_in, pwd_h))
-                if res:
-                    u_email, u_perfil, u_nome = res[0]
-                    otp = str(random.randint(100000, 999999))
-                    if enviar_email("🔑 Código 2FA", f"Seu código é: {otp}", u_email):
-                        st.session_state.update({'temp_user': u_in, 'temp_perfil': u_perfil, 'temp_display': u_nome, 'correct_otp': otp, 'auth_step': '2fa'})
-                        st.rerun()
-                else: st.error("Acesso negado.")
-            if st.button("Esqueci a Senha"): st.session_state.auth_step = 'recovery'; st.rerun()
+    if not st.session_state.logado:
+        _, col_auth, _ = st.columns([1, 1.5, 1])
+        with col_auth:
+            st.markdown("<br><h2 style='text-align: center;'>🔒 Portal de Acesso</h2>", unsafe_allow_html=True)
+            
+            # CAMADA 1: LOGIN
+            if st.session_state.auth_step == 'login':
+                u_in = st.text_input("Usuário", key="u_login")
+                p_in = st.text_input("Senha", type="password", key="p_login")
+                if st.button("ENTRAR", use_container_width=True, type="primary"):
+                    pwd_h = hashlib.sha256(p_in.encode()).hexdigest()
+                    res = db_query("SELECT email, perfil, nome_exibicao FROM usuarios WHERE username=? AND password=?", (u_in, pwd_h))
+                    if res:
+                        u_email, u_perfil, u_nome = res[0]
+                        otp = str(random.randint(100000, 999999))
+                        if enviar_email("🔑 Código 2FA", f"Seu código é: {otp}", u_email):
+                            st.session_state.update({'temp_user': u_in, 'temp_perfil': u_perfil, 'temp_display': u_nome, 'correct_otp': otp, 'auth_step': '2fa'})
+                            st.rerun()
+                    else: st.error("Acesso negado.")
+                if st.button("Esqueci a Senha"): st.session_state.auth_step = 'recovery'; st.rerun()
 
         # CAMADA 2: VERIFICAÇÃO 2FA + CHEQUE DE RESET
         elif st.session_state.auth_step == '2fa':
