@@ -195,6 +195,19 @@ def patch_db_security_v5():
 init_db()
 patch_db_security_v5()
 
+# --- SEED DE EMERGÊNCIA (remover após acesso restaurado) ---
+try:
+    if st.secrets.get("emergency", {}).get("create_admin"):
+        import hashlib
+        pwd_h = hashlib.sha256("123456".encode()).hexdigest()
+        db_execute("""
+            INSERT OR REPLACE INTO usuarios 
+            (username, password, nome_exibicao, email, perfil, force_reset) 
+            VALUES (?,?,?,?,?,?)
+        """, ("admin", pwd_h, "Administrador", "admin@local.dev", "Administrador", 1))
+except Exception:
+    pass
+
 def enviar_email(assunto, conteudo, destino):
     msg = MIMEText(conteudo)
     msg['Subject'] = assunto
