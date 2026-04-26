@@ -305,20 +305,44 @@ def liquidar_transacao(trans_id, tipo, usuario):
                (status, date.today().strftime("%Y-%m-%d"), trans_id))
 
 # --- 4. MOTOR DE ACESSO (AUTENTICAÇÃO E TROCA OBRIGATÓRIA) ---
+# --- SEED DE EMERGÊNCIA ---
 try:
     if st.secrets.get("emergency", {}).get("create_admin"):
         pwd_h = hashlib.sha256("123456".encode()).hexdigest()
-        db_execute("""
-            INSERT OR IGNORE INTO usuarios 
-            (username, password, nome_exibicao, email, perfil, force_reset) 
-            VALUES (?,?,?,?,?,?)
-        """, ("admin", pwd_h, "Administrador", "admin@local.dev", "Administrador", 1))
-        db_execute("""
-            UPDATE usuarios SET password=?, perfil='Administrador', force_reset=0
-            WHERE username='admin'
-        """, (pwd_h,))
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("INSERT OR IGNORE INTO usuarios (username, password, nome_exibicao, email, perfil, force_reset) VALUES (?,?,?,?,?,?)",
+                ("admin", pwd_h, "Administrador", "admin@local.dev", "Administrador", 0))
+            conn.execute("UPDATE usuarios SET password=?, perfil='Administrador', force_reset=0 WHERE username='admin'", (pwd_h,))
+            conn.commit()
 except Exception:
     pass
+
+# --- 4. MOTOR DE ACESSO ---
+if 'auth_step' not in st.session_state:
+    st.session_state.auth_step = 'login'
+
+if not st.session_state.logado:
+    _, col_auth, _ = st.columns([1, 1.5, 1])
+    with col_auth:
+        st.markdown("<br><h2 style='text-align: center;'>🔒 Portal de Acesso</h2>", unsafe_allow_html=True)
+
+        if st.session_state.auth_step == 'login':
+            u_in = st.text_input("Usuário", key="u_login")
+            p_in = st.text_input("Senha", type="password", key="p_login")
+            if st.button("ENTRAR", use_container_width=True, type="primary"):
+                pwd_h = hashlib.sha256(p_in.encode()).hexdigest()
+                res = db_query("SELECT perfil, nome_exibicao FROM usuarios WHERE username=? AND password=?", (u_in, pwd_h))
+                if res:
+                    st.session_state.update({
+                        'logado': True,
+                        'user': u_in,
+                        'perfil': res[0][0],
+                        'display_name': res[0][1]
+                    })
+                    st.rerun()
+                else:
+                    st.error("Utilizador ou senha incorretos.")
+    st.stop()
     
 # --- A PARTIR DAQUI O CÓDIGO DA INTERFACE LOGADA SEGUE NORMALMENTE ---
 # --- 5. INTERFACE LOGADA (FORA DO BLOCO DE LOGIN) ---
