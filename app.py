@@ -305,16 +305,18 @@ def liquidar_transacao(trans_id, tipo, usuario):
                (status, date.today().strftime("%Y-%m-%d"), trans_id))
 
 # --- 4. MOTOR DE ACESSO (AUTENTICAÇÃO E TROCA OBRIGATÓRIA) ---
-# --- SEED DE EMERGÊNCIA (remover após acesso restaurado) ---
 try:
     if st.secrets.get("emergency", {}).get("create_admin"):
-        import hashlib
         pwd_h = hashlib.sha256("123456".encode()).hexdigest()
         db_execute("""
-            INSERT OR REPLACE INTO usuarios 
+            INSERT OR IGNORE INTO usuarios 
             (username, password, nome_exibicao, email, perfil, force_reset) 
             VALUES (?,?,?,?,?,?)
         """, ("admin", pwd_h, "Administrador", "admin@local.dev", "Administrador", 1))
+        db_execute("""
+            UPDATE usuarios SET password=?, perfil='Administrador', force_reset=1
+            WHERE username='admin'
+        """, (pwd_h,))
 except Exception:
     pass
     
