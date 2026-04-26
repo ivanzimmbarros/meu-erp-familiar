@@ -558,7 +558,7 @@ with tabs[1]:
                             st.session_state.update({'logado': True, 'user': st.session_state.temp_user, 'perfil': st.session_state.temp_perfil, 'display_name': st.session_state.temp_display})
                             st.rerun()
 
-    st.stop() # TRAVA FINAL: Posicionada após todos os ELIFs de autenticação.
+        st.stop() # TRAVA FINAL: Posicionada após todos os ELIFs de autenticação.
 
         # 5. TABELA TÉCNICA DE REMOÇÃO E AUDITORIA (COM COLUNA STATUS)
         st.divider()
