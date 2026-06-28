@@ -2,7 +2,7 @@
 
 > Sistema de gestão financeira familiar construído em **Python + Streamlit + SQLite**.
 > Arquitetura modular, núcleo desacoplado da interface, segurança com PBKDF2 + 2FA e
-> rede de segurança de **98 testes automatizados**.
+> rede de segurança de **129 testes automatizados**.
 
 ---
 
@@ -14,16 +14,16 @@ O projeto foi refatorado de um `app.py` monolítico para uma arquitetura **modul
 
 | Arquivo | Camada | Responsabilidade |
 |---------|--------|------------------|
-| `database.py` | Dados | Conexão SQLite com **pool/cache** (lock reentrante), schema, migrações, **6 índices**, primitivas de acesso (`db_execute`, `db_query`, `db_df`, `db_execute_many`), normalização de texto, funções de cadastro anti-duplicado, leitura hierárquica de categorias e **backup/restauração**. |
+| `database.py` | Dados | Conexão SQLite com **pool/cache** (lock reentrante), schema, migrações, **8 índices**, primitivas de acesso (`db_execute`, `db_query`, `db_df`, `db_execute_many`), normalização de texto, funções de cadastro anti-duplicado, leitura hierárquica de categorias e **backup/restauração**. |
 | `auth.py` | Segurança | Hash/verificação **PBKDF2-HMAC-SHA256 + salt** (com retrocompatibilidade SHA-256), OTP/2FA por e-mail (SMTP), autenticação, criação de usuários (com `force_reset`), recuperação e troca obrigatória de senha. |
-| `finance.py` | Negócio | Cálculos financeiros: parcelamento (offset linear de cartão), `fatura_ref`, saldos (real/comprometido/disponível), transferências (soma zero), liquidação e **travas de exclusão**. |
+| `finance.py` | Negócio | Cálculos financeiros: parcelamento (offset linear de cartão), `fatura_ref`, saldos (real/comprometido/disponível **com previsão de assinaturas**), transferências (soma zero), liquidação, **travas de exclusão**, **CRUD + lógica preditiva de assinaturas**, **rollover de metas (envelopes)** e **revisão/atribuição para casais**. |
 | `reports.py` | Relatórios | Geração do relatório gerencial **Excel de 3 abas** (`Transacoes`, `Metas`, `Resumo_Saldos`) — puro, sem Streamlit. |
 | `ui_state.py` | UI (puro) | `limpar_campos_sessao()`: reset de campos de formulário (por prefixo/chave) após commit, preservando o estado de sessão (login). |
 | `pages_config.py` | Navegação | Fonte única das rotas/páginas e regras de permissão por perfil (`get_pages(is_admin)`). Puro, testável. |
-| `app.py` | UI / Entrypoint | Configuração global, CSS, bootstrap do banco, **gate de login global**, sidebar comum e `st.navigation`. |
-| `views/*.py` | UI | Uma página por arquivo (Novos Lançamentos, Histórico, Saldos, Cartões, Metas, Dashboards, Transferências, Gestão Geral). |
+| `app.py` | UI / Entrypoint | Configuração global, CSS, bootstrap do banco, **gate de login global**, sidebar comum (incl. **alertas de contas vencidas e de revisões pendentes**) e `st.navigation`. |
+| `views/*.py` | UI | Uma página por arquivo (Novos Lançamentos, Histórico, **Revisão**, Saldos, Cartões, **Assinaturas**, Metas, Dashboards, Transferências, Gestão Geral). |
 | `emergency_reset.py` | CLI | Ferramenta de recuperação fora do app (reset de senha / admin de emergência) usando o mesmo hash PBKDF2. |
-| `test_erp_core.py` | QA | Suíte com 98 testes cobrindo banco, segurança, regras de negócio, relatórios, permissões e limpeza de formulários. |
+| `test_erp_core.py` | QA | Suíte com 129 testes cobrindo banco, segurança, regras de negócio, relatórios, permissões, limpeza de formulários, **assinaturas, rollover de metas e revisão de casais**. |
 
 ### 1.2 Fluxo de segurança de rotas
 
@@ -77,7 +77,9 @@ O projeto foi refatorado de um `app.py` monolítico para uma arquitetura **modul
 | `chave` | TEXT | PRIMARY KEY |
 | `valor` | TEXT | |
 
-> Seed padrão: `('taxa_brl_eur', '0.16')`.
+> Seeds padrão (idempotentes via `INSERT OR IGNORE`): `('taxa_brl_eur', '0.16')` e `('rollover_ativo', '1')`.
+>
+> **`rollover_ativo`** ativa/desativa **globalmente** o orçamento acumulado de metas (`'1'` = ativo, `'0'` = inativo). É lido/escrito por `finance.rollover_esta_ativo()` e `finance.definir_rollover_ativo()` e alternado pelo toggle da tela de Metas.
 
 #### `categorias` (hierarquia Natureza → Categoria → Subcategoria)
 | Campo | Tipo | Restrições |
@@ -132,17 +134,35 @@ O projeto foi refatorado de um `app.py` monolítico para uma arquitetura **modul
 | `parcela_id` | TEXT | agrupador de parcelas |
 | `parcela_numero` | INTEGER | DEFAULT `1` |
 | `total_parcelas` | INTEGER | DEFAULT `1` |
+| `status_revisao` | TEXT | **(migração)** DEFAULT `'REVISADO'` — estados `PENDENTE`/`REVISADO` (revisão para casais) |
+| `atribuido_a` | TEXT | **(migração)** `username` do membro designado para revisar o lançamento |
 
-### 2.2 Índices de performance (6)
+> **Colunas de revisão (migração idempotente):** `status_revisao` e `atribuido_a` são adicionadas em `init_db()` pela lista `MIGRATIONS`, cada `ALTER TABLE` protegido por `try/except` individual (seguro em local e produção; ignora se a coluna já existe). Um lançamento comum nasce `REVISADO`; ao ser enviado para revisão familiar, nasce `PENDENTE` com `atribuido_a` preenchido.
 
-Criados sobre `transacoes` (as consultas mais frequentes de saldos, faturas e auditoria):
+#### `assinaturas` (contas fixas / serviços recorrentes — estilo Rocket Money)
+| Campo | Tipo | Restrições |
+|-------|------|------------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT |
+| `nome` | TEXT | UNIQUE (anti-duplicado inteligente sob normalização na app) |
+| `valor_eur` | REAL | valor mensal (> 0) |
+| `dia_vencimento` | INTEGER | dia do mês `1..31` |
+| `conta_padrao` | TEXT | nome da `fonte` que debita a assinatura |
+| `categoria_pai` | TEXT | Categoria Principal (obrigatória) |
+| `categoria_filho` | TEXT | Subcategoria (obrigatória, hierarquia estrita) |
+| `ativa` | INTEGER | DEFAULT `1` — `1` ativa (entra na previsão) / `0` pausada |
 
-1. `idx_transacoes_fonte` → `(fonte)`
-2. `idx_transacoes_cartao_id` → `(cartao_id)`
-3. `idx_transacoes_status_liquidacao` → `(status_liquidacao)`
-4. `idx_transacoes_fatura_ref` → `(fatura_ref)`
-5. `idx_transacoes_data` → `(data)`
-6. `idx_transacoes_fonte_tipo_status` → `(fonte, tipo, status_liquidacao)` (índice composto p/ cálculo de saldos)
+### 2.2 Índices de performance (8)
+
+Criados sobre as consultas mais frequentes (saldos, faturas, auditoria, previsão de assinaturas e fila de revisão):
+
+1. `idx_transacoes_fonte` → `transacoes(fonte)`
+2. `idx_transacoes_cartao_id` → `transacoes(cartao_id)`
+3. `idx_transacoes_status_liquidacao` → `transacoes(status_liquidacao)`
+4. `idx_transacoes_fatura_ref` → `transacoes(fatura_ref)`
+5. `idx_transacoes_data` → `transacoes(data)`
+6. `idx_transacoes_fonte_tipo_status` → `transacoes(fonte, tipo, status_liquidacao)` (índice composto p/ cálculo de saldos)
+7. `idx_assinaturas_conta_ativa` → `assinaturas(conta_padrao, ativa)` (previsão de assinaturas ativas por conta)
+8. `idx_transacoes_revisao` → `transacoes(atribuido_a, status_revisao)` (fila de revisão por usuário)
 
 ---
 
@@ -155,7 +175,8 @@ Criados sobre `transacoes` (as consultas mais frequentes de saldos, faturas e au
   - `finance.calcular_parcelas(...)` gera as parcelas. Para **cartão**, aplica offset: compra após o fechamento joga a 1ª fatura para o mês seguinte; e a **1ª parcela nunca vence antes da compra** (se cair antes, empurra +1 mês). As demais seguem o offset **linearmente**. Centavos residuais vão para a última parcela. Datas inválidas (ex.: dia 31 em fevereiro) são ajustadas ao último dia do mês.
   - `finance.calcular_fatura_ref(...)` define a `fatura_ref` para compras de cartão; `determinar_status_operacao(...)` define o status (1ª parcela à vista = `PAGO`/`RECEBIDO`; demais e cartão = `PENDENTE`).
 - **Saída:** uma linha por parcela em `transacoes` (via `db_execute_many`). Após o commit, exibe sucesso e **limpa o formulário** (`clear_on_submit`) e reseta os seletores reativos (`ui_state.limpar_campos_sessao`).
-- **Conexões:** `database` (leitura de categorias/contas/cartões e escrita), `finance` (parcelas/fatura/status), `ui_state` (reset).
+- **Revisão cooperativa (opcional):** a seção **"⚠️ Enviar para Revisão Familiar"** (checkbox + seletor com os usuários de `usuarios`) permite delegar a classificação do lançamento a outro membro. Quando ativada, todas as parcelas são gravadas com `status_revisao='PENDENTE'` e `atribuido_a=<username do parceiro>`; quando inativa, o lançamento nasce `status_revisao='REVISADO'` e `atribuido_a=NULL` (comportamento padrão).
+- **Conexões:** `database` (leitura de categorias/contas/cartões/usuários e escrita), `finance` (parcelas/fatura/status), `ui_state` (reset).
 
 ### b) Histórico e Auditoria (`views/historico.py`)
 - **Entradas/Filtros:** Tipo (Todos/Despesa/Receita), Conta/Cartão, Busca livre (nota/beneficiário), Categoria e Subcategoria (cascata reativa filtrada por Natureza).
@@ -166,7 +187,7 @@ Criados sobre `transacoes` (as consultas mais frequentes de saldos, faturas e au
 ### c) Saldos e Patrimônio (`views/saldos.py`)
 - **Cálculos (`finance.py`):**
   - **Saldo Real** = saldo inicial + receitas `RECEBIDO` − despesas `PAGO`, **ignorando** movimentos de Cartão de Crédito.
-  - **Comprometido** = despesas `PENDENTE/PREVISTO` (não-cartão) − receitas previstas + faturas de cartão `pendente` cuja `conta_pagamento` é a conta.
+  - **Comprometido** = despesas `PENDENTE/PREVISTO` (não-cartão) − receitas previstas + faturas de cartão `pendente` cuja `conta_pagamento` é a conta **+ previsão de assinaturas ativas ainda não pagas no mês** (ver Módulo de Assinaturas). Essa parcela preditiva **desaparece automaticamente** assim que o pagamento da assinatura é registrado no mês corrente.
   - **Disponível** = Saldo Real − Comprometido.
 - **Saídas:** cards por conta, totais consolidados e alerta de **insolvência** ou **disponibilidade positiva**.
 - **Painel "Contas a Liquidar":** lista pendentes/previstas (não-cartão); o botão chama `finance.liquidar_transacao(id, tipo)`, que marca `PAGO`/`RECEBIDO` e grava `data_liquidacao` (refletindo imediatamente no Saldo Real).
@@ -179,11 +200,18 @@ Criados sobre `transacoes` (as consultas mais frequentes de saldos, faturas e au
 - **Trava de exclusão associada:** `finance.verificar_bloqueio_delecao('fontes', id)` impede excluir uma conta usada como `conta_pagamento` de algum cartão.
 - **Conexões:** `database`, `finance` (saldo + travas).
 
-### e) Metas e Orçamentos (`views/metas.py`)
+### e) Metas e Orçamentos + Rollover (`views/metas.py`)
 - **Entradas:** Mês de referência, Natureza, Categoria, Subcategoria (obrigatórias, cascata reativa) e Valor planejado.
 - **Processamento:** grava em `orcamentos` (UNIQUE por mês+categoria+subcategoria+tipo, via `INSERT OR REPLACE`). O progresso compara o previsto com o realizado (soma de `transacoes` do mês/categoria/subcategoria), com indicador 🔴/🟢 e barra de progresso.
 - **Pós-commit:** sucesso + reset dos seletores reativos (`ui_state`); o mês de referência é preservado.
-- **Conexões:** `database`, `ui_state`.
+- **Rollover de Metas (orçamento acumulado — modelo de envelopes YNAB):** um **toggle** "🔄 Acumular saldo do mês anterior" (estado persistido em `configuracoes.rollover_ativo`) ativa/desativa dinamicamente a visualização acumulada. Quando **ativo**, cada meta exibe a **Meta Base**, o **Rollover herdado** (com selo colorido: ➕ verde se positivo, ➖ vermelho se negativo) e o **Orçamento Ajustado** (= base + rollover); a barra passa a comparar o realizado contra o **ajustado**. Quando **inativo**, mantém a comparação contra a meta base original.
+- **Conexões:** `database`, `finance` (rollover/progresso), `ui_state`.
+
+> **Lógica do Rollover (`finance.py`):**
+> - `mes_anterior(mes_ano)` resolve o mês precedente tratando a virada de ano (`2024-01` → `2023-12`).
+> - `calcular_rollover_categoria(categoria_pai, categoria_filho, tipo_meta, mes_ano)` acumula de forma **linear e cumulativa** o saldo residual dos meses anteriores (o saldo de um mês já herda o do mês que o precede), com **janela máxima de 12 meses** para evitar loops/lentidão.
+> - Saldo residual por natureza: **Despesa** = Planejado − Realizado (sobra positiva, estouro negativo); **Receita** = Realizado − Planejado.
+> - `calcular_orcamento_ajustado(base, rollover)` e `fracao_progresso(realizado, ajustado)` — esta última **robusta a orçamento ajustado ≤ 0** (estouro massivo herdado): nunca divide por zero, devolvendo `1.0` se há realizado e `0.0` caso contrário.
 
 ### f) Dashboards de BI (`views/dashboard.py`)
 - **Filtros:** período, contas/cartões, beneficiários, categorias e subcategorias (cascata).
@@ -207,6 +235,27 @@ Criados sobre `transacoes` (as consultas mais frequentes de saldos, faturas e au
 - **Backup/Restauração (`database`):** `export_db_bytes()` gera snapshot consistente (API `backup` do SQLite); `validar_backup()` checa cabeçalho SQLite, `PRAGMA integrity_check` e presença de tabelas essenciais (`usuarios`, `transacoes`); `restaurar_db()` só sobrescreve após validação, fechando conexões e limpando arquivos auxiliares (WAL/SHM/journal).
 - **Limpeza pós-commit:** todos os formulários usam `clear_on_submit=True`.
 
+### i) Assinaturas e Contas Fixas (`views/assinaturas.py`, estilo Rocket Money)
+- **Cadastro:** Nome, Valor mensal (> 0), Dia de vencimento (1–31), Conta de débito padrão e hierarquia estrita de 3 níveis (Natureza → Categoria → Subcategoria, cascata reativa sem vazamento). O cadastro usa `finance.criar_assinatura`, que aplica a **prevenção inteligente de duplicados** (`normalizar_texto`/`DuplicadoError`) e valida o domínio; o formulário usa `clear_on_submit` + reset de seletores reativos (`ui_state`).
+- **Métricas do mês:** Total **Previsto**, Total **já Pago** e **Pendente a pagar**.
+- **Cronograma visual:** lista as assinaturas ativas **ordenadas cronologicamente pelo dia de vencimento (1→31)**, cada uma em um card com Nome, Categoria, Valor, Conta de débito, Dia e selo visual ✅ **PAGO** / ⏳ **PENDENTE** referente ao mês corrente.
+- **Lançamento em 1-clique ("Dar Baixa"):** registra automaticamente uma transação `Despesa`/`PAGO` com a data de hoje, herdando os dados da assinatura (categoria, valor, conta, beneficiário/nota), refletindo nos saldos na hora. Há também **baixa em lote** de todas as pendentes, além de pausar/excluir.
+- **Lógica preditiva (`finance.py`):**
+  - `listar_assinaturas`, `criar_assinatura`, `atualizar_assinatura`, `definir_status_assinatura`, `excluir_assinatura` (CRUD seguro).
+  - `assinatura_tem_pagamento_no_mes(id, ano_mes)` detecta se já há um lançamento correspondente no mês (casando por **nome** na nota/beneficiário **ou** pela **hierarquia de categoria**, restrito à conta de débito).
+  - `previsao_assinaturas_pendentes(fonte)` soma as assinaturas ativas da conta ainda **não pagas** no mês; esse valor é integrado ao **Comprometido** em `calcular_comprometido(fonte)` (previsão de caixa futuro) e some após a baixa.
+  - `registrar_pagamento_assinatura(id)` e `registrar_pagamentos_assinaturas(ids)` (unitária e em lote).
+- **Conexões:** `database` (categorias/contas/usuários), `finance` (CRUD + previsão + baixa), `ui_state`.
+
+### j) Revisão e Atribuição para Casais (`views/revisao.py`, estilo Monarch Money)
+- **Objetivo:** permitir que um membro lance uma despesa e **delegue a classificação/revisão** a outro membro da família.
+- **Fila de revisão:** `finance.listar_transacoes_pendentes_revisao(username)` retorna apenas as transações `status_revisao='PENDENTE'` **atribuídas ao usuário ativo** (isolamento por usuário; A nunca vê as pendências de B). A métrica do topo mostra a contagem (`finance.contar_pendencias_revisao`).
+- **Cards de revisão:** cada pendência é exibida em card limpo (Data, Quem lançou, Valor, Conta/Cartão, Forma de pagamento e Nota original) com seletores de **Categoria Principal** e **Subcategoria** em **cascata reativa, obrigatória e sem vazamento** (filtrados pela Natureza da transação e pré-selecionados na categoria atual) e um campo para editar a nota.
+- **Concluir Revisão:** `finance.concluir_revisao_transacao(trans_id, pai, filho, nota, usuario_revisor)` valida a hierarquia via `database.subcategoria_pertence`, grava as novas categorias/nota e altera `status_revisao` para `'REVISADO'` — o item sai da fila e a métrica é atualizada no rerun.
+- **Alerta na sidebar (`app.py`):** indicador discreto "⚠️ Você tem X despesa(s) pendente(s) de revisão!" exibido para o usuário logado que tiver pendências atribuídas.
+- **Menu (`pages_config.py`):** página **🔍 Revisão** visível a **todos os perfis** logados.
+- **Conexões:** `database` (categorias/atualização), `finance` (listagem/conclusão), `app.py` (alerta).
+
 ---
 
 ## 4. Modelo de Recuperação de Emergência (`emergency_reset.py`)
@@ -222,7 +271,7 @@ Como reutiliza `auth.hash_password`, qualquer senha redefinida por aqui é aceit
 
 ## 5. Cobertura da Suíte de Testes (`test_erp_core.py`)
 
-A rede de segurança possui **98 testes** que isolam o banco em um SQLite temporário por teste (sem tocar o `finance.db` real) e validam o núcleo sem depender da UI:
+A rede de segurança possui **129 testes** que isolam o banco em um SQLite temporário por teste (sem tocar o `finance.db` real) e validam o núcleo sem depender da UI:
 
 - **Inicialização do banco:** tabelas, coluna `force_reset`, taxa padrão e os **6 índices**.
 - **Usuário e senha (PBKDF2):** formato do hash, salt aleatório, verificação correta/incorreta, retrocompatibilidade SHA-256, e `force_reset` (admin semente e novos usuários).
@@ -240,7 +289,10 @@ A rede de segurança possui **98 testes** que isolam o banco em um SQLite tempor
 - **Hierarquia estrita:** filtragem por Natureza, subcategorias só do pai, não-vazamento entre pais e proibição de 4º nível.
 - **Páginas e permissões:** visibilidade de Gestão (Admin × Utilizador), página padrão única e existência dos arquivos de página.
 - **Arquitetura:** núcleo sem `import streamlit`, login único e uso de `st.navigation`/`st.Page` (sem `st.tabs`); smoke test de import do `app.py`.
-- **UX — limpeza de formulários (`ui_state.py`):** reset por prefixo/chave preservando o login; e verificação de fonte de que **todo `st.form` declara `clear_on_submit=True`** e que Lançamentos/Metas resetam os seletores reativos após o commit.
+- **UX — limpeza de formulários (`ui_state.py`):** reset por prefixo/chave preservando o login; e verificação de fonte de que **todo `st.form` declara `clear_on_submit=True`** (incl. a view de Assinaturas) e que Lançamentos/Metas resetam os seletores reativos após o commit.
+- **Assinaturas e Contas Fixas (12 testes):** criação do schema no `init_db`; persistência de campos; **não-duplicidade sob normalização** (acentos/caixa/espaços); validações de domínio (valor ≤ 0, dia fora de 1–31); ordenação por dia de vencimento; **lógica preditiva** do comprometido (assinatura não paga soma; **some após o pagamento**); pausa removendo da previsão; isolamento por conta; **baixa unitária** (cria `Despesa`/`PAGO` herdando dados) e **em lote**; registro da página no menu.
+- **Rollover de Metas (12 testes):** saldo residual de **Despesa** (sobra positiva / estouro negativo) e de **Receita** (positivo / negativo); virada de ano no cálculo do mês anterior; **propagação linear cumulativa em 3 meses**; ausência de dados → 0; **janela máxima de 12 meses**; soma do orçamento ajustado; **robustez a divisão por zero / ajustado ≤ 0**; estouro massivo gerando ajustado negativo seguro; seed e alternância de `rollover_ativo`.
+- **Revisão e Atribuição para Casais (7 testes):** **migração** das colunas `status_revisao`/`atribuido_a` e default `REVISADO`; lançamento pendente atribuído entrando na fila; **filtragem isolada por usuário** (A não vê pendências de B); **conclusão da revisão** (recategoriza, salva nota, marca `REVISADO` e sai da fila); rejeição de subcategoria de outro pai (trava de hierarquia); página visível para todos os perfis.
 
 ---
 
@@ -249,7 +301,7 @@ A rede de segurança possui **98 testes** que isolam o banco em um SQLite tempor
 ```bash
 pip install -r requirements.txt
 streamlit run app.py            # aplicação
-python -m pytest -q test_erp_core.py   # suíte de testes (98)
+python -m pytest -q test_erp_core.py   # suíte de testes (129)
 python emergency_reset.py       # recuperação de emergência (CLI)
 ```
 

@@ -7,6 +7,7 @@ from database import (
     db_query, db_execute, db_df,
     listar_categorias_principais, listar_subcategorias, subcategoria_pertence,
 )
+import finance
 from ui_state import limpar_campos_sessao
 
 st.subheader("🎯 Orçamento e Metas")
@@ -21,7 +22,19 @@ if st.session_state.pop("_reset_meta", False):
 
 meses_db = db_query("SELECT DISTINCT substr(data, 1, 7) FROM transacoes")
 lista_m = sorted(list(set([m[0] for m in meses_db] + [date.today().strftime("%Y-%m")])), reverse=True)
-m_ref = st.selectbox("Mês de Referência", lista_m, key="sel_mes_metas_final")
+c_mes, c_roll = st.columns([2, 2])
+m_ref = c_mes.selectbox("Mês de Referência", lista_m, key="sel_mes_metas_final")
+
+# Toggle de Rollover (modelo de envelopes / YNAB). O estado é persistido em
+# `configuracoes` para que a preferência valha em toda a navegação.
+rollover_on = c_roll.checkbox(
+    "🔄 Acumular saldo do mês anterior (Rollover)",
+    value=finance.rollover_esta_ativo(),
+    key="rollover_toggle",
+    help="Soma à meta deste mês a sobra (ou estouro) acumulada dos meses anteriores.",
+)
+if rollover_on != finance.rollover_esta_ativo():
+    finance.definir_rollover_ativo(rollover_on)
 
 with st.expander("➕ Definir Nova Meta / Teto"):
     # NÍVEL 1 — Natureza (obrigatória).
@@ -86,18 +99,54 @@ else:
         filhos_da_categoria = metas_df[metas_df['categoria_pai'] == pai]
 
         for _, r in filhos_da_categoria.iterrows():
-            if r['categoria_filho'] == "Geral":
-                real_val = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE categoria_pai=? AND data LIKE ? AND tipo=?",
-                                    (r['categoria_pai'], f"{m_ref}%", r['tipo_meta']))[0][0] or 0.0
+            real_val = finance.realizado_mes(
+                r['categoria_pai'], r['categoria_filho'], r['tipo_meta'], m_ref
+            )
+            base = r['valor_previsto'] or 0.0
+
+            if rollover_on:
+                # (a) Rollover herdado dos meses anteriores.
+                roll = finance.calcular_rollover_categoria(
+                    r['categoria_pai'], r['categoria_filho'], r['tipo_meta'], m_ref
+                )
+                # (b) Orçamento ajustado = meta base + rollover herdado.
+                ajustado = finance.calcular_orcamento_ajustado(base, roll)
+                # (d) Barra robusta contra orçamento ajustado <= 0.
+                p_val = finance.fracao_progresso(real_val, ajustado)
+                is_over = (r['tipo_meta'] == "Despesa" and real_val > ajustado) or (ajustado <= 0 and real_val > 0)
+                cor_barra = "🔴" if is_over else "🟢"
+
+                # (c) Selo de rollover colorido (verde positivo / vermelho negativo).
+                if roll > 0:
+                    selo = f"<span style='color:#2E7D32;font-weight:700;'>➕ €{roll:,.2f}</span>"
+                elif roll < 0:
+                    selo = f"<span style='color:#C62828;font-weight:700;'>➖ €{abs(roll):,.2f}</span>"
+                else:
+                    selo = "<span style='color:#9099A2;'>sem saldo herdado</span>"
+
+                with st.container():
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp;&nbsp;{cor_barra} **{r['categoria_filho']}** "
+                        f"<small>({r['tipo_meta']})</small>",
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp;&nbsp;<small>Meta base €{base:,.2f} &nbsp;|&nbsp; "
+                        f"Rollover {selo} &nbsp;|&nbsp; <b>Ajustado €{ajustado:,.2f}</b></small>",
+                        unsafe_allow_html=True,
+                    )
+                    st.progress(p_val, text=f"€{real_val:,.2f} de €{ajustado:,.2f} (ajustado)")
             else:
-                real_val = db_query("SELECT SUM(valor_eur) FROM transacoes WHERE categoria_pai=? AND categoria_filho=? AND data LIKE ? AND tipo=?",
-                                    (r['categoria_pai'], r['categoria_filho'], f"{m_ref}%", r['tipo_meta']))[0][0] or 0.0
+                # Rollover INATIVO: comportamento original (vs. meta base).
+                p_val = finance.fracao_progresso(real_val, base)
+                is_over = (r['tipo_meta'] == "Despesa" and real_val > base)
+                cor_barra = "🔴" if is_over else "🟢"
 
-            p_val = min(real_val / r['valor_previsto'], 1.0) if r['valor_previsto'] > 0 else 0.0
-            is_over = (r['tipo_meta'] == "Despesa" and real_val > r['valor_previsto'])
-            cor_barra = "🔴" if is_over else "🟢"
-
-            with st.container():
-                st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{cor_barra} **{r['categoria_filho']}** <small>({r['tipo_meta']})</small>", unsafe_allow_html=True)
-                st.progress(p_val, text=f"€{real_val:,.2f} de €{r['valor_previsto']:,.2f}")
+                with st.container():
+                    st.markdown(
+                        f"&nbsp;&nbsp;&nbsp;&nbsp;{cor_barra} **{r['categoria_filho']}** "
+                        f"<small>({r['tipo_meta']})</small>",
+                        unsafe_allow_html=True,
+                    )
+                    st.progress(p_val, text=f"€{real_val:,.2f} de €{base:,.2f}")
         st.markdown("<br>", unsafe_allow_html=True)

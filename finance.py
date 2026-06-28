@@ -12,7 +12,11 @@ Não importa Streamlit. Depende apenas de `database`.
 from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 
-from database import db_query, db_execute, db_execute_many
+from database import (
+    db_query, db_execute, db_execute_many,
+    normalizar_texto, _existe_normalizado, DuplicadoError,
+    subcategoria_pertence,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +80,283 @@ def calcular_fatura_ref(data_str, dia_fech):
 
 
 # ---------------------------------------------------------------------------
+# ROLLOVER DE METAS / ORÇAMENTO ACUMULADO (MODELO DE ENVELOPES — YNAB)
+# ---------------------------------------------------------------------------
+def mes_anterior(mes_ano):
+    """Retorna o mês imediatamente anterior a `mes_ano` (formato 'YYYY-MM'),
+    tratando corretamente a virada de ano ('2024-01' -> '2023-12')."""
+    d = datetime.strptime(f"{mes_ano}-01", "%Y-%m-%d") - relativedelta(months=1)
+    return d.strftime("%Y-%m")
+
+
+def planejado_mes(categoria_pai, categoria_filho, tipo_meta, mes_ano):
+    """Valor previsto (meta/teto) cadastrado em `orcamentos` para o mês."""
+    r = db_query(
+        "SELECT valor_previsto FROM orcamentos WHERE mes_ano=? AND categoria_pai=? "
+        "AND categoria_filho=? AND tipo_meta=?",
+        (mes_ano, categoria_pai, categoria_filho, tipo_meta),
+    )
+    return (r[0][0] if r and r[0][0] is not None else 0.0)
+
+
+def realizado_mes(categoria_pai, categoria_filho, tipo, mes_ano):
+    """Soma das transações realizadas no mês para a categoria/subcategoria.
+
+    Subcategoria 'Geral' agrega toda a categoria principal (espelha a regra
+    usada na tela de Metas)."""
+    if categoria_filho == "Geral":
+        v = db_query(
+            "SELECT SUM(valor_eur) FROM transacoes WHERE categoria_pai=? "
+            "AND data LIKE ? AND tipo=?",
+            (categoria_pai, f"{mes_ano}%", tipo),
+        )[0][0]
+    else:
+        v = db_query(
+            "SELECT SUM(valor_eur) FROM transacoes WHERE categoria_pai=? "
+            "AND categoria_filho=? AND data LIKE ? AND tipo=?",
+            (categoria_pai, categoria_filho, f"{mes_ano}%", tipo),
+        )[0][0]
+    return v or 0.0
+
+
+def _residual_mes(categoria_pai, categoria_filho, tipo_meta, mes_ano):
+    """Saldo residual de um único mês (sem herança).
+
+    - Despesa: Planejado - Realizado (sobra positiva, estouro negativo).
+    - Receita: Realizado - Planejado (excedente positivo, déficit negativo)."""
+    planejado = planejado_mes(categoria_pai, categoria_filho, tipo_meta, mes_ano)
+    realizado = realizado_mes(categoria_pai, categoria_filho, tipo_meta, mes_ano)
+    if tipo_meta == "Receita":
+        return realizado - planejado
+    return planejado - realizado
+
+
+def calcular_rollover_categoria(categoria_pai, categoria_filho, tipo_meta,
+                                mes_ano, max_meses=12):
+    """Saldo de rollover HERDADO para `mes_ano`, acumulado de forma linear e
+    cumulativa a partir dos meses anteriores.
+
+    Soma os saldos residuais dos meses anteriores (do mais antigo ao mês
+    imediatamente anterior), de modo que o saldo de um mês já carrega o saldo
+    herdado do mês que o precede. A varredura é limitada a `max_meses` (padrão
+    12) meses anteriores, evitando loops/lentidão. Meses sem meta e sem
+    movimentos contribuem com 0."""
+    # Constrói a janela [mês_anterior-(max_meses-1) ... mês_anterior], do mais
+    # antigo para o mais recente, e acumula os residuais linearmente.
+    meses = []
+    m = mes_anterior(mes_ano)
+    for _ in range(max(1, int(max_meses))):
+        meses.append(m)
+        m = mes_anterior(m)
+    meses.reverse()
+
+    saldo = 0.0
+    for mes in meses:
+        saldo += _residual_mes(categoria_pai, categoria_filho, tipo_meta, mes)
+    return round(saldo, 2)
+
+
+def calcular_orcamento_ajustado(meta_base, rollover):
+    """Orçamento efetivo do mês = meta base + saldo de rollover herdado."""
+    return round((meta_base or 0.0) + (rollover or 0.0), 2)
+
+
+def fracao_progresso(realizado, orcamento_ajustado):
+    """Fração [0..1] para a barra de progresso, robusta a orçamento ajustado
+    zerado/negativo (estouro massivo herdado): nesse caso devolve 1.0 quando
+    há realizado e 0.0 caso contrário, sem dividir por zero."""
+    realizado = realizado or 0.0
+    if orcamento_ajustado is None or orcamento_ajustado <= 0:
+        return 1.0 if realizado > 0 else 0.0
+    return min(max(realizado / orcamento_ajustado, 0.0), 1.0)
+
+
+def rollover_esta_ativo():
+    """Lê em `configuracoes` se o rollover está globalmente ativo ('1')."""
+    r = db_query("SELECT valor FROM configuracoes WHERE chave='rollover_ativo'")
+    return bool(r) and str(r[0][0]) == "1"
+
+
+def definir_rollover_ativo(ativo):
+    """Persiste o estado global do rollover em `configuracoes`."""
+    db_execute(
+        "INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES ('rollover_ativo', ?)",
+        ("1" if ativo else "0",),
+    )
+
+
+# ---------------------------------------------------------------------------
+# ASSINATURAS / CONTAS FIXAS RECORRENTES (CRUD SEGURO)
+# ---------------------------------------------------------------------------
+def _validar_dados_assinatura(nome, valor_eur, dia_vencimento, conta_padrao,
+                              categoria_pai, categoria_filho):
+    """Valida (e normaliza) os campos de uma assinatura. Levanta ValueError
+    com mensagem amigável no primeiro problema encontrado. Retorna a tupla
+    saneada (nome, valor, dia, conta, pai, filho)."""
+    nome = (nome or "").strip()
+    if not nome:
+        raise ValueError("Informe o nome da assinatura.")
+    if valor_eur is None or float(valor_eur) <= 0:
+        raise ValueError("O valor da assinatura deve ser maior que zero.")
+    try:
+        dia = int(dia_vencimento)
+    except (TypeError, ValueError):
+        raise ValueError("Dia de vencimento inválido.")
+    if dia < 1 or dia > 31:
+        raise ValueError("O dia de vencimento deve estar entre 1 e 31.")
+    if not (conta_padrao or "").strip():
+        raise ValueError("Selecione a conta de débito padrão.")
+    if not (categoria_pai or "").strip():
+        raise ValueError("A Categoria Principal é obrigatória.")
+    if not (categoria_filho or "").strip():
+        raise ValueError("A Subcategoria é obrigatória.")
+    return nome, float(valor_eur), dia, conta_padrao, categoria_pai, categoria_filho
+
+
+def criar_assinatura(nome, valor_eur, dia_vencimento, conta_padrao,
+                     categoria_pai, categoria_filho, ativa=1):
+    """Cadastra uma assinatura/conta fixa barrando nomes equivalentes sob
+    normalização (anti-duplicado inteligente)."""
+    nome, valor, dia, conta, pai, filho = _validar_dados_assinatura(
+        nome, valor_eur, dia_vencimento, conta_padrao, categoria_pai, categoria_filho
+    )
+    if _existe_normalizado("assinaturas", nome):
+        raise DuplicadoError(f"Já existe uma assinatura equivalente a “{nome}”.")
+    db_execute(
+        "INSERT INTO assinaturas (nome, valor_eur, dia_vencimento, conta_padrao, "
+        "categoria_pai, categoria_filho, ativa) VALUES (?,?,?,?,?,?,?)",
+        (nome, valor, dia, conta, pai, filho, 1 if ativa else 0),
+    )
+
+
+def atualizar_assinatura(assinatura_id, nome, valor_eur, dia_vencimento,
+                         conta_padrao, categoria_pai, categoria_filho, ativa=1):
+    """Edita uma assinatura existente preservando a trava anti-duplicado
+    (ignorando a própria linha) e as validações de domínio."""
+    nome, valor, dia, conta, pai, filho = _validar_dados_assinatura(
+        nome, valor_eur, dia_vencimento, conta_padrao, categoria_pai, categoria_filho
+    )
+    if _existe_normalizado("assinaturas", nome, excluir_id=assinatura_id):
+        raise DuplicadoError(f"Já existe uma assinatura equivalente a “{nome}”.")
+    db_execute(
+        "UPDATE assinaturas SET nome=?, valor_eur=?, dia_vencimento=?, conta_padrao=?, "
+        "categoria_pai=?, categoria_filho=?, ativa=? WHERE id=?",
+        (nome, valor, dia, conta, pai, filho, 1 if ativa else 0, assinatura_id),
+    )
+
+
+def definir_status_assinatura(assinatura_id, ativa):
+    """Ativa/inativa uma assinatura (pausar/retomar cobrança prevista)."""
+    db_execute(
+        "UPDATE assinaturas SET ativa=? WHERE id=?",
+        (1 if ativa else 0, assinatura_id),
+    )
+
+
+def excluir_assinatura(assinatura_id):
+    """Remove uma assinatura. As transações já lançadas permanecem intactas."""
+    db_execute("DELETE FROM assinaturas WHERE id=?", (assinatura_id,))
+
+
+def listar_assinaturas(apenas_ativas=False, conta=None):
+    """Lista assinaturas ordenadas cronologicamente pelo dia de vencimento.
+
+    Retorna linhas (id, nome, valor_eur, dia_vencimento, conta_padrao,
+    categoria_pai, categoria_filho, ativa)."""
+    sql = (
+        "SELECT id, nome, valor_eur, dia_vencimento, conta_padrao, "
+        "categoria_pai, categoria_filho, ativa FROM assinaturas"
+    )
+    cond, params = [], []
+    if apenas_ativas:
+        cond.append("ativa=1")
+    if conta is not None:
+        cond.append("conta_padrao=?")
+        params.append(conta)
+    if cond:
+        sql += " WHERE " + " AND ".join(cond)
+    sql += " ORDER BY dia_vencimento ASC, nome ASC"
+    return db_query(sql, tuple(params))
+
+
+def assinatura_tem_pagamento_no_mes(assinatura_id, ano_mes=None):
+    """True se já houver, no mês `ano_mes` (YYYY-MM; default = mês corrente),
+    um lançamento de Despesa que corresponda a esta assinatura na conta de
+    débito padrão — casando pelo nome (na nota ou no beneficiário) OU pela
+    hierarquia de categoria (pai + filho)."""
+    rows = db_query(
+        "SELECT nome, conta_padrao, categoria_pai, categoria_filho "
+        "FROM assinaturas WHERE id=?",
+        (assinatura_id,),
+    )
+    if not rows:
+        return False
+    nome, conta, cat_pai, cat_filho = rows[0]
+    ano_mes = ano_mes or date.today().strftime("%Y-%m")
+    alvo = normalizar_texto(nome)
+
+    lancs = db_query(
+        "SELECT beneficiario, nota, categoria_pai, categoria_filho "
+        "FROM transacoes WHERE fonte=? AND tipo='Despesa' AND substr(data,1,7)=?",
+        (conta, ano_mes),
+    )
+    for benef, nota, cp, cf in lancs:
+        if alvo and (alvo == normalizar_texto(benef) or alvo in normalizar_texto(nota)):
+            return True
+        if cat_pai and cat_filho and cp == cat_pai and cf == cat_filho:
+            return True
+    return False
+
+
+def registrar_pagamento_assinatura(assinatura_id, usuario=None, data_str=None):
+    """Lançamento em 1-clique: registra uma Despesa PAGA hoje (ou em
+    `data_str`) herdando todos os dados da assinatura, refletindo de imediato
+    nos saldos. Retorna o `id` da transação criada."""
+    rows = db_query(
+        "SELECT nome, valor_eur, conta_padrao, categoria_pai, categoria_filho "
+        "FROM assinaturas WHERE id=?",
+        (assinatura_id,),
+    )
+    if not rows:
+        raise ValueError("Assinatura inexistente.")
+    nome, valor, conta, cat_pai, cat_filho = rows[0]
+    data_str = data_str or date.today().strftime("%Y-%m-%d")
+    db_execute(
+        "INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, "
+        "fonte, valor_eur, tipo, nota, usuario, forma_pagamento, status_liquidacao) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (data_str, cat_pai, cat_filho, nome, conta, valor, "Despesa",
+         f"Assinatura: {nome}", usuario, "Dinheiro/Débito", "PAGO"),
+    )
+    return db_query("SELECT last_insert_rowid()")[0][0]
+
+
+def registrar_pagamentos_assinaturas(ids, usuario=None, data_str=None):
+    """Dá baixa em LOTE numa lista de assinaturas pendentes. Retorna a
+    quantidade de pagamentos efetivamente registrados."""
+    registrados = 0
+    for aid in ids:
+        registrar_pagamento_assinatura(aid, usuario=usuario, data_str=data_str)
+        registrados += 1
+    return registrados
+
+
+def previsao_assinaturas_pendentes(fonte, ano_mes=None):
+    """Soma das assinaturas ATIVAS da conta que ainda NÃO têm pagamento
+    registrado no mês corrente — a parcela preditiva do comprometido."""
+    ano_mes = ano_mes or date.today().strftime("%Y-%m")
+    total = 0.0
+    ativas = db_query(
+        "SELECT id, valor_eur FROM assinaturas WHERE conta_padrao=? AND ativa=1",
+        (fonte,),
+    )
+    for aid, valor in ativas:
+        if not assinatura_tem_pagamento_no_mes(aid, ano_mes):
+            total += valor or 0.0
+    return round(total, 2)
+
+
+# ---------------------------------------------------------------------------
 # SALDOS
 # ---------------------------------------------------------------------------
 def calcular_saldo_real(fonte):
@@ -98,7 +379,8 @@ def calcular_saldo_real(fonte):
 
 def calcular_comprometido(fonte):
     """Tudo que vai sair da conta no futuro (boletos pendentes/previstos +
-    faturas de cartão pendentes que debitam nesta conta)."""
+    faturas de cartão pendentes que debitam nesta conta + assinaturas ativas
+    ainda não pagas neste mês — previsão real de caixa futuro)."""
     sql_pend = (
         "SELECT SUM(valor_eur) FROM transacoes WHERE fonte=? AND tipo=? "
         "AND status_liquidacao IN ('PENDENTE','PREVISTO') AND forma_pagamento != 'Cartão de Crédito'"
@@ -116,7 +398,11 @@ def calcular_comprometido(fonte):
         (fonte,),
     )[0][0] or 0.0
 
-    return round(desp_p - rec_p + fat, 2)
+    # Camada preditiva: assinaturas ativas desta conta que ainda não foram
+    # pagas no mês corrente entram como saída prevista; somem após a baixa.
+    assin = previsao_assinaturas_pendentes(fonte)
+
+    return round(desp_p - rec_p + fat + assin, 2)
 
 
 def calcular_disponivel(fonte):
@@ -184,6 +470,66 @@ def verificar_bloqueio_delecao(tabela, id_item):
             return False
         return len(db_query("SELECT id FROM transacoes WHERE beneficiario=?", (res[0][0],))) > 0
     return False
+
+
+# ---------------------------------------------------------------------------
+# REVISÃO E ATRIBUIÇÃO PARA CASAIS (COLABORAÇÃO — MONARCH MONEY)
+# ---------------------------------------------------------------------------
+def contar_pendencias_revisao(username):
+    """Quantidade de transações pendentes de revisão atribuídas ao usuário."""
+    if not username:
+        return 0
+    return db_query(
+        "SELECT COUNT(*) FROM transacoes WHERE status_revisao='PENDENTE' AND atribuido_a=?",
+        (username,),
+    )[0][0] or 0
+
+
+def listar_transacoes_pendentes_revisao(username):
+    """Transações com `status_revisao='PENDENTE'` atribuídas a `username`.
+
+    Cada item é um dict com os campos necessários para montar o card de
+    revisão. Ordenadas da mais recente para a mais antiga."""
+    if not username:
+        return []
+    rows = db_query(
+        "SELECT id, data, categoria_pai, categoria_filho, beneficiario, fonte, "
+        "valor_eur, tipo, nota, usuario, forma_pagamento FROM transacoes "
+        "WHERE status_revisao='PENDENTE' AND atribuido_a=? ORDER BY data DESC, id DESC",
+        (username,),
+    )
+    campos = (
+        "id", "data", "categoria_pai", "categoria_filho", "beneficiario",
+        "fonte", "valor_eur", "tipo", "nota", "usuario", "forma_pagamento",
+    )
+    return [dict(zip(campos, r)) for r in rows]
+
+
+def concluir_revisao_transacao(trans_id, nova_categoria_pai, nova_categoria_filho,
+                               nova_nota, usuario_revisor=None):
+    """Conclui a revisão de uma transação: valida a hierarquia, grava as novas
+    categorias/nota e marca como 'REVISADO' (saindo da fila de pendências).
+
+    Levanta ValueError se a subcategoria não pertencer à categoria principal."""
+    if not (nova_categoria_pai or "").strip():
+        raise ValueError("Selecione a Categoria Principal.")
+    if not (nova_categoria_filho or "").strip():
+        raise ValueError("Selecione a Subcategoria.")
+    id_pai_res = db_query(
+        "SELECT id FROM categorias WHERE nome=? AND pai_id IS NULL",
+        (nova_categoria_pai,),
+    )
+    if not id_pai_res:
+        raise ValueError("Categoria Principal inexistente.")
+    if not subcategoria_pertence(id_pai_res[0][0], nova_categoria_filho):
+        raise ValueError(
+            "A Subcategoria não pertence à Categoria Principal escolhida."
+        )
+    db_execute(
+        "UPDATE transacoes SET categoria_pai=?, categoria_filho=?, nota=?, "
+        "status_revisao='REVISADO' WHERE id=?",
+        (nova_categoria_pai, nova_categoria_filho, nova_nota, trans_id),
+    )
 
 
 def liquidar_transacao(trans_id, tipo, usuario=None):

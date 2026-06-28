@@ -22,8 +22,10 @@ esta configuração para montar os objetos `st.Page` / `st.navigation`.
 PAGES = [
     {"key": "novos_lancamentos", "file": "views/novos_lancamentos.py", "title": "Novos Lançamentos", "icon": "➕", "admin_only": False, "default": True},
     {"key": "historico",        "file": "views/historico.py",        "title": "Histórico",          "icon": "📋", "admin_only": False, "default": False},
+    {"key": "revisao",          "file": "views/revisao.py",          "title": "Revisão",            "icon": "🔍", "admin_only": False, "default": False},
     {"key": "saldos",           "file": "views/saldos.py",           "title": "Saldos",             "icon": "💰", "admin_only": False, "default": False},
     {"key": "cartoes",          "file": "views/cartoes.py",          "title": "Cartões",            "icon": "💳", "admin_only": False, "default": False},
+    {"key": "assinaturas",      "file": "views/assinaturas.py",      "title": "Assinaturas",        "icon": "📅", "admin_only": False, "default": False},
     {"key": "metas",            "file": "views/metas.py",            "title": "Metas",              "icon": "🎯", "admin_only": False, "default": False},
     {"key": "dashboard",        "file": "views/dashboard.py",        "title": "Dashboards",         "icon": "📊", "admin_only": False, "default": False},
     {"key": "transferencias",   "file": "views/transferencias.py",   "title": "Transferências",     "icon": "🔄", "admin_only": False, "default": False},

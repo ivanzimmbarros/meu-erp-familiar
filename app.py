@@ -216,6 +216,12 @@ with st.sidebar:
     pend = db_query("SELECT id FROM transacoes WHERE status_liquidacao='PENDENTE' AND data <= ?", (hoje_iso,))
     if pend:
         st.warning(f"⚠️ {len(pend)} conta(s) vencida(s)!")
+    rev_pend = db_query(
+        "SELECT COUNT(*) FROM transacoes WHERE status_revisao='PENDENTE' AND atribuido_a=?",
+        (st.session_state.user,),
+    )[0][0] or 0
+    if rev_pend:
+        st.info(f"⚠️ Você tem {rev_pend} despesa(s) pendente(s) de revisão!")
     st.caption(f"💱 Câmbio BRL/EUR: **{st.session_state.taxa:.4f}**")
     if st.button("🚪 Sair", width="stretch"):
         st.session_state.clear(); st.rerun()

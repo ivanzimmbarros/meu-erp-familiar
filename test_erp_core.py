@@ -925,7 +925,7 @@ class TestLimpezaEstadoFormularios(unittest.TestCase):
 # (UX) COBERTURA: TODO FORMULÁRIO LIMPA OS CAMPOS APÓS O COMMIT
 # ===========================================================================
 class TestFormulariosClearOnSubmit(unittest.TestCase):
-    VIEWS = ("novos_lancamentos", "gestao", "cartoes", "metas", "transferencias")
+    VIEWS = ("novos_lancamentos", "gestao", "cartoes", "metas", "transferencias", "assinaturas")
 
     def _src(self, nome):
         base = os.path.dirname(os.path.abspath(__file__))
@@ -955,6 +955,391 @@ class TestFormulariosClearOnSubmit(unittest.TestCase):
         src = self._src("metas")
         self.assertIn("_reset_meta", src)
         self.assertIn("limpar_campos_sessao", src)
+
+
+# ===========================================================================
+# (NOVO) CALENDÁRIO DE ASSINATURAS E CONTAS FIXAS
+# ===========================================================================
+class TestAssinaturas(ERPTestBase):
+    """Cobre o módulo de assinaturas/contas fixas: schema, CRUD anti-duplicado,
+    lógica preditiva no comprometido e o lançamento (baixa) em 1-clique."""
+
+    def setUp(self):
+        super().setUp()
+        self._add_fonte("Conta Principal", saldo_inicial=1000.0)
+        database.criar_categoria_principal("Lazer", "Despesa")
+        id_lazer = database.db_query(
+            "SELECT id FROM categorias WHERE nome='Lazer'"
+        )[0][0]
+        database.criar_subcategoria("Streaming", id_lazer)
+
+    def _criar(self, nome="Netflix", valor=15.99, dia=10):
+        finance.criar_assinatura(
+            nome, valor, dia, "Conta Principal", "Lazer", "Streaming"
+        )
+        return database.db_query(
+            "SELECT id FROM assinaturas WHERE nome=?", (nome,)
+        )[0][0]
+
+    # --- Schema ---------------------------------------------------------
+    def test_tabela_assinaturas_criada_no_init(self):
+        rows = database.db_query(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='assinaturas'"
+        )
+        self.assertTrue(rows, "init_db() deveria criar a tabela 'assinaturas'.")
+
+    def test_criar_assinatura_persiste_todos_os_campos(self):
+        self._criar("Spotify", 9.99, 5)
+        r = database.db_query(
+            "SELECT nome, valor_eur, dia_vencimento, conta_padrao, categoria_pai, "
+            "categoria_filho, ativa FROM assinaturas WHERE nome='Spotify'"
+        )[0]
+        self.assertEqual(
+            r, ("Spotify", 9.99, 5, "Conta Principal", "Lazer", "Streaming", 1)
+        )
+
+    # --- (1) Não-duplicidade sob normalização ---------------------------
+    def test_assinatura_duplicada_sob_normalizacao_bloqueada(self):
+        self._criar("Netflix")
+        for variante in ["netflix", "NETFLIX", "  Netflix ", "Nétflix"]:
+            with self.assertRaises(database.DuplicadoError):
+                finance.criar_assinatura(
+                    variante, 10.0, 1, "Conta Principal", "Lazer", "Streaming"
+                )
+        self.assertEqual(
+            database.db_query("SELECT COUNT(*) FROM assinaturas")[0][0], 1
+        )
+
+    def test_validacoes_de_dominio_da_assinatura(self):
+        # Valor <= 0 e dia fora de 1..31 devem ser rejeitados.
+        with self.assertRaises(ValueError):
+            finance.criar_assinatura("X", 0.0, 10, "Conta Principal", "Lazer", "Streaming")
+        with self.assertRaises(ValueError):
+            finance.criar_assinatura("Y", 5.0, 0, "Conta Principal", "Lazer", "Streaming")
+        with self.assertRaises(ValueError):
+            finance.criar_assinatura("Z", 5.0, 32, "Conta Principal", "Lazer", "Streaming")
+
+    def test_listar_assinaturas_ordena_por_dia_de_vencimento(self):
+        self._criar("Aluguel", 800.0, 20)
+        self._criar("Internet", 50.0, 5)
+        ordem = [linha[1] for linha in finance.listar_assinaturas(apenas_ativas=True)]
+        self.assertEqual(ordem, ["Internet", "Aluguel"])
+
+    # --- (2) Lógica preditiva do calcular_comprometido ------------------
+    def test_comprometido_inclui_assinatura_nao_paga(self):
+        self._criar("Netflix", 15.99, 10)
+        self.assertAlmostEqual(
+            finance.calcular_comprometido("Conta Principal"), 15.99, places=2
+        )
+
+    def test_comprometido_some_apos_registrar_pagamento(self):
+        aid = self._criar("Netflix", 15.99, 10)
+        # Antes: previsto entra no comprometido.
+        self.assertAlmostEqual(
+            finance.calcular_comprometido("Conta Principal"), 15.99, places=2
+        )
+        finance.registrar_pagamento_assinatura(aid, usuario="tester")
+        # Depois: pago no mês => previsão some do comprometido...
+        self.assertEqual(finance.calcular_comprometido("Conta Principal"), 0.0)
+        # ...e o saldo real reflete imediatamente a saída.
+        self.assertEqual(finance.calcular_saldo_real("Conta Principal"), 984.01)
+        self.assertTrue(finance.assinatura_tem_pagamento_no_mes(aid))
+
+    def test_assinatura_pausada_nao_entra_na_previsao(self):
+        aid = self._criar("Netflix", 15.99, 10)
+        self.assertAlmostEqual(
+            finance.calcular_comprometido("Conta Principal"), 15.99, places=2
+        )
+        finance.definir_status_assinatura(aid, ativa=0)
+        self.assertEqual(finance.calcular_comprometido("Conta Principal"), 0.0)
+
+    def test_pagamento_de_outra_conta_nao_zera_previsao(self):
+        # Assinatura debita em "Conta Principal"; um pagamento em outra conta
+        # não pode ser confundido como quitação desta assinatura.
+        self._add_fonte("Conta Secundaria", saldo_inicial=500.0)
+        self._criar("Netflix", 15.99, 10)
+        self._add_transacao(
+            data=date.today().strftime("%Y-%m-%d"), categoria_pai="Lazer",
+            categoria_filho="Streaming", beneficiario="Netflix",
+            fonte="Conta Secundaria", valor_eur=15.99, tipo="Despesa",
+            forma_pagamento="Dinheiro/Débito", status_liquidacao="PAGO",
+        )
+        self.assertAlmostEqual(
+            finance.calcular_comprometido("Conta Principal"), 15.99, places=2
+        )
+
+    # --- (3) Fluxo de baixa unitária e em lote --------------------------
+    def test_baixa_unitaria_cria_despesa_paga_herdando_dados(self):
+        aid = self._criar("Netflix", 15.99, 10)
+        finance.registrar_pagamento_assinatura(aid, usuario="tester")
+        t = database.db_query(
+            "SELECT categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, "
+            "tipo, status_liquidacao FROM transacoes ORDER BY id DESC LIMIT 1"
+        )[0]
+        self.assertEqual(
+            t,
+            ("Lazer", "Streaming", "Netflix", "Conta Principal", 15.99,
+             "Despesa", "PAGO"),
+        )
+
+    def test_baixa_em_lote_registra_todas_as_pendentes(self):
+        ids = [
+            self._criar("Netflix", 15.99, 10),
+            self._criar("Spotify", 9.99, 5),
+            self._criar("Disney", 7.99, 20),
+        ]
+        total = round(15.99 + 9.99 + 7.99, 2)
+        self.assertAlmostEqual(
+            finance.calcular_comprometido("Conta Principal"), total, places=2
+        )
+        n = finance.registrar_pagamentos_assinaturas(ids, usuario="tester")
+        self.assertEqual(n, 3)
+        for aid in ids:
+            self.assertTrue(finance.assinatura_tem_pagamento_no_mes(aid))
+        # Todas pagas => previsão zera o comprometido.
+        self.assertEqual(finance.calcular_comprometido("Conta Principal"), 0.0)
+
+    def test_pagina_assinaturas_registrada_no_menu(self):
+        import pages_config
+        chaves = {p["key"] for p in pages_config.get_pages(is_admin=False)}
+        self.assertIn("assinaturas", chaves)
+
+
+# ===========================================================================
+# (NOVO) ROLLOVER DE METAS / ORÇAMENTO ACUMULADO (ENVELOPES — YNAB)
+# ===========================================================================
+class TestRollover(ERPTestBase):
+    """Cobre o orçamento acumulado: saldo residual por natureza, propagação
+    cumulativa linear, janela de 12 meses, e robustez da barra de progresso."""
+
+    def _meta(self, mes, valor, tipo, pai="Casa", filho="Aluguel"):
+        database.db_execute(
+            "INSERT OR REPLACE INTO orcamentos (mes_ano, categoria_pai, "
+            "categoria_filho, valor_previsto, tipo_meta) VALUES (?,?,?,?,?)",
+            (mes, pai, filho, valor, tipo),
+        )
+
+    def _trans(self, mes, valor, tipo, pai="Casa", filho="Aluguel"):
+        self._add_transacao(
+            data=f"{mes}-15", categoria_pai=pai, categoria_filho=filho,
+            valor_eur=valor, tipo=tipo, forma_pagamento="Dinheiro/Débito",
+            status_liquidacao=("RECEBIDO" if tipo == "Receita" else "PAGO"),
+        )
+
+    # --- (1) Despesa com sobra positiva ---------------------------------
+    def test_rollover_despesa_sobra_positiva(self):
+        self._meta("2024-01", 100.0, "Despesa")
+        self._trans("2024-01", 70.0, "Despesa")
+        self.assertAlmostEqual(
+            finance.calcular_rollover_categoria("Casa", "Aluguel", "Despesa", "2024-02"),
+            30.0, places=2,
+        )
+
+    # --- (2) Despesa com estouro negativo -------------------------------
+    def test_rollover_despesa_estouro_negativo(self):
+        self._meta("2024-01", 100.0, "Despesa")
+        self._trans("2024-01", 130.0, "Despesa")
+        self.assertAlmostEqual(
+            finance.calcular_rollover_categoria("Casa", "Aluguel", "Despesa", "2024-02"),
+            -30.0, places=2,
+        )
+
+    # --- (3) Receita positiva e negativa --------------------------------
+    def test_rollover_receita_positivo(self):
+        self._meta("2024-01", 1000.0, "Receita", pai="Renda", filho="Salario")
+        self._trans("2024-01", 1200.0, "Receita", pai="Renda", filho="Salario")
+        self.assertAlmostEqual(
+            finance.calcular_rollover_categoria("Renda", "Salario", "Receita", "2024-02"),
+            200.0, places=2,
+        )
+
+    def test_rollover_receita_negativo(self):
+        self._meta("2024-01", 1000.0, "Receita", pai="Renda", filho="Salario")
+        self._trans("2024-01", 800.0, "Receita", pai="Renda", filho="Salario")
+        self.assertAlmostEqual(
+            finance.calcular_rollover_categoria("Renda", "Salario", "Receita", "2024-02"),
+            -200.0, places=2,
+        )
+
+    # --- Virada de ano no cálculo do mês anterior -----------------------
+    def test_mes_anterior_trata_virada_de_ano(self):
+        self.assertEqual(finance.mes_anterior("2024-01"), "2023-12")
+        self.assertEqual(finance.mes_anterior("2024-02"), "2024-01")
+        self.assertEqual(finance.mes_anterior("2024-12"), "2024-11")
+
+    # --- (4) Propagação linear cumulativa em 3 meses --------------------
+    def test_propagacao_cumulativa_tres_meses(self):
+        # M1: 100 - 80  = +20
+        self._meta("2024-01", 100.0, "Despesa"); self._trans("2024-01", 80.0, "Despesa")
+        # M2: 100 - 110 = -10  => saldo(M2) = +20 - 10 = +10
+        self._meta("2024-02", 100.0, "Despesa"); self._trans("2024-02", 110.0, "Despesa")
+        # Rollover herdado por M2 = saldo de M1 = +20
+        self.assertAlmostEqual(
+            finance.calcular_rollover_categoria("Casa", "Aluguel", "Despesa", "2024-02"),
+            20.0, places=2,
+        )
+        # Rollover herdado por M3 = saldo acumulado de M1+M2 = +10
+        self.assertAlmostEqual(
+            finance.calcular_rollover_categoria("Casa", "Aluguel", "Despesa", "2024-03"),
+            10.0, places=2,
+        )
+
+    def test_rollover_sem_dados_retorna_zero(self):
+        self.assertEqual(
+            finance.calcular_rollover_categoria("Casa", "Aluguel", "Despesa", "2024-05"),
+            0.0,
+        )
+
+    # --- Janela máxima de 12 meses --------------------------------------
+    def test_rollover_limitado_a_12_meses(self):
+        # 2023-12 está fora da janela de 12 meses anteriores a 2025-01
+        # (janela = 2024-01 .. 2024-12) e NÃO deve ser contabilizado.
+        self._meta("2023-12", 100.0, "Despesa")  # residual +100 (fora da janela)
+        self._meta("2024-01", 100.0, "Despesa"); self._trans("2024-01", 50.0, "Despesa")  # +50
+        self.assertAlmostEqual(
+            finance.calcular_rollover_categoria("Casa", "Aluguel", "Despesa", "2025-01"),
+            50.0, places=2,
+        )
+
+    # --- (5) Robustez: orçamento ajustado e divisão por zero ------------
+    def test_orcamento_ajustado_soma_base_e_rollover(self):
+        self.assertEqual(finance.calcular_orcamento_ajustado(100.0, 20.0), 120.0)
+        self.assertEqual(finance.calcular_orcamento_ajustado(100.0, -150.0), -50.0)
+
+    def test_fracao_progresso_robusta_a_zero_e_negativo(self):
+        # Orçamento ajustado <= 0: nunca divide por zero.
+        self.assertEqual(finance.fracao_progresso(50.0, 0.0), 1.0)
+        self.assertEqual(finance.fracao_progresso(0.0, 0.0), 0.0)
+        self.assertEqual(finance.fracao_progresso(50.0, -20.0), 1.0)
+        # Caso normal: limita entre 0 e 1.
+        self.assertAlmostEqual(finance.fracao_progresso(50.0, 100.0), 0.5, places=2)
+        self.assertEqual(finance.fracao_progresso(200.0, 100.0), 1.0)
+
+    def test_estouro_massivo_anterior_gera_ajustado_negativo_seguro(self):
+        # M1 estoura forte: 100 - 400 = -300 herdado para M2.
+        self._meta("2024-01", 100.0, "Despesa"); self._trans("2024-01", 400.0, "Despesa")
+        roll = finance.calcular_rollover_categoria("Casa", "Aluguel", "Despesa", "2024-02")
+        self.assertAlmostEqual(roll, -300.0, places=2)
+        ajustado = finance.calcular_orcamento_ajustado(100.0, roll)  # -200
+        self.assertEqual(ajustado, -200.0)
+        # A barra deve sair sem crash mesmo com ajustado negativo.
+        self.assertEqual(finance.fracao_progresso(10.0, ajustado), 1.0)
+
+    # --- Configuração global do recurso ---------------------------------
+    def test_seed_rollover_ativo_e_alternancia(self):
+        self.assertTrue(finance.rollover_esta_ativo())  # seed inicial = '1'
+        finance.definir_rollover_ativo(False)
+        self.assertFalse(finance.rollover_esta_ativo())
+        self.assertEqual(
+            database.db_query(
+                "SELECT valor FROM configuracoes WHERE chave='rollover_ativo'"
+            )[0][0],
+            "0",
+        )
+        finance.definir_rollover_ativo(True)
+        self.assertTrue(finance.rollover_esta_ativo())
+
+
+# ===========================================================================
+# (NOVO) REVISÃO E ATRIBUIÇÃO PARA CASAIS (COLABORAÇÃO — MONARCH MONEY)
+# ===========================================================================
+class TestRevisaoCasais(ERPTestBase):
+    """Cobre a migração das colunas de revisão, a atribuição de pendências, a
+    listagem filtrada por usuário e a conclusão (recategorização) da revisão."""
+
+    def setUp(self):
+        super().setUp()
+        auth.criar_usuario("ana", "Senha#1", "Ana", "ana@fam.dev")
+        auth.criar_usuario("bruno", "Senha#2", "Bruno", "bruno@fam.dev")
+        self._add_fonte("Conta Casal", saldo_inicial=1000.0)
+        database.criar_categoria_principal("Casa", "Despesa")
+        id_casa = database.db_query("SELECT id FROM categorias WHERE nome='Casa'")[0][0]
+        database.criar_subcategoria("Aluguel", id_casa)
+        database.criar_subcategoria("Mercado", id_casa)
+        database.criar_categoria_principal("Lazer", "Despesa")
+        id_lazer = database.db_query("SELECT id FROM categorias WHERE nome='Lazer'")[0][0]
+        database.criar_subcategoria("Cinema", id_lazer)
+
+    def _add_pendente(self, atribuido, nota="orig", pai="Casa", filho="Aluguel"):
+        self._add_transacao(
+            data="2024-02-01", categoria_pai=pai, categoria_filho=filho,
+            beneficiario="Loja", fonte="Conta Casal", valor_eur=100.0,
+            tipo="Despesa", nota=nota, usuario="ana",
+            forma_pagamento="Dinheiro/Débito", status_liquidacao="PAGO",
+            status_revisao="PENDENTE", atribuido_a=atribuido,
+        )
+        return database.db_query(
+            "SELECT id FROM transacoes WHERE nota=? AND atribuido_a=?",
+            (nota, atribuido),
+        )[0][0]
+
+    # --- (1) Migração das colunas de revisão ----------------------------
+    def test_colunas_revisao_criadas_na_migracao(self):
+        cols = [c[1] for c in database.db_query("PRAGMA table_info(transacoes)")]
+        self.assertIn("status_revisao", cols)
+        self.assertIn("atribuido_a", cols)
+
+    def test_status_revisao_default_revisado(self):
+        # Lançamento normal (sem informar a coluna) nasce como REVISADO.
+        self._add_transacao(
+            data="2024-01-01", categoria_pai="Casa", categoria_filho="Aluguel",
+            fonte="Conta Casal", valor_eur=10.0, tipo="Despesa",
+        )
+        v = database.db_query("SELECT status_revisao FROM transacoes")[0][0]
+        self.assertEqual(v, "REVISADO")
+
+    # --- (2) Lançamento pendente com atribuição correta -----------------
+    def test_lancamento_pendente_atribuido_aparece_na_fila(self):
+        self._add_pendente("ana", nota="conta de luz")
+        pend = finance.listar_transacoes_pendentes_revisao("ana")
+        self.assertEqual(len(pend), 1)
+        self.assertEqual(pend[0]["nota"], "conta de luz")
+        self.assertEqual(finance.contar_pendencias_revisao("ana"), 1)
+
+    # --- (3) Listagem filtrada por usuário (A não vê pendências de B) ----
+    def test_filtragem_isola_pendencias_por_usuario(self):
+        self._add_pendente("ana", nota="da ana")
+        self._add_pendente("bruno", nota="do bruno")
+        pend_ana = finance.listar_transacoes_pendentes_revisao("ana")
+        pend_bruno = finance.listar_transacoes_pendentes_revisao("bruno")
+        self.assertEqual(len(pend_ana), 1)
+        self.assertEqual(len(pend_bruno), 1)
+        self.assertEqual(pend_ana[0]["nota"], "da ana")
+        self.assertEqual(pend_bruno[0]["nota"], "do bruno")
+        self.assertEqual(finance.contar_pendencias_revisao("ana"), 1)
+
+    # --- (4) Conclusão de revisão: recategoriza, marca REVISADO, some ----
+    def test_concluir_revisao_atualiza_e_remove_da_fila(self):
+        tid = self._add_pendente("ana", nota="original")
+        finance.concluir_revisao_transacao(
+            tid, "Lazer", "Cinema", "nota revisada", usuario_revisor="ana"
+        )
+        row = database.db_query(
+            "SELECT categoria_pai, categoria_filho, nota, status_revisao "
+            "FROM transacoes WHERE id=?",
+            (tid,),
+        )[0]
+        self.assertEqual(row, ("Lazer", "Cinema", "nota revisada", "REVISADO"))
+        # Saiu da fila de pendências da Ana.
+        self.assertEqual(finance.listar_transacoes_pendentes_revisao("ana"), [])
+        self.assertEqual(finance.contar_pendencias_revisao("ana"), 0)
+
+    def test_concluir_revisao_rejeita_subcategoria_de_outro_pai(self):
+        # "Cinema" é filho de "Lazer"; não pode ser aceito sob "Casa".
+        tid = self._add_pendente("ana", nota="hierarquia")
+        with self.assertRaises(ValueError):
+            finance.concluir_revisao_transacao(
+                tid, "Casa", "Cinema", "x", usuario_revisor="ana"
+            )
+        # Continua pendente (nada foi alterado).
+        self.assertEqual(finance.contar_pendencias_revisao("ana"), 1)
+
+    def test_pagina_revisao_registrada_no_menu_para_todos(self):
+        import pages_config
+        chaves_comum = {p["key"] for p in pages_config.get_pages(is_admin=False)}
+        chaves_admin = {p["key"] for p in pages_config.get_pages(is_admin=True)}
+        self.assertIn("revisao", chaves_comum)
+        self.assertIn("revisao", chaves_admin)
 
 
 # ---------------------------------------------------------------------------

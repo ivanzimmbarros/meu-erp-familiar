@@ -71,6 +71,15 @@ with st.form("f_novo_final", clear_on_submit=True):
     benef_sel = st.selectbox("Beneficiário", [""] + benef_list)
     nota_in = st.text_input("Observação Adicional")
 
+    # --- Revisão cooperativa (opcional) ---
+    enviar_revisao = st.checkbox("⚠️ Enviar para Revisão Familiar")
+    usuarios_lista = [u[0] for u in db_query("SELECT username FROM usuarios ORDER BY username")]
+    revisor_sel = st.selectbox(
+        "Atribuir revisão a (parceiro/membro)",
+        usuarios_lista if usuarios_lista else ["Nenhum usuário cadastrado"],
+        help="O membro selecionado deverá classificar e revisar este lançamento.",
+    )
+
     if st.form_submit_button("💾 SALVAR REGISTRO"):
         campos_invalidos = []
         # Hierarquia obrigatória: Natureza -> Categoria Principal -> Subcategoria.
@@ -104,6 +113,12 @@ with st.form("f_novo_final", clear_on_submit=True):
 
                 parcs = calcular_parcelas(data_in.strftime("%Y-%m-%d"), c_inf[1], c_inf[2], valor_in, parc_in, is_cc)
 
+                # Revisão cooperativa: define status e responsável pela triagem.
+                if enviar_revisao and usuarios_lista and revisor_sel in usuarios_lista:
+                    st_rev, atribuido = "PENDENTE", revisor_sel
+                else:
+                    st_rev, atribuido = "REVISADO", None
+
                 ops = []
                 for i, (p_d, p_v, p_n) in enumerate(parcs):
                     if is_cc:
@@ -113,8 +128,8 @@ with st.form("f_novo_final", clear_on_submit=True):
 
                     f_ref = calcular_fatura_ref(p_d, c_inf[1]) if is_cc else None
 
-                    ops.append(("INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, fatura_ref, status_liquidacao) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                (p_d, pai_sel, filho_sel, benef_sel, fonte_sel, p_v, tipo_sel, f"{nota_in} ({p_n}/{parc_in})" if parc_in > 1 else nota_in, st.session_state.user, forma_sel, c_inf[0], f_ref, st_liq)))
+                    ops.append(("INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, fonte, valor_eur, tipo, nota, usuario, forma_pagamento, cartao_id, fatura_ref, status_liquidacao, status_revisao, atribuido_a) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                (p_d, pai_sel, filho_sel, benef_sel, fonte_sel, p_v, tipo_sel, f"{nota_in} ({p_n}/{parc_in})" if parc_in > 1 else nota_in, st.session_state.user, forma_sel, c_inf[0], f_ref, st_liq, st_rev, atribuido)))
 
                 db_execute_many(ops)
                 # Sinaliza sucesso + reset dos seletores reativos no próximo run.
