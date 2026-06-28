@@ -7,7 +7,11 @@
 ║  REQUISITO: Executar na mesma pasta onde está finance.db     ║
 ╚══════════════════════════════════════════════════════════════╝
 """
-import sqlite3, hashlib, getpass, sys, os
+import sqlite3, getpass, sys, os
+
+# Usa o MESMO formato de hash (PBKDF2) do sistema principal, garantindo que
+# senhas redefinidas por esta ferramenta sejam aceitas no login do app.
+from auth import hash_password
 
 DB_PATH = "finance.db"
 
@@ -57,7 +61,7 @@ def redefinir_senha(conn):
         print("\n❌ Senha muito curta (mínimo 6 caracteres).")
         return
 
-    pwd_hash = hashlib.sha256(nova_senha.encode()).hexdigest()
+    pwd_hash = hash_password(nova_senha)
     conn.execute(
         "UPDATE usuarios SET password=?, force_reset=0 WHERE username=?",
         (pwd_hash, username)
@@ -76,7 +80,7 @@ def criar_admin_emergencia(conn):
 
     senha = getpass.getpass("Senha para o admin de emergência: ")
     email = input("E-mail (pode ser fictício, ex: admin@local.dev): ").strip()
-    pwd_hash = hashlib.sha256(senha.encode()).hexdigest()
+    pwd_hash = hash_password(senha)
 
     # Tenta INSERT, se já existe faz UPDATE
     existing = conn.execute("SELECT id FROM usuarios WHERE username='admin_emergencia'").fetchone()

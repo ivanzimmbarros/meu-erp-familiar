@@ -1,0 +1,19 @@
+# Segredos (nunca versionar credenciais)
+.streamlit/secrets.toml
+
+# Banco de dados local e arquivos auxiliares do SQLite
+finance.db
+finance.db-wal
+finance.db-shm
+finance.db-journal
+*.db
+
+# Caches Python / pytest
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
