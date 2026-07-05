@@ -2,7 +2,7 @@
 
 > Sistema de gestão financeira familiar construído em **Python + Streamlit + SQLite**.
 > Arquitetura modular, núcleo desacoplado da interface, segurança com PBKDF2 + 2FA e
-> rede de segurança de **129 testes automatizados**.
+> rede de segurança de **135 testes automatizados**.
 
 ---
 
@@ -14,16 +14,17 @@ O projeto foi refatorado de um `app.py` monolítico para uma arquitetura **modul
 
 | Arquivo | Camada | Responsabilidade |
 |---------|--------|------------------|
-| `database.py` | Dados | Conexão SQLite com **pool/cache** (lock reentrante), schema, migrações, **8 índices**, primitivas de acesso (`db_execute`, `db_query`, `db_df`, `db_execute_many`), normalização de texto, funções de cadastro anti-duplicado, leitura hierárquica de categorias e **backup/restauração**. |
+| `database.py` | Dados | Conexão SQLite com **pool/cache** (lock reentrante), schema, migrações, **11 índices**, primitivas de acesso (`db_execute`, `db_query`, `db_df`, `db_execute_many`), normalização de texto, funções de cadastro anti-duplicado, leitura hierárquica de categorias e **backup/restauração**. |
 | `auth.py` | Segurança | Hash/verificação **PBKDF2-HMAC-SHA256 + salt** (com retrocompatibilidade SHA-256), OTP/2FA por e-mail (SMTP), autenticação, criação de usuários (com `force_reset`), recuperação e troca obrigatória de senha. |
-| `finance.py` | Negócio | Cálculos financeiros: parcelamento (offset linear de cartão), `fatura_ref`, saldos (real/comprometido/disponível **com previsão de assinaturas**), transferências (soma zero), liquidação, **travas de exclusão**, **CRUD + lógica preditiva de assinaturas**, **rollover de metas (envelopes)** e **revisão/atribuição para casais**. |
+| `import_parser.py` | Negócio | Leitura pura de extratos **OFX/CSV** para o módulo de importação (sem Streamlit). |
+| `finance.py` | Negócio | Cálculos financeiros: parcelamento (offset linear de cartão), `fatura_ref`, saldos (real/comprometido/disponível **com previsão de assinaturas**), transferências (soma zero), liquidação, **travas de exclusão**, **CRUD + lógica preditiva de assinaturas**, **rollover de metas (envelopes)**, **revisão/atribuição para casais** e **importação de extratos (staging, classificação, auditoria)**. |
 | `reports.py` | Relatórios | Geração do relatório gerencial **Excel de 3 abas** (`Transacoes`, `Metas`, `Resumo_Saldos`) — puro, sem Streamlit. |
 | `ui_state.py` | UI (puro) | `limpar_campos_sessao()`: reset de campos de formulário (por prefixo/chave) após commit, preservando o estado de sessão (login). |
 | `pages_config.py` | Navegação | Fonte única das rotas/páginas e regras de permissão por perfil (`get_pages(is_admin)`). Puro, testável. |
 | `app.py` | UI / Entrypoint | Configuração global, CSS, bootstrap do banco, **gate de login global**, sidebar comum (incl. **alertas de contas vencidas e de revisões pendentes**) e `st.navigation`. |
-| `views/*.py` | UI | Uma página por arquivo (Novos Lançamentos, Histórico, **Revisão**, Saldos, Cartões, **Assinaturas**, Metas, Dashboards, Transferências, Gestão Geral). |
+| `views/*.py` | UI | Uma página por arquivo (Novos Lançamentos, **Importador**, Histórico, **Revisão**, Saldos, Cartões, **Assinaturas**, Metas, Dashboards, Transferências, Gestão Geral). |
 | `emergency_reset.py` | CLI | Ferramenta de recuperação fora do app (reset de senha / admin de emergência) usando o mesmo hash PBKDF2. |
-| `test_erp_core.py` | QA | Suíte com 129 testes cobrindo banco, segurança, regras de negócio, relatórios, permissões, limpeza de formulários, **assinaturas, rollover de metas e revisão de casais**. |
+| `test_erp_core.py` | QA | Suíte com **135 testes** cobrindo banco, segurança, regras de negócio, relatórios, permissões, limpeza de formulários, **assinaturas, rollover de metas, revisão de casais** e **importação de extratos**. |
 
 ### 1.2 Fluxo de segurança de rotas
 
@@ -151,7 +152,32 @@ O projeto foi refatorado de um `app.py` monolítico para uma arquitetura **modul
 | `categoria_filho` | TEXT | Subcategoria (obrigatória, hierarquia estrita) |
 | `ativa` | INTEGER | DEFAULT `1` — `1` ativa (entra na previsão) / `0` pausada |
 
-### 2.2 Índices de performance (8)
+#### `importacoes_staging` (buffer de revisão de extratos)
+| Campo | Tipo | Restrições / Notas |
+|-------|------|--------------------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT |
+| `raw_descricao` | TEXT | descrição bruta do extrato |
+| `data` | TEXT | `YYYY-MM-DD` |
+| `valor_eur` | REAL | sempre positivo (natureza define o sinal lógico) |
+| `natureza` | TEXT | `'Receita'`/`'Despesa'` |
+| `categoria_pai` | TEXT | preenchida na revisão ou pela auto-classificação |
+| `categoria_filho` | TEXT | subcategoria |
+| `beneficiario` | TEXT | opcional; limpo pelo botão **Analisar** |
+| `nota` | TEXT | observação adicional do usuário |
+| `fonte_destino` | TEXT | conta bancária de destino |
+
+> Persistido em disco para resistir a reruns/expiração de sessão do Streamlit.
+
+#### `auditoria_sistema` (trilha operacional)
+| Campo | Tipo | Restrições |
+|-------|------|------------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT |
+| `timestamp` | TEXT | `YYYY-MM-DD HH:MM:SS` |
+| `usuario` | TEXT | autor da ação |
+| `acao` | TEXT | ex.: `UPLOAD_EXTRATO`, `EXCLUSAO_STAGING`, `ANALISE_STAGING`, `CONTABILIZACAO_LOTE` |
+| `detalhes` | TEXT | resumo textual da operação |
+
+### 2.2 Índices de performance (11)
 
 Criados sobre as consultas mais frequentes (saldos, faturas, auditoria, previsão de assinaturas e fila de revisão):
 
@@ -163,6 +189,9 @@ Criados sobre as consultas mais frequentes (saldos, faturas, auditoria, previsã
 6. `idx_transacoes_fonte_tipo_status` → `transacoes(fonte, tipo, status_liquidacao)` (índice composto p/ cálculo de saldos)
 7. `idx_assinaturas_conta_ativa` → `assinaturas(conta_padrao, ativa)` (previsão de assinaturas ativas por conta)
 8. `idx_transacoes_revisao` → `transacoes(atribuido_a, status_revisao)` (fila de revisão por usuário)
+9. `idx_transacoes_data_nota` → `transacoes(data, nota)` (motor de auto-classificação)
+10. `idx_transacoes_nota` → `transacoes(nota)` (busca por descrição bruta)
+11. `idx_staging_fonte` → `importacoes_staging(fonte_destino)` (buffer filtrado por conta)
 
 ---
 
@@ -177,6 +206,20 @@ Criados sobre as consultas mais frequentes (saldos, faturas, auditoria, previsã
 - **Saída:** uma linha por parcela em `transacoes` (via `db_execute_many`). Após o commit, exibe sucesso e **limpa o formulário** (`clear_on_submit`) e reseta os seletores reativos (`ui_state.limpar_campos_sessao`).
 - **Revisão cooperativa (opcional):** a seção **"⚠️ Enviar para Revisão Familiar"** (checkbox + seletor com os usuários de `usuarios`) permite delegar a classificação do lançamento a outro membro. Quando ativada, todas as parcelas são gravadas com `status_revisao='PENDENTE'` e `atribuido_a=<username do parceiro>`; quando inativa, o lançamento nasce `status_revisao='REVISADO'` e `atribuido_a=NULL` (comportamento padrão).
 - **Conexões:** `database` (leitura de categorias/contas/cartões/usuários e escrita), `finance` (parcelas/fatura/status), `ui_state` (reset).
+
+### a2) Importador de Extratos (`views/importador.py`)
+- **Entradas:** Conta de Destino (obrigatória), upload `.OFX`/`.CSV`, revisão linha a linha com cascata Natureza → Categoria → Subcategoria → Beneficiário.
+- **Trava de conta (Req. 1):** sem conta selecionada, o upload exibe `st.error` e não processa o arquivo.
+- **Buffer persistente (Req. 2/3):** linhas ficam em `importacoes_staging` até contabilização ou exclusão — sobrevivem a reruns do Streamlit.
+- **Processamento:**
+  - `import_parser.parse_arquivo_extrato` normaliza OFX/CSV para linhas padronizadas.
+  - `finance.inserir_upload_no_staging` grava no buffer e aplica **auto-classificação** (`finance.classificar_por_descricao`) buscando a transação mais recente com a mesma descrição em `nota`.
+  - **Analisar:** `finance.analisar_staging` varre o histórico com correspondência exata e por padrão normalizado; preenche categorias e **limpa beneficiário**.
+  - **Contabilizar Selecionados:** `finance.contabilizar_staging` insere em `transacoes` preservando a descrição bruta em `nota` (Req. 4), **sem apagar** lançamentos pré-existentes na mesma data (Req. 5).
+- **Auditoria:** cada upload, exclusão, análise e contabilização grava em `auditoria_sistema` via `finance.registrar_auditoria`.
+- **Atalhos (Req. 8):** caption orientando abrir **Gestão Geral** para cadastrar beneficiários/categorias sem perder o buffer.
+- **Menu:** página **📥 Importador** visível a todos os perfis logados.
+- **Conexões:** `import_parser`, `database` (categorias/contas), `finance` (staging, classificação, auditoria).
 
 ### b) Histórico e Auditoria (`views/historico.py`)
 - **Entradas/Filtros:** Tipo (Todos/Despesa/Receita), Conta/Cartão, Busca livre (nota/beneficiário), Categoria e Subcategoria (cascata reativa filtrada por Natureza).
@@ -271,9 +314,9 @@ Como reutiliza `auth.hash_password`, qualquer senha redefinida por aqui é aceit
 
 ## 5. Cobertura da Suíte de Testes (`test_erp_core.py`)
 
-A rede de segurança possui **129 testes** que isolam o banco em um SQLite temporário por teste (sem tocar o `finance.db` real) e validam o núcleo sem depender da UI:
+A rede de segurança possui **135 testes** que isolam o banco em um SQLite temporário por teste (sem tocar o `finance.db` real) e validam o núcleo sem depender da UI:
 
-- **Inicialização do banco:** tabelas, coluna `force_reset`, taxa padrão e os **6 índices**.
+- **Inicialização do banco:** tabelas (incl. `importacoes_staging` e `auditoria_sistema`), coluna `force_reset`, taxa padrão e os **11 índices**.
 - **Usuário e senha (PBKDF2):** formato do hash, salt aleatório, verificação correta/incorreta, retrocompatibilidade SHA-256, e `force_reset` (admin semente e novos usuários).
 - **Gestão de contas e recuperação:** duplicidade de login, troca obrigatória, recuperação por e-mail.
 - **Parcelas e cartão:** distribuição de centavos, datas mensais, offset do cartão, **1ª parcela nunca antes da compra**, ano bissexto/dia 31, parcelas=0 e valor inválido.
@@ -293,6 +336,7 @@ A rede de segurança possui **129 testes** que isolam o banco em um SQLite tempo
 - **Assinaturas e Contas Fixas (12 testes):** criação do schema no `init_db`; persistência de campos; **não-duplicidade sob normalização** (acentos/caixa/espaços); validações de domínio (valor ≤ 0, dia fora de 1–31); ordenação por dia de vencimento; **lógica preditiva** do comprometido (assinatura não paga soma; **some após o pagamento**); pausa removendo da previsão; isolamento por conta; **baixa unitária** (cria `Despesa`/`PAGO` herdando dados) e **em lote**; registro da página no menu.
 - **Rollover de Metas (12 testes):** saldo residual de **Despesa** (sobra positiva / estouro negativo) e de **Receita** (positivo / negativo); virada de ano no cálculo do mês anterior; **propagação linear cumulativa em 3 meses**; ausência de dados → 0; **janela máxima de 12 meses**; soma do orçamento ajustado; **robustez a divisão por zero / ajustado ≤ 0**; estouro massivo gerando ajustado negativo seguro; seed e alternância de `rollover_ativo`.
 - **Revisão e Atribuição para Casais (7 testes):** **migração** das colunas `status_revisao`/`atribuido_a` e default `REVISADO`; lançamento pendente atribuído entrando na fila; **filtragem isolada por usuário** (A não vê pendências de B); **conclusão da revisão** (recategoriza, salva nota, marca `REVISADO` e sai da fila); rejeição de subcategoria de outro pai (trava de hierarquia); página visível para todos os perfis.
+- **Importação de Extratos (6 testes):** trava de conta obrigatória; **herança de classificação** em importações consecutivas; **preservação de lançamentos manuais** na mesma data; botão **Analisar** (mapeamento retroativo + beneficiário em branco); gravação de logs em `auditoria_sistema`; página registrada no menu.
 
 ---
 
@@ -301,7 +345,7 @@ A rede de segurança possui **129 testes** que isolam o banco em um SQLite tempo
 ```bash
 pip install -r requirements.txt
 streamlit run app.py            # aplicação
-python -m pytest -q test_erp_core.py   # suíte de testes (129)
+python -m pytest -q test_erp_core.py   # suíte de testes (135)
 python emergency_reset.py       # recuperação de emergência (CLI)
 ```
 

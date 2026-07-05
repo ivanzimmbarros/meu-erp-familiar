@@ -253,6 +253,10 @@ TABLES = [
     "CREATE TABLE IF NOT EXISTS orcamentos (id INTEGER PRIMARY KEY AUTOINCREMENT, mes_ano TEXT, categoria_pai TEXT, categoria_filho TEXT DEFAULT 'Geral', valor_previsto REAL, tipo_meta TEXT, UNIQUE(mes_ano, categoria_pai, categoria_filho, tipo_meta))",
     "CREATE TABLE IF NOT EXISTS transacoes (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, categoria_pai TEXT, categoria_filho TEXT, beneficiario TEXT, fonte TEXT, valor_eur REAL, tipo TEXT, nota TEXT, usuario TEXT, forma_pagamento TEXT DEFAULT 'Dinheiro/Débito', cartao_id INTEGER, fatura_ref TEXT, status_cartao TEXT DEFAULT 'pendente', status_liquidacao TEXT DEFAULT 'PAGO', data_liquidacao TEXT, parcela_id TEXT, parcela_numero INTEGER DEFAULT 1, total_parcelas INTEGER DEFAULT 1)",
     "CREATE TABLE IF NOT EXISTS assinaturas (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, valor_eur REAL, dia_vencimento INTEGER, conta_padrao TEXT, categoria_pai TEXT, categoria_filho TEXT, ativa INTEGER DEFAULT 1)",
+    # Buffer de importação (resiste a reruns/expiração de sessão Streamlit).
+    "CREATE TABLE IF NOT EXISTS importacoes_staging (id INTEGER PRIMARY KEY AUTOINCREMENT, raw_descricao TEXT, data TEXT, valor_eur REAL, natureza TEXT, categoria_pai TEXT, categoria_filho TEXT, beneficiario TEXT, nota TEXT, fonte_destino TEXT)",
+    # Trilha de auditoria operacional (upload, staging, contabilização).
+    "CREATE TABLE IF NOT EXISTS auditoria_sistema (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, usuario TEXT, acao TEXT, detalhes TEXT)",
 ]
 
 MIGRATIONS = [
@@ -274,6 +278,10 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_transacoes_fonte_tipo_status ON transacoes(fonte, tipo, status_liquidacao)",
     "CREATE INDEX IF NOT EXISTS idx_assinaturas_conta_ativa ON assinaturas(conta_padrao, ativa)",
     "CREATE INDEX IF NOT EXISTS idx_transacoes_revisao ON transacoes(atribuido_a, status_revisao)",
+    # Motor de auto-classificação: buscas por data + descrição bruta em nota.
+    "CREATE INDEX IF NOT EXISTS idx_transacoes_data_nota ON transacoes(data, nota)",
+    "CREATE INDEX IF NOT EXISTS idx_transacoes_nota ON transacoes(nota)",
+    "CREATE INDEX IF NOT EXISTS idx_staging_fonte ON importacoes_staging(fonte_destino)",
 ]
 
 

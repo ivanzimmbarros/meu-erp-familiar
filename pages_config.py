@@ -21,6 +21,7 @@ esta configuração para montar os objetos `st.Page` / `st.navigation`.
 # Usar `views/` elimina a descoberta automática e mantém o login intacto.
 PAGES = [
     {"key": "novos_lancamentos", "file": "views/novos_lancamentos.py", "title": "Novos Lançamentos", "icon": "➕", "admin_only": False, "default": True},
+    {"key": "importador",       "file": "views/importador.py",       "title": "Importador",         "icon": "📥", "admin_only": False, "default": False},
     {"key": "historico",        "file": "views/historico.py",        "title": "Histórico",          "icon": "📋", "admin_only": False, "default": False},
     {"key": "revisao",          "file": "views/revisao.py",          "title": "Revisão",            "icon": "🔍", "admin_only": False, "default": False},
     {"key": "saldos",           "file": "views/saldos.py",           "title": "Saldos",             "icon": "💰", "admin_only": False, "default": False},

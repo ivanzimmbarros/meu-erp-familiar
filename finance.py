@@ -539,3 +539,249 @@ def liquidar_transacao(trans_id, tipo, usuario=None):
         "UPDATE transacoes SET status_liquidacao=?, data_liquidacao=? WHERE id=?",
         (status, date.today().strftime("%Y-%m-%d"), trans_id),
     )
+
+
+# ---------------------------------------------------------------------------
+# IMPORTAÇÃO DE EXTRATOS (STAGING, CLASSIFICAÇÃO E AUDITORIA)
+# ---------------------------------------------------------------------------
+class ContaDestinoObrigatoriaError(ValueError):
+    """Levantada quando o upload é tentado sem conta de destino selecionada."""
+
+
+def registrar_auditoria(usuario, acao, detalhes=""):
+    """Grava um evento na trilha de auditoria operacional."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db_execute(
+        "INSERT INTO auditoria_sistema (timestamp, usuario, acao, detalhes) VALUES (?,?,?,?)",
+        (ts, usuario or "sistema", acao, detalhes or ""),
+    )
+
+
+def classificar_por_descricao(raw_descricao):
+    """Auto-classificação (Req. 6): busca a transação mais recente com a mesma
+    descrição exata em `nota` e devolve (natureza, categoria_pai, categoria_filho).
+
+    Retorna (None, None, None) se não houver correspondência."""
+    desc = (raw_descricao or "").strip()
+    if not desc:
+        return None, None, None
+    rows = db_query(
+        "SELECT tipo, categoria_pai, categoria_filho FROM transacoes "
+        "WHERE nota=? ORDER BY data DESC, id DESC LIMIT 1",
+        (desc,),
+    )
+    if rows:
+        return rows[0]
+    return None, None, None
+
+
+def _buscar_classificacao_historico(raw_descricao):
+    """Varredura retroativa no histórico: correspondência exata e, em seguida,
+    padrão normalizado (substring) na descrição bruta."""
+    desc = (raw_descricao or "").strip()
+    if not desc:
+        return None, None, None
+    exata = classificar_por_descricao(desc)
+    if exata[0]:
+        return exata
+    alvo = normalizar_texto(desc)
+    if not alvo:
+        return None, None, None
+    rows = db_query(
+        "SELECT tipo, categoria_pai, categoria_filho, nota FROM transacoes "
+        "WHERE nota IS NOT NULL AND TRIM(nota) != '' "
+        "ORDER BY data DESC, id DESC"
+    )
+    for tipo, pai, filho, nota in rows:
+        nn = normalizar_texto(nota)
+        if nn == alvo or alvo in nn or nn in alvo:
+            return tipo, pai, filho
+    return None, None, None
+
+
+def listar_staging(fonte_destino=None):
+    """Retorna linhas do buffer de importação, opcionalmente filtradas por conta."""
+    if fonte_destino:
+        return db_query(
+            "SELECT id, raw_descricao, data, valor_eur, natureza, categoria_pai, "
+            "categoria_filho, beneficiario, nota, fonte_destino "
+            "FROM importacoes_staging WHERE fonte_destino=? ORDER BY data, id",
+            (fonte_destino,),
+        )
+    return db_query(
+        "SELECT id, raw_descricao, data, valor_eur, natureza, categoria_pai, "
+        "categoria_filho, beneficiario, nota, fonte_destino "
+        "FROM importacoes_staging ORDER BY data, id"
+    )
+
+
+def inserir_upload_no_staging(linhas, fonte_destino, usuario=None):
+    """Insere linhas parseadas no staging aplicando auto-classificação inicial.
+
+    Levanta ContaDestinoObrigatoriaError se a conta não estiver definida."""
+    conta = (fonte_destino or "").strip()
+    if not conta:
+        raise ContaDestinoObrigatoriaError(
+            "Selecione a conta de destino antes de importar o arquivo."
+        )
+    if not linhas:
+        raise ValueError("Nenhuma linha para importar.")
+
+    ops = []
+    for linha in linhas:
+        raw = (linha.get("raw_descricao") or "").strip()
+        data = linha.get("data")
+        valor = linha.get("valor_eur")
+        natureza = linha.get("natureza")
+        if not raw or not data or valor is None:
+            continue
+        tipo_auto, pai_auto, filho_auto = classificar_por_descricao(raw)
+        if tipo_auto:
+            natureza = natureza or tipo_auto
+            pai, filho = pai_auto, filho_auto
+        else:
+            pai, filho = None, None
+        ops.append((
+            "INSERT INTO importacoes_staging "
+            "(raw_descricao, data, valor_eur, natureza, categoria_pai, "
+            "categoria_filho, beneficiario, nota, fonte_destino) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (raw, data, float(valor), natureza, pai, filho, "", "", conta),
+        ))
+    if not ops:
+        raise ValueError("Nenhuma linha válida para inserir no staging.")
+    db_execute_many(ops)
+    registrar_auditoria(
+        usuario, "UPLOAD_EXTRATO",
+        f"{len(ops)} linha(s) em '{conta}'",
+    )
+    return len(ops)
+
+
+def atualizar_linha_staging(staging_id, raw_descricao, data, valor_eur, natureza,
+                            categoria_pai, categoria_filho, beneficiario, nota):
+    """Persiste edições manuais de uma linha do buffer."""
+    db_execute(
+        "UPDATE importacoes_staging SET raw_descricao=?, data=?, valor_eur=?, "
+        "natureza=?, categoria_pai=?, categoria_filho=?, beneficiario=?, nota=? "
+        "WHERE id=?",
+        (raw_descricao, data, valor_eur, natureza, categoria_pai,
+         categoria_filho, beneficiario or "", nota or "", staging_id),
+    )
+
+
+def excluir_staging(ids, usuario=None):
+    """Remove linhas do buffer por id. Retorna quantidade excluída."""
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    db_execute(
+        f"DELETE FROM importacoes_staging WHERE id IN ({placeholders})",
+        tuple(ids),
+    )
+    registrar_auditoria(
+        usuario, "EXCLUSAO_STAGING", f"{len(ids)} linha(s) removida(s)",
+    )
+    return len(ids)
+
+
+def analisar_staging(fonte_destino=None, usuario=None):
+    """Botão Analisar (Req. 7): preenche categorias via histórico e limpa beneficiário."""
+    rows = listar_staging(fonte_destino)
+    atualizados = 0
+    for sid, raw, *_ in rows:
+        tipo, pai, filho = _buscar_classificacao_historico(raw)
+        if tipo and pai and filho:
+            db_execute(
+                "UPDATE importacoes_staging SET natureza=?, categoria_pai=?, "
+                "categoria_filho=?, beneficiario=? WHERE id=?",
+                (tipo, pai, filho, "", sid),
+            )
+            atualizados += 1
+    if usuario:
+        registrar_auditoria(
+            usuario, "ANALISE_STAGING",
+            f"{atualizados} linha(s) classificada(s) automaticamente",
+        )
+    return atualizados
+
+
+def contabilizar_staging(ids, usuario, fonte_destino=None):
+    """Move linhas selecionadas do staging para `transacoes` (Req. 4 e 5).
+
+    Preserva a descrição bruta em `nota`, insere sem apagar lançamentos
+    pré-existentes na mesma data."""
+    if not ids:
+        raise ValueError("Nenhuma linha selecionada para contabilizar.")
+
+    placeholders = ",".join("?" * len(ids))
+    rows = db_query(
+        f"SELECT id, raw_descricao, data, valor_eur, natureza, categoria_pai, "
+        f"categoria_filho, beneficiario, nota, fonte_destino "
+        f"FROM importacoes_staging WHERE id IN ({placeholders})",
+        tuple(ids),
+    )
+    if not rows:
+        raise ValueError("Registros de staging não encontrados.")
+
+    ops = []
+    contabilizados = 0
+    for row in rows:
+        sid, raw, data, valor, natureza, pai, filho, benef, nota_extra, fonte = row
+        if fonte_destino and fonte != fonte_destino:
+            raise ValueError(
+                f"Linha {sid} pertence a outra conta de destino."
+            )
+        if not (natureza or "").strip():
+            raise ValueError(
+                f"Linha {sid}: selecione a Natureza antes de contabilizar."
+            )
+        if not (pai or "").strip() or not (filho or "").strip():
+            raise ValueError(
+                f"Linha {sid}: selecione Categoria e Subcategoria."
+            )
+        if not (fonte or "").strip():
+            raise ValueError(f"Linha {sid}: conta de destino não definida.")
+        if valor is None or float(valor) <= 0:
+            raise ValueError(f"Linha {sid}: valor inválido.")
+
+        id_pai = db_query(
+            "SELECT id FROM categorias WHERE nome=? AND pai_id IS NULL", (pai,),
+        )
+        if not id_pai or not subcategoria_pertence(id_pai[0][0], filho):
+            raise ValueError(
+                f"Linha {sid}: hierarquia de categorias inválida."
+            )
+
+        status = determinar_status_operacao(natureza)
+        nota_final = (raw or "").strip()
+        extra = (nota_extra or "").strip()
+        if extra and extra != nota_final:
+            nota_final = f"{nota_final} | {extra}" if nota_final else extra
+
+        ops.append((
+            "INSERT INTO transacoes (data, categoria_pai, categoria_filho, beneficiario, "
+            "fonte, valor_eur, tipo, nota, usuario, forma_pagamento, status_liquidacao) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (data, pai, filho, benef or "", fonte, float(valor), natureza,
+             nota_final, usuario, "Dinheiro/Débito", status),
+        ))
+        ops.append(("DELETE FROM importacoes_staging WHERE id=?", (sid,)))
+        contabilizados += 1
+
+    db_execute_many(ops)
+    registrar_auditoria(
+        usuario, "CONTABILIZACAO_LOTE",
+        f"{contabilizados} transação(ões) importada(s)",
+    )
+    return contabilizados
+
+
+def contar_auditoria(acao=None):
+    """Conta registros de auditoria, opcionalmente filtrados por ação."""
+    if acao:
+        return db_query(
+            "SELECT COUNT(*) FROM auditoria_sistema WHERE acao=?", (acao,),
+        )[0][0] or 0
+    return db_query("SELECT COUNT(*) FROM auditoria_sistema")[0][0] or 0
+

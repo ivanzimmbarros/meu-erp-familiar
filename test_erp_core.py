@@ -86,6 +86,7 @@ class TestInicializacaoBanco(ERPTestBase):
     TABELAS_ESPERADAS = {
         "usuarios", "fontes", "saldos_iniciais", "beneficiarios",
         "configuracoes", "categorias", "cartoes", "orcamentos", "transacoes",
+        "importacoes_staging", "auditoria_sistema",
     }
 
     def test_todas_as_tabelas_criadas(self):
@@ -115,6 +116,9 @@ class TestInicializacaoBanco(ERPTestBase):
             "idx_transacoes_status_liquidacao",
             "idx_transacoes_fatura_ref",
             "idx_transacoes_data",
+            "idx_transacoes_data_nota",
+            "idx_transacoes_nota",
+            "idx_staging_fonte",
         }
         faltando = esperados - indices
         self.assertFalse(faltando, f"Índices ausentes: {faltando}")
@@ -563,8 +567,8 @@ class TestPaginasEPermissoes(unittest.TestCase):
 # ===========================================================================
 class TestArquiteturaModular(unittest.TestCase):
     def test_modulos_de_nucleo_nao_importam_streamlit(self):
-        # database/finance/auth devem ser puros (sem dependência de UI).
-        for nome in ("database", "finance", "auth"):
+        # database/finance/auth/import_parser devem ser puros (sem dependência de UI).
+        for nome in ("database", "finance", "auth", "import_parser"):
             mod = importlib.import_module(nome)
             fonte = open(mod.__file__, encoding="utf-8").read()
             self.assertNotIn(
@@ -1340,6 +1344,139 @@ class TestRevisaoCasais(ERPTestBase):
         chaves_admin = {p["key"] for p in pages_config.get_pages(is_admin=True)}
         self.assertIn("revisao", chaves_comum)
         self.assertIn("revisao", chaves_admin)
+
+
+# ===========================================================================
+# (NOVO) MÓDULO DE IMPORTAÇÃO DE EXTRATOS
+# ===========================================================================
+class TestImportacaoExtratos(ERPTestBase):
+    """Cobre staging, auto-classificação, análise retroativa, preservação de
+    histórico e trilha de auditoria do importador."""
+
+    def setUp(self):
+        super().setUp()
+        self._add_fonte("Conta Import", 1000.0)
+        database.criar_categoria_principal("Alimentação", "Despesa")
+        id_pai = database.db_query(
+            "SELECT id FROM categorias WHERE nome='Alimentação'"
+        )[0][0]
+        database.criar_subcategoria("Supermercado", id_pai)
+        database.criar_beneficiario("Lidl")
+
+    def _linha(self, desc="COMPRA LIDL 123", data="2024-06-15", valor=42.50):
+        return {
+            "raw_descricao": desc,
+            "data": data,
+            "valor_eur": valor,
+            "natureza": "Despesa",
+        }
+
+    def test_upload_sem_conta_levanta_excecao(self):
+        with self.assertRaises(finance.ContaDestinoObrigatoriaError):
+            finance.inserir_upload_no_staging(
+                [self._linha()], "", usuario="tester",
+            )
+
+    def test_segunda_importacao_herda_classificacao_da_primeira(self):
+        finance.inserir_upload_no_staging(
+            [self._linha()], "Conta Import", usuario="tester",
+        )
+        staging = finance.listar_staging("Conta Import")
+        self.assertEqual(len(staging), 1)
+        sid = staging[0][0]
+        finance.atualizar_linha_staging(
+            sid, "COMPRA LIDL 123", "2024-06-15", 42.50,
+            "Despesa", "Alimentação", "Supermercado", "Lidl", "",
+        )
+        finance.contabilizar_staging([sid], "tester", fonte_destino="Conta Import")
+
+        finance.inserir_upload_no_staging(
+            [self._linha(desc="COMPRA LIDL 123", data="2024-07-01", valor=30.0)],
+            "Conta Import", usuario="tester",
+        )
+        staging2 = finance.listar_staging("Conta Import")
+        self.assertEqual(staging2[0][4], "Despesa")
+        self.assertEqual(staging2[0][5], "Alimentação")
+        self.assertEqual(staging2[0][6], "Supermercado")
+
+    def test_contabilizacao_preserva_lancamentos_manuais_na_mesma_data(self):
+        self._add_transacao(
+            data="2024-06-15", categoria_pai="Alimentação",
+            categoria_filho="Supermercado", beneficiario="Manual",
+            fonte="Conta Import", valor_eur=99.0, tipo="Despesa",
+            nota="Lançamento manual pré-existente", usuario="tester",
+            status_liquidacao="PAGO",
+        )
+        antes = database.db_query("SELECT COUNT(*) FROM transacoes")[0][0]
+
+        finance.inserir_upload_no_staging(
+            [self._linha()], "Conta Import", usuario="tester",
+        )
+        sid = finance.listar_staging("Conta Import")[0][0]
+        finance.atualizar_linha_staging(
+            sid, "COMPRA LIDL 123", "2024-06-15", 42.50,
+            "Despesa", "Alimentação", "Supermercado", "", "",
+        )
+        finance.contabilizar_staging([sid], "tester", fonte_destino="Conta Import")
+
+        depois = database.db_query("SELECT COUNT(*) FROM transacoes")[0][0]
+        self.assertEqual(depois, antes + 1)
+        manual = database.db_query(
+            "SELECT nota FROM transacoes WHERE beneficiario='Manual'"
+        )
+        self.assertTrue(manual)
+        self.assertEqual(manual[0][0], "Lançamento manual pré-existente")
+
+    def test_analisar_preenche_categorias_e_limpa_beneficiario(self):
+        self._add_transacao(
+            data="2024-05-01", categoria_pai="Alimentação",
+            categoria_filho="Supermercado", beneficiario="Lidl",
+            fonte="Conta Import", valor_eur=50.0, tipo="Despesa",
+            nota="PADRAO MERCADO XYZ", usuario="tester",
+            status_liquidacao="PAGO",
+        )
+        finance.inserir_upload_no_staging(
+            [{"raw_descricao": "PADRAO MERCADO XYZ", "data": "2024-06-20",
+              "valor_eur": 25.0, "natureza": "Despesa"}],
+            "Conta Import", usuario="tester",
+        )
+        sid = finance.listar_staging("Conta Import")[0][0]
+        database.db_execute(
+            "UPDATE importacoes_staging SET beneficiario='Temp' WHERE id=?",
+            (sid,),
+        )
+        n = finance.analisar_staging("Conta Import", usuario="tester")
+        self.assertEqual(n, 1)
+        row = finance.listar_staging("Conta Import")[0]
+        self.assertEqual(row[4], "Despesa")
+        self.assertEqual(row[5], "Alimentação")
+        self.assertEqual(row[6], "Supermercado")
+        self.assertEqual(row[7], "")
+
+    def test_auditoria_registra_upload_e_contabilizacao(self):
+        finance.inserir_upload_no_staging(
+            [self._linha()], "Conta Import", usuario="tester",
+        )
+        self.assertGreater(finance.contar_auditoria("UPLOAD_EXTRATO"), 0)
+        sid = finance.listar_staging("Conta Import")[0][0]
+        finance.atualizar_linha_staging(
+            sid, "COMPRA LIDL 123", "2024-06-15", 42.50,
+            "Despesa", "Alimentação", "Supermercado", "", "",
+        )
+        finance.contabilizar_staging([sid], "tester", fonte_destino="Conta Import")
+        self.assertGreater(finance.contar_auditoria("CONTABILIZACAO_LOTE"), 0)
+        logs = database.db_query(
+            "SELECT acao, usuario FROM auditoria_sistema ORDER BY id"
+        )
+        acoes = [l[0] for l in logs]
+        self.assertIn("UPLOAD_EXTRATO", acoes)
+        self.assertIn("CONTABILIZACAO_LOTE", acoes)
+        self.assertTrue(all(l[1] == "tester" for l in logs))
+
+    def test_pagina_importador_registrada_no_menu(self):
+        import pages_config
+        chaves = {p["key"] for p in pages_config.get_pages(is_admin=False)}
+        self.assertIn("importador", chaves)
 
 
 # ---------------------------------------------------------------------------
